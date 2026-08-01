@@ -28,7 +28,7 @@
 |---|---|
 | 宿主 | Kimi Code CLI（`kimi` 命令的终端进程）。它不与宠物保持长连接，只在事件发生时拉起一次转发器 |
 | 事件钩子（Hook） | Kimi Code 的事件机制：宿主在特定事件（会话开始、工具调用等）发生时，执行插件清单里声明的命令 |
-| 转发器 | `pet-bridge.exe`，随插件分发的无窗口小程序。宿主每发生一个事件就拉起它一次，它读取事件内容、转发给守护进程后立即退出 |
+| 转发器 | `kimi-pet-bridge.exe`，随插件分发的无窗口小程序。宿主每发生一个事件就拉起它一次，它读取事件内容、转发给守护进程后立即退出 |
 | 守护进程 | `kimi-petd.exe`，常驻后台的中转进程：汇总各会话事件、推导宠物状态、守护渲染进程（崩溃自动重启）、负责打开终端 |
 | 渲染进程 | `KimiPet.exe`，UE5 独立程序，负责把宠物画到桌面上 |
 | 事件管道 | 转发器 → 守护进程 的单向命名管道，全名 `\\.\pipe\KimiPet.H2D.<用户名>` |
@@ -57,7 +57,7 @@ kimi 终端 ──(每个事件拉起一次)──> 转发器 ──写入──
 - UE 渲染进程冷启动需数秒，启动期间直连方案会丢失全部事件；守护进程可缓存事件并在渲染进程握手后补发。
 - 渲染进程崩溃期间事件持续到达，守护进程负责重启并回放状态快照，宠物能恢复到正确状态。
 - "点击打开终端"需要会话上下文（会话 id、最近会话判定），守护进程天然持有，渲染进程保持职责单一。
-- 代价仅是多维护一个轻量进程（Go/Rust 编写，常驻内存预期 < 30MB），收益远大于成本。
+- 代价仅是多维护一个轻量进程（TypeScript + Node 22 实现，常驻内存预期 < 150MB），收益远大于成本。
 
 **D2：进程间通信主选 Windows 命名管道。**
 命名管道的消息模式天然保留消息边界（一次写入 = 一条完整消息，上限定为 64KB）；管道名在系统内核命名空间内，无端口冲突、不触发防火墙；管道对象随进程退出自动销毁，崩溃后无残留。回退方案为本机回环 TCP（只监听 `127.0.0.1`，端口被占则顺延重试并写入端口约定文件，加令牌握手），消息协议不变。WebSocket（协议栈重、没有浏览器端需求）与共享内存（本场景是低频小消息，用不上）已排除。
@@ -85,7 +85,7 @@ kimi 终端 ──(每个事件拉起一次)──> 转发器 ──写入──
 - **事件全集（16 个）**：`UserPromptSubmit`、`PreToolUse`、`Stop`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`PermissionResult`、`SessionStart`、`SessionEnd`、`SubagentStart`、`SubagentStop`、`StopFailure`、`Interrupt`、`PreCompact`、`PostCompact`、`Notification`。仅 `PreToolUse`/`Stop`/`UserPromptSubmit` 支持阻塞宿主主流程，其余均为只读观察事件——宠物全部按观察用法接入，绝不返回阻塞码。
 - **事件数据格式**：事件 JSON 经标准输入传给钩子进程；基础字段 `hook_event_name`、`session_id`、`cwd`（全小写下划线命名）；已确认 `PreToolUse` 含 `tool_input.command`、`Interrupt` 含 `reason`。**其余事件的完整字段清单官方未逐项列出（待验证）**，因此转发器采用原样透传策略，不依赖任何具体字段。
 - **运行环境**：钩子命令为任意 shell 命令，语言不限；工作目录 = 插件根目录；注入环境变量 `KIMI_CODE_HOME`、`KIMI_PLUGIN_ROOT`；超时 1–600 秒可配（默认 30 秒）；失败/超时默认放行。
-- **Windows 闪窗**：宿主侧已修复自身拉起钩子时的控制台闪窗（changelog 0.23.2），但转发器若编译为控制台程序仍可能闪窗——因此强制无窗口构建（编译为 Windows 窗口子系统程序，永远没有控制台窗口；实际表现待验证）。
+- **Windows 闪窗**：宿主侧已修复自身拉起钩子时的控制台闪窗（changelog 0.23.2），但转发器为 Node 控制台程序仍可能闪窗——因此依赖宿主侧钩子不闪窗的修复，实际表现实测验证。
 
 ### 3.2 插件目录与清单文件
 
@@ -93,8 +93,8 @@ kimi 终端 ──(每个事件拉起一次)──> 转发器 ──写入──
 kimi-pet/
   kimi.plugin.json          # 插件清单
   bin/
-    pet-bridge.exe          # 转发器（Go/Rust 编写，无窗口单文件，静态链接 <5MB）
-    kimi-petd.exe           # 守护进程（同语言）
+    kimi-pet-bridge.exe     # 转发器（TypeScript + Node 22 实现，bun build --compile 单 exe，约 50–90MB）
+    kimi-petd.exe           # 守护进程（同实现方案）
   renderer/
     KimiPet.exe             # UE5 发布版渲染进程（及其数据包等）
 ```
@@ -107,18 +107,18 @@ kimi-pet/
   "version": "0.1.0",
   "description": "Desktop pet bridge for Kimi Code CLI",
   "hooks": [
-    { "event": "SessionStart",      "matcher": "startup|resume",   "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "SessionEnd",        "matcher": "exit",             "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "UserPromptSubmit",                               "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "PreToolUse",                                     "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "PostToolUse",                                    "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "PostToolUseFailure",                             "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "Stop",                                           "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "StopFailure",                                    "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "Interrupt",                                      "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "SubagentStart",                                  "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "SubagentStop",                                   "command": "./bin/pet-bridge.exe", "timeout": 5 },
-    { "event": "Notification",      "matcher": "task\\.completed", "command": "./bin/pet-bridge.exe", "timeout": 5 }
+    { "event": "SessionStart",      "matcher": "startup|resume",   "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SessionEnd",        "matcher": "exit",             "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "UserPromptSubmit",                               "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PreToolUse",                                     "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PostToolUse",                                    "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PostToolUseFailure",                             "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Stop",                                           "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "StopFailure",                                    "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Interrupt",                                      "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SubagentStart",                                  "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SubagentStop",                                   "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Notification",      "matcher": "task\\.completed", "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 }
   ]
 }
 ```
@@ -439,13 +439,13 @@ Working 内子状态:
 |---|---|---|---|
 | R1 | 逐像素透明/穿透在发布版不可用 | **已定性**（UE5.7 本地源码取证，见 §5.1）：引擎不支持。采用方案一（离屏渲染 + 自建透明窗，§5.3）规避，风险降级为中：「场景捕获 → 显存回读 → 分层窗口上屏」管线需技术验证（重点：渲染纹理背景全透明的配置、异步回读时序）；回退顺序：方案一 → 方案二（改窗口样式）→ 方案三（改引擎源码）→ 方案四（采购插件） |
 | R2 | 各事件钩子的完整字段清单官方未公开 | 中 | 临时挂一个把标准输入落盘的采样钩子收集真实数据；协议 `_raw` 透传兜底 |
-| R3 | Windows 上钩子命令的相对路径/shell 语义（官方示例为 macOS） | 中 | 实测 `./bin/pet-bridge.exe` 写法；备选安装期生成绝对路径 |
-| R4 | 转发器控制台闪窗 | 中 | 强制无窗口构建；实测确认 |
+| R3 | Windows 上钩子命令的相对路径/shell 语义（官方示例为 macOS） | 中 | 实测 `./bin/kimi-pet-bridge.exe` 写法；备选安装期生成绝对路径 |
+| R4 | 转发器控制台闪窗 | 中 | Node 为控制台程序，依赖宿主侧钩子不闪窗修复（§3.1）；实测确认 |
 | R5 | 启动闪烁（默认窗口短暂可见） | 低 | 隐藏启动，透明设置完成后再显示 |
 | R6 | 桌面合成器重启导致透明失效黑底 | 低 | 监听合成状态变化消息并重新设置 |
 | R7 | 点击宠物导致终端失焦 | 低 | 窗口设"不抢占焦点"样式 |
 | R8 | 多屏/DPI 位置漂移；独立程序默认可能未启用每显示器 DPI 感知 | 中 | §5.7 策略；实测 DPI 查询接口行为 |
-| R9 | 高频钩子拉起开销（`PreToolUse` 风暴） | 中 | 转发器冷启动 <50ms 为目标实测；守护进程 200ms 合并窗口兜底 |
+| R9 | 高频钩子拉起开销（`PreToolUse` 风暴） | 中 | 转发器冷启动 <150ms 为目标实测（Node/Bun 冷启动量级）；守护进程 200ms 合并窗口兜底 |
 | R10 | `Notification` 类型全集、`wt.exe` 可用性、宿主进程形态（原生/Node） | 低 | 均有备选方案，见 §3/§4 |
 | R11 | 命名管道默认权限过宽 | 中 | 创建时显式设置仅当前用户可访问 |
 | R12 | 杀软/反作弊误报（窗口有游戏覆盖层特征）；独占全屏应用遮挡宠物 | 低 | MVP 不处理，发版说明列为已知问题 |
