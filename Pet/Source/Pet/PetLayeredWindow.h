@@ -22,7 +22,8 @@ public:
 	bool Create(int32 InSize, int32 PosX, int32 PosY);
 	void Destroy();
 
-	/** 传入 BGRA8 直线（非预乘）像素，内部转预乘后上屏。Src 至少 Size*Size*4 字节，紧密排列。 */
+	/** 传入 scene capture 的 BGRA8 像素（RGB 已预乘、alpha 为反向不透明度）。内部取反 alpha，
+	 *  并把 A=0 像素的 RGB 清零（恢复预乘契约，防 ULW 加性虚影）后上屏。Src 至少 Size*Size*4 字节，紧密排列。 */
 	void Present(const uint8* SrcBGRA);
 
 	/** 单击宠物（§6.5，消息处理线程 = 游戏线程，直接调用）。 */

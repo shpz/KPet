@@ -154,8 +154,10 @@ export class RendererSupervisor {
     this.logger.info(`拉起渲染进程（第 ${this.attemptTimes.length} 次/窗口）: ${this.rendererPath}`);
     let child: ChildProcess;
     try {
-      // cwd 取可执行文件所在目录：UE 需要相对自身目录加载数据包
-      child = this.spawnFn(this.rendererPath, [], { cwd: path.dirname(this.rendererPath) });
+      // cwd 取可执行文件所在目录：UE 需要相对自身目录加载数据包。
+      // -RenderOffScreen：游戏主窗口从创建起就不显示（CreateGameWindow 里跳过 ShowWindow），
+      // 根除启动时全屏黑窗口闪现；SceneCapture→RT→回读与窗口可见性无关，不受影响。
+      child = this.spawnFn(this.rendererPath, ['-RenderOffScreen'], { cwd: path.dirname(this.rendererPath) });
     } catch (err) {
       this.child = null;
       this.statusValue = 'missing';

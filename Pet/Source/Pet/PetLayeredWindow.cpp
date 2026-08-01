@@ -59,6 +59,9 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 	FMemory::Memzero(DibBits, Size * Size * 4);
 
 	ShowWindow(WindowHandle, SW_SHOWNOACTIVATE);
+	// 立即上一帧全透明画面（DibBits 已清零）：否则首个有效 capture 帧上屏之前，
+	// 窗口从未调用过 UpdateLayeredWindow，DWM 会把它显示为纯黑方块
+	UpdateOnScreen();
 	UE_LOG(LogPet, Log, TEXT("Layered window created: %dx%d at (%d,%d)"), Size, Size, Pos.x, Pos.y);
 	return true;
 }
@@ -86,7 +89,11 @@ void PetLayeredWindow::Present(const uint8* SrcBGRA)
 
 	// RT 像素语义（UE 源码取证：scene color alpha = 1-不透明度，RGB 已按不透明度预乘）：
 	// - alpha 取反得到真实不透明度；RGB 已是预乘，直接拷贝，不再二次预乘。
-	// 同时统计修正后的 alpha 分布作为"背景全透明"的客观证据。
+	// - 但 A=0（全透明）像素的 RGB 并不保证为 0：tonemapper 无条件叠加量化抖动
+	//   （PostProcessTonemap.usf，8bit 输出幅度 ±1/255），bloom 也会把辉光加进背景。
+	//   UpdateLayeredWindow 是预乘语义：A=0 时 Dest = Src + Dest，非零 RGB 会被加性
+	//   叠到桌面上 -> 背景淡淡虚影。因此 A==0 的像素 RGB 一律清零，恢复预乘契约。
+	// 统计基于源像素（清零前），maxRGB(a=0)>0 即为上述污染的客观证据。
 	uint8* Dst = static_cast<uint8*>(DibBits);
 	int32 AlphaZero = 0, AlphaFull = 0, AlphaMid = 0;
 	uint8 MaxRgbAmongTransparent = 0;
@@ -96,17 +103,25 @@ void PetLayeredWindow::Present(const uint8* SrcBGRA)
 		const uint8 G = SrcBGRA[i * 4 + 1];
 		const uint8 R = SrcBGRA[i * 4 + 2];
 		const uint8 A = (uint8)(255 - SrcBGRA[i * 4 + 3]); // 反转 -> 真实不透明度
-		Dst[i * 4 + 0] = B;
-		Dst[i * 4 + 1] = G;
-		Dst[i * 4 + 2] = R;
-		Dst[i * 4 + 3] = A;
 
 		if (A == 0)
 		{
 			++AlphaZero;
 			MaxRgbAmongTransparent = FMath::Max3(MaxRgbAmongTransparent, R, FMath::Max(G, B));
+			// 全透明像素强制 RGB=0（见上方注释），避免被 ULW 加性混合到桌面
+			Dst[i * 4 + 0] = 0;
+			Dst[i * 4 + 1] = 0;
+			Dst[i * 4 + 2] = 0;
+			Dst[i * 4 + 3] = 0;
+			continue;
 		}
-		else if (A == 255) { ++AlphaFull; }
+
+		Dst[i * 4 + 0] = B;
+		Dst[i * 4 + 1] = G;
+		Dst[i * 4 + 2] = R;
+		Dst[i * 4 + 3] = A;
+
+		if (A == 255) { ++AlphaFull; }
 		else { ++AlphaMid; }
 	}
 

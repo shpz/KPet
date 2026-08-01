@@ -72,6 +72,7 @@ APetCaptureActor::APetCaptureActor()
 	Capture->ShowFlags.VolumetricFog = false;
 	Capture->ShowFlags.Cloud = false;
 	Capture->ShowFlags.SkyLighting = false;
+	Capture->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
 }
 
 APetCaptureActor::~APetCaptureActor() = default;
@@ -113,7 +114,8 @@ void APetCaptureActor::BeginPlay()
 			Readback = new FRHIGPUTextureReadback(TEXT("KimiPetReadback"));
 		});
 
-	// 游戏窗口完全初始化后再隐藏，避免启动闪烁
+	// 隐藏游戏主窗口的兜底（主修复是启动参数 -RenderOffScreen，窗口创建时就不显示；
+	// 该模式下这里取不到窗口句柄属正常）。带窗口启动时，等游戏窗口完全初始化后再隐藏，避免启动闪烁
 	if (UWorld* World = GetWorld())
 	{
 		FTimerHandle Timer;
@@ -183,7 +185,8 @@ void APetCaptureActor::HideGameWindow()
 	}
 	else
 	{
-		UE_LOG(LogPet, Warning, TEXT("Game window handle not found"));
+		// -RenderOffScreen 启动时游戏窗口从不可见/不存在，属预期情况
+		UE_LOG(LogPet, Verbose, TEXT("Game window handle not found (expected with -RenderOffScreen)"));
 	}
 }
 
@@ -257,6 +260,14 @@ void APetCaptureActor::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 	{
 		return;
 	}
+	// 首个有效 capture 帧之前，回读到的是 RT 的清屏值（全 0）；取反后 A=255 会被 Present 成
+	// 不透明黑方块。以左上角背景像素的 alpha 是否非零作为"capture 已产出画面"的门槛
+	//（capture 之后背景 alpha=255，即 kSceneColorClearAlpha=1.0）。
+	if (!bPresentedValidFrame && Pixels->GetData()[3] == 0)
+	{
+		return;
+	}
+	bPresentedValidFrame = true;
 	// 诊断：每 300 帧从回读像素计算 alpha 统计（与 Present 内统计对照，排查缓冲区复用问题）
 	if (PresentedFrames % 300 == 0)
 	{

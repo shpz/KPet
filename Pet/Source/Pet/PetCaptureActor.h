@@ -57,6 +57,7 @@ private:
 
 	PetLayeredWindow* PetWindow = nullptr; // new/delete 手动管理，避免前置声明类型被 UHT 生成代码实例化
 	int32 PresentedFrames = 0;
+	bool bPresentedValidFrame = false; // 首个有效 capture 帧之前不 Present（避免零缓冲被上屏成黑方块）
 
 	FPetControlClient* ControlClient = nullptr; // new/delete 手动管理（同 PetWindow）
 
