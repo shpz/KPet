@@ -30,7 +30,7 @@
 | 事件钩子（Hook） | Kimi Code 的事件机制：宿主在特定事件（会话开始、工具调用等）发生时，执行插件清单里声明的命令 |
 | 转发器 | `kimi-pet-bridge.exe`，随插件分发的无窗口小程序。宿主每发生一个事件就拉起它一次，它读取事件内容、转发给守护进程后立即退出 |
 | 守护进程 | `kimi-petd.exe`，常驻后台的中转进程：汇总各会话事件、推导宠物状态、守护渲染进程（崩溃自动重启）、负责打开终端 |
-| 渲染进程 | `KimiPet.exe`，UE5 独立程序，负责把宠物画到桌面上 |
+| 渲染进程 | `Pet.exe`，UE5 独立程序，负责把宠物画到桌面上 |
 | 事件管道 | 转发器 → 守护进程 的单向命名管道，全名 `\\.\pipe\KimiPet.H2D.<用户名>` |
 | 控制管道 | 守护进程 ↔ 渲染进程 的双向命名管道，全名 `\\.\pipe\KimiPet.PET.<用户名>` |
 | 命名管道 | Windows 自带的进程间通信机制，本机两个进程像读写文件一样互发消息，无需网络端口 |
@@ -96,7 +96,7 @@ kimi-pet/
     kimi-pet-bridge.exe     # 转发器（TypeScript + Node 22 实现，bun build --compile 单 exe，约 50–90MB）
     kimi-petd.exe           # 守护进程（同实现方案）
   renderer/
-    KimiPet.exe             # UE5 发布版渲染进程（及其数据包等）
+    Pet.exe                 # UE5 发布版渲染进程（及其数据包等）
 ```
 
 `kimi.plugin.json`（订阅 12 个事件钩子；不订阅的见下文说明）：
@@ -107,18 +107,18 @@ kimi-pet/
   "version": "0.1.0",
   "description": "Desktop pet bridge for Kimi Code CLI",
   "hooks": [
-    { "event": "SessionStart",      "matcher": "startup|resume",   "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "SessionEnd",        "matcher": "exit",             "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "UserPromptSubmit",                               "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "PreToolUse",                                     "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "PostToolUse",                                    "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "PostToolUseFailure",                             "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "Stop",                                           "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "StopFailure",                                    "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "Interrupt",                                      "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "SubagentStart",                                  "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "SubagentStop",                                   "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 },
-    { "event": "Notification",      "matcher": "task\\.completed", "command": "./bin/kimi-pet-bridge.exe", "timeout": 5 }
+    { "event": "SessionStart",      "matcher": "startup|resume",   "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SessionEnd",        "matcher": "exit",             "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "UserPromptSubmit",                               "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PreToolUse",                                     "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PostToolUse",                                    "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "PostToolUseFailure",                             "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Stop",                                           "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "StopFailure",                                    "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Interrupt",                                      "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SubagentStart",                                  "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "SubagentStop",                                   "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 },
+    { "event": "Notification",      "matcher": "task\\.completed", "command": ".\\bin\\kimi-pet-bridge.exe", "timeout": 5 }
   ]
 }
 ```
@@ -415,7 +415,7 @@ Working 内子状态:
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `renderer_path` | `%KIMI_PLUGIN_ROOT%\renderer\KimiPet.exe` | 渲染进程路径 |
+| `renderer_path` | `%KIMI_PLUGIN_ROOT%\renderer\Pet.exe` | 渲染进程路径 |
 | `heartbeat_interval_ms` / `heartbeat_timeout_ms` | 3000 / 10000 | 心跳间隔与超时判定 |
 | `restart_max_attempts` / `restart_window_s` | 5 / 60 | 渲染进程崩溃重启策略 |
 | `host_grace_seconds` | 120 | 宿主全部退出后的退出倒计时 |
@@ -439,7 +439,7 @@ Working 内子状态:
 |---|---|---|---|
 | R1 | 逐像素透明/穿透在发布版不可用 | **已定性**（UE5.7 本地源码取证，见 §5.1）：引擎不支持。采用方案一（离屏渲染 + 自建透明窗，§5.3）规避，风险降级为中：「场景捕获 → 显存回读 → 分层窗口上屏」管线需技术验证（重点：渲染纹理背景全透明的配置、异步回读时序）；回退顺序：方案一 → 方案二（改窗口样式）→ 方案三（改引擎源码）→ 方案四（采购插件） |
 | R2 | 各事件钩子的完整字段清单官方未公开 | 中 | 临时挂一个把标准输入落盘的采样钩子收集真实数据；协议 `_raw` 透传兜底 |
-| R3 | Windows 上钩子命令的相对路径/shell 语义（官方示例为 macOS） | 中 | 实测 `./bin/kimi-pet-bridge.exe` 写法；备选安装期生成绝对路径 |
+| R3 | Windows 上钩子命令的相对路径/shell 语义（官方示例为 macOS） | **已实测定性** | Windows 宿主经 cmd 执行钩子命令，`./bin/...` 正斜杠写法报「'.' 不是内部或外部命令」静默失败（2026-08-01 实测）；清单必须用反斜杠 `.\\bin\\kimi-pet-bridge.exe` |
 | R4 | 转发器控制台闪窗 | 中 | Node 为控制台程序，依赖宿主侧钩子不闪窗修复（§3.1）；实测确认 |
 | R5 | 启动闪烁（默认窗口短暂可见） | 低 | 隐藏启动，透明设置完成后再显示 |
 | R6 | 桌面合成器重启导致透明失效黑底 | 低 | 监听合成状态变化消息并重新设置 |

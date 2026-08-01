@@ -15,7 +15,7 @@ import type { LogLevel } from './logger.js';
 export const DAEMON_VERSION = '0.1.0';
 
 export interface DaemonConfig {
-  /** 渲染进程路径（§7，缺省 %KIMI_PLUGIN_ROOT%\renderer\KimiPet.exe）。 */
+  /** 渲染进程路径（§7，缺省 %KIMI_PLUGIN_ROOT%\renderer\Pet.exe）。 */
   renderer_path: string;
   /** 心跳间隔（毫秒），渲染进程每 heartbeat_interval_ms 发一次 heartbeat。 */
   heartbeat_interval_ms: number;
@@ -68,15 +68,15 @@ export function getLogFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(getLogDir(env), 'kimi-petd.log');
 }
 
-/** 解析渲染进程路径：显式配置 > %KIMI_PLUGIN_ROOT%\renderer\KimiPet.exe > cwd()/renderer/KimiPet.exe（开发兜底）。 */
+/** 解析渲染进程路径：显式配置 > %KIMI_PLUGIN_ROOT%\renderer\Pet.exe > cwd()/renderer/Pet.exe（开发兜底）。 */
 export function resolveRendererPath(raw: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
   if (raw) {
     const expanded = expandEnvVars(raw, env);
     if (expanded.length > 0) return expanded;
   }
   const root = env.KIMI_PLUGIN_ROOT;
-  if (root && root.length > 0) return path.join(root, 'renderer', 'KimiPet.exe');
-  return path.join(process.cwd(), 'renderer', 'KimiPet.exe');
+  if (root && root.length > 0) return path.join(root, 'renderer', 'Pet.exe');
+  return path.join(process.cwd(), 'renderer', 'Pet.exe');
 }
 
 /** 配置加载结果：config 为最终生效值；warnings 为逐项回退告警（由调用方记日志）。 */

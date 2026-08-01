@@ -28,7 +28,7 @@ function writeConfig(dir: string, obj: unknown): string {
 
 test('默认配置：§7 全部键与默认值', () => {
   const cfg = defaultConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' });
-  assert.equal(cfg.renderer_path, path.join('C:\\plugins\\kimi-pet', 'renderer', 'KimiPet.exe'));
+  assert.equal(cfg.renderer_path, path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
   assert.equal(cfg.heartbeat_interval_ms, 3000);
   assert.equal(cfg.heartbeat_timeout_ms, 10_000);
   assert.equal(cfg.restart_max_attempts, 5);
@@ -106,10 +106,10 @@ test('heartbeat_timeout_ms 允许 0（关闭心跳检测）', () => {
 
 test('renderer_path：%KIMI_PLUGIN_ROOT% 环境展开；KIMI_PLUGIN_ROOT 未设时回退 cwd', () => {
   const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' };
-  assert.equal(resolveRendererPath(undefined, env), path.join('C:\\plugins\\kimi-pet', 'renderer', 'KimiPet.exe'));
-  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\KimiPet.exe', env), 'C:\\plugins\\kimi-pet\\renderer\\KimiPet.exe');
+  assert.equal(resolveRendererPath(undefined, env), path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
+  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kimi-pet\\renderer\\Pet.exe');
   const noRoot = resolveRendererPath(undefined, {});
-  assert.equal(noRoot, path.join(process.cwd(), 'renderer', 'KimiPet.exe'));
+  assert.equal(noRoot, path.join(process.cwd(), 'renderer', 'Pet.exe'));
 });
 
 test('getKimipetHome / getConfigPath / getLogFilePath：KIMI_CODE_HOME 优先，缺省 ~/.kimi-code', () => {
