@@ -1,4 +1,4 @@
-#include "PetControlClient.h"
+#include "Communication/PetControlClient.h"
 
 #include "Pet.h"
 #include "Containers/StringConv.h"

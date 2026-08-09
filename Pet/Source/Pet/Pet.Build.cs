@@ -13,6 +13,11 @@ public class Pet : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"UMG"
+		});
+
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
 			"InputCore",
 			"RHI",
 			"RenderCore",
@@ -20,7 +25,7 @@ public class Pet : ModuleRules
 			"SlateCore",
 			"ApplicationCore",
 			"Projects",
-			"Json",          // 协议消息解析/构造（§4.1：发布版可用）
+			"Json",
 			"JsonUtilities"
 		});
 	}

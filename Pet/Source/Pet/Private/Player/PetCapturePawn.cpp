@@ -1,8 +1,8 @@
-#include "PetCapturePawn.h"
+#include "Player/PetCapturePawn.h"
 
 #include "Pet.h"
-#include "PetControlClient.h"
-#include "PetLayeredWindow.h"
+#include "Communication/PetControlClient.h"
+#include "Platform/PetLayeredWindow.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/PointLightComponent.h"

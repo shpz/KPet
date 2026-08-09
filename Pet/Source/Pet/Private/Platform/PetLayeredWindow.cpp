@@ -1,4 +1,4 @@
-#include "PetLayeredWindow.h"
+#include "Platform/PetLayeredWindow.h"
 #include "Pet.h"
 
 static const TCHAR* PetWindowClassName = TEXT("KimiPetLayeredWindow");

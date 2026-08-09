@@ -5,10 +5,10 @@
 #include "PetGameMode.generated.h"
 
 UCLASS()
-class APetGameMode : public AGameModeBase
+class PET_API APetGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
 
 public:
-	virtual void BeginPlay() override;
+	APetGameMode();
 };

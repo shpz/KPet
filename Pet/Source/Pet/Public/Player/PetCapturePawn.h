@@ -19,7 +19,7 @@ class FPetControlClient;
  * 非编辑器运行时隐藏 UE 游戏窗口，编辑器 PIE 调试时保留编辑器窗口。
  */
 UCLASS()
-class APetCapturePawn : public APawn
+class PET_API APetCapturePawn : public APawn
 {
 	GENERATED_BODY()
 
