@@ -27,8 +27,8 @@ public:
 	/** 启动工作线程（游戏线程调用）。 */
 	void Start();
 
-	/** 请求停止并等待工作线程退出（游戏线程调用；最迟约 1 秒读超时片 + 一个重连休眠片内退出）。 */
-	void Stop();
+	/** 请求停止并等待工作线程退出（游戏线程调用；最迟约 1 秒读超时片内退出）。 */
+	void Shutdown();
 
 	/** 游戏线程每帧调用：转交收包、分发回调、发送心跳。 */
 	void Tick();
@@ -51,6 +51,8 @@ public:
 private:
 	// ---- FRunnable ----
 	virtual uint32 Run() override;
+	/** FRunnableThread 的停止回调：只发停止信号，不能在这里等待或销毁线程。 */
+	virtual void Stop() override;
 
 	// ---- 工作线程 ----
 	void WorkerLoop();
@@ -90,7 +92,6 @@ private:
 	// 以下仅工作线程访问
 	HANDLE PipeHandle = nullptr;
 	TArray<uint8> LineBuffer;
-	OVERLAPPED ReadOv;
 
 	// 以下仅游戏线程访问
 	FString CurrentState = TEXT("Idle"); // 初始 Idle，断线期间冻结（§4.5-5）

@@ -1,19 +1,14 @@
-#include "PetCaptureActor.h"
+#include "PetCapturePawn.h"
 
 #include "Pet.h"
 #include "PetControlClient.h"
 #include "PetLayeredWindow.h"
 
 #include "Components/SceneCaptureComponent2D.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "Engine/StaticMesh.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/Engine.h"
-#include "Materials/MaterialInterface.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "UObject/ConstructorHelpers.h"
 #include "TimerManager.h"
 #include "Widgets/SWindow.h"
 #include "GenericPlatform/GenericWindow.h"
@@ -26,32 +21,12 @@
 #include <Windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 
-APetCaptureActor::APetCaptureActor()
+APetCapturePawn::APetCapturePawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = RootComp;
-
-	Sphere = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Sphere"));
-	Sphere->SetupAttachment(RootComp);
-	Sphere->SetRelativeLocation(FVector::ZeroVector);
-	Sphere->SetWorldScale3D(FVector(2.0f)); // 基础球直径 1m -> 2m（与设计稿一致）
-	Sphere->CastShadow = false; // 无地面，投影只会给 RT 底部带来半透阴影
-
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	if (SphereMesh.Succeeded())
-	{
-		Sphere->SetStaticMesh(SphereMesh.Object);
-	}
-
-	// 用引擎自带的材质实例作父材质：直接用 BasicShapeMaterial 创建 MID 会丢失内部参数映射，
-	// 导致 Color 参数不生效（验证期实测踩坑：球体渲染成了灰白）。
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMatInst(TEXT("/Engine/BasicShapes/BasicShapeMaterial_Inst.BasicShapeMaterial_Inst"));
-	if (ShapeMatInst.Succeeded())
-	{
-		Sphere->SetMaterial(0, ShapeMatInst.Object);
-	}
 
 	Light = CreateDefaultSubobject<UPointLightComponent>(TEXT("Light"));
 	Light->SetupAttachment(RootComp);
@@ -67,7 +42,7 @@ APetCaptureActor::APetCaptureActor()
 	Capture->bCaptureEveryFrame = true;
 	Capture->bCaptureOnMovement = false;
 	Capture->bAlwaysPersistRenderingState = true;
-	Capture->ShowFlags.DynamicShadows = false; // 球体无接收面，动态阴影只会污染背景 alpha
+	Capture->ShowFlags.DynamicShadows = false; // 无接收面，动态阴影只会污染背景 alpha
 	Capture->ShowFlags.Fog = false;             // 背景像素只应有 alpha=0
 	Capture->ShowFlags.VolumetricFog = false;
 	Capture->ShowFlags.Cloud = false;
@@ -75,20 +50,11 @@ APetCaptureActor::APetCaptureActor()
 	Capture->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
 }
 
-APetCaptureActor::~APetCaptureActor() = default;
+APetCapturePawn::~APetCapturePawn() = default;
 
-void APetCaptureActor::BeginPlay()
+void APetCapturePawn::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// 宠物体色（Kimi 蓝）——验证期顺手验证颜色通道顺序（BGRA）是否正确
-	// 注意：必须用引擎材质实例做父材质；直接用 BasicShapeMaterial 创建 MID 会丢失内部参数映射，
-	// 导致 Color 参数不生效（验证期实测踩坑：球体渲染成了灰白）。
-	if (UMaterialInstanceDynamic* MID = Sphere->CreateAndSetMaterialInstanceDynamic(0))
-	{
-		BodyMID = MID; // 存成员，供 pet_state 可视化钩子切换颜色
-		MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.24f, 0.35f, 1.0f));
-	}
 
 	// 320x320 BGRA8 RT，清屏为全透明
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
@@ -107,6 +73,10 @@ void APetCaptureActor::BeginPlay()
 		delete PetWindow;
 		PetWindow = nullptr;
 	}
+	else
+	{
+		WindowScreenPosition = PetWindow->GetScreenPosition();
+	}
 
 	ENQUEUE_RENDER_COMMAND(CreatePetReadback)(
 		[this](FRHICommandListImmediate&)
@@ -114,30 +84,26 @@ void APetCaptureActor::BeginPlay()
 			Readback = new FRHIGPUTextureReadback(TEXT("KimiPetReadback"));
 		});
 
-	// 隐藏游戏主窗口的兜底（主修复是启动参数 -RenderOffScreen，窗口创建时就不显示；
-	// 该模式下这里取不到窗口句柄属正常）。带窗口启动时，等游戏窗口完全初始化后再隐藏，避免启动闪烁
-	if (UWorld* World = GetWorld())
+	// PIE 的 GameViewport 可能挂在编辑器主窗口中，不能对它调用 SW_HIDE。
+	// 仅非编辑器运行时隐藏游戏主窗口；主修复仍是启动参数 -RenderOffScreen。
+	if (!GIsEditor)
 	{
-		FTimerHandle Timer;
-		World->GetTimerManager().SetTimer(Timer, FTimerDelegate::CreateUObject(this, &APetCaptureActor::HideGameWindow), 1.0f, false);
+		if (UWorld* World = GetWorld())
+		{
+			FTimerHandle Timer;
+			World->GetTimerManager().SetTimer(Timer, FTimerDelegate::CreateUObject(this, &APetCapturePawn::HideGameWindow), 1.0f, false);
+		}
 	}
 
 	// 控制管道客户端：接入守护进程（§4.1 / §4.5-5），回调全部在游戏线程触发
 	ControlClient = new FPetControlClient();
-	ControlClient->OnPetState = [this](const FString& State, const FString& Reason)
-	{
-		// 可视化验证钩子（联调用，非 §6 正式动画）：蓝=Idle / 橙=Working，肉眼验证端到端
-		const FLinearColor Color = (State == TEXT("Working"))
-			? FLinearColor(1.0f, 0.55f, 0.08f)
-			: FLinearColor(0.24f, 0.35f, 1.0f);
-		if (BodyMID)
-		{
-			BodyMID->SetVectorParameterValue(TEXT("Color"), Color);
-		}
-		UE_LOG(LogPet, Log, TEXT("pet_state 可视化: 球体颜色 -> %s"), State == TEXT("Working") ? TEXT("橙") : TEXT("蓝"));
-	};
 	ControlClient->OnShutdown = [this](const FString& Reason)
 	{
+		if (GIsEditor)
+		{
+			UE_LOG(LogPet, Warning, TEXT("PIE 调试中忽略 shutdown，避免退出编辑器（reason=%s）"), *Reason);
+			return;
+		}
 		UE_LOG(LogPet, Log, TEXT("shutdown 请求退出游戏（reason=%s）"), *Reason);
 		FPlatformMisc::RequestExit(false);
 	};
@@ -162,11 +128,17 @@ void APetCaptureActor::BeginPlay()
 	}
 	ControlClient->Start();
 
-	UE_LOG(LogPet, Log, TEXT("PetCaptureActor BeginPlay done"));
+	UE_LOG(LogPet, Log, TEXT("PetCapturePawn BeginPlay done"));
 }
 
-void APetCaptureActor::HideGameWindow()
+void APetCapturePawn::HideGameWindow()
 {
+	// BeginPlay 已阻止 PIE 调用；这里再做保护，避免其他调用路径误隐藏编辑器窗口。
+	if (GIsEditor)
+	{
+		return;
+	}
+
 	HWND GameHwnd = nullptr;
 	if (GEngine && GEngine->GameViewport)
 	{
@@ -190,13 +162,17 @@ void APetCaptureActor::HideGameWindow()
 	}
 }
 
-void APetCaptureActor::Tick(float DeltaTime)
+void APetCapturePawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
 	if (ControlClient)
 	{
 		ControlClient->Tick(); // 收包转交 + 心跳
+	}
+	if (PetWindow)
+	{
+		WindowScreenPosition = PetWindow->GetScreenPosition();
 	}
 
 	if (!RenderTarget)
@@ -232,7 +208,7 @@ void APetCaptureActor::Tick(float DeltaTime)
 
 					if (Pixels.IsValid())
 					{
-						TWeakObjectPtr<APetCaptureActor> WeakThis(this);
+						TWeakObjectPtr<APetCapturePawn> WeakThis(this);
 						AsyncTask(ENamedThreads::GameThread, [WeakThis, Pixels]()
 						{
 							if (WeakThis.IsValid())
@@ -243,7 +219,7 @@ void APetCaptureActor::Tick(float DeltaTime)
 					}
 				}
 			}
-			else
+			if (!bCopyInFlight.load())
 			{
 				if (FRHITexture* Tex = RTResource ? RTResource->GetRenderTargetTexture() : nullptr)
 				{
@@ -254,7 +230,7 @@ void APetCaptureActor::Tick(float DeltaTime)
 		});
 }
 
-void APetCaptureActor::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
+void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 {
 	if (Pixels->Num() < RTSize * RTSize * 4)
 	{
@@ -291,12 +267,12 @@ void APetCaptureActor::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 	}
 }
 
-void APetCaptureActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// 先停控制管道（等待工作线程退出，回调不再触发），再销毁窗口
 	if (ControlClient)
 	{
-		ControlClient->Stop();
+		ControlClient->Shutdown();
 		delete ControlClient;
 		ControlClient = nullptr;
 	}

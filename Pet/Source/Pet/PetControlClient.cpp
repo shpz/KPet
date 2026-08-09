@@ -26,11 +26,17 @@ FPetControlClient::FPetControlClient()
 
 FPetControlClient::~FPetControlClient()
 {
-	Stop();
+	Shutdown();
 }
 
 void FPetControlClient::Start()
 {
+	if (WorkerThread)
+	{
+		return;
+	}
+
+	bStop.store(false);
 	PipeName = BuildPipeName();
 	StartSeconds = FPlatformTime::Seconds();
 	LastHeartbeatTime = StartSeconds;
@@ -42,11 +48,20 @@ void FPetControlClient::Start()
 void FPetControlClient::Stop()
 {
 	bStop.store(true);
-	if (WorkerThread)
+}
+
+void FPetControlClient::Shutdown()
+{
+	Stop();
+
+	// 先清空成员指针，保证 Shutdown 可重复调用。FRunnableThread 析构时会调用
+	// Runnable->Stop()，该回调现在只设置停止标志，不再等待或销毁线程。
+	FRunnableThread* ThreadToDelete = WorkerThread;
+	WorkerThread = nullptr;
+	if (ThreadToDelete)
 	{
-		WorkerThread->WaitForCompletion();
-		delete WorkerThread;
-		WorkerThread = nullptr;
+		ThreadToDelete->WaitForCompletion();
+		delete ThreadToDelete;
 	}
 }
 
@@ -197,6 +212,23 @@ bool FPetControlClient::ReadAndWriteLoop()
 	}
 
 	bool bReadPending = false;
+	auto CleanupRead = [&]()
+	{
+		// OVERLAPPED、读取缓冲和事件在栈上，离开函数前必须保证挂起读取已经结束。
+		if (bReadPending && PipeHandle)
+		{
+			CancelIoEx(PipeHandle, &Ov);
+			DWORD IgnoredBytes = 0;
+			GetOverlappedResult(PipeHandle, &Ov, &IgnoredBytes, 1 /*TRUE*/);
+			bReadPending = false;
+		}
+		if (Ov.hEvent)
+		{
+			CloseHandle(Ov.hEvent);
+			Ov.hEvent = nullptr;
+		}
+	};
+
 	const DWORD WaitMs = 1000;
 	while (!bStop.load())
 	{
@@ -213,7 +245,7 @@ bool FPetControlClient::ReadAndWriteLoop()
 		{
 			if (!WriteLine(Msg))
 			{
-				CloseHandle(Ov.hEvent);
+				CleanupRead();
 				return false;
 			}
 		}
@@ -227,7 +259,7 @@ bool FPetControlClient::ReadAndWriteLoop()
 			{
 				if (BytesRead == 0)
 				{
-					CloseHandle(Ov.hEvent);
+					CleanupRead();
 					return false; // 对端关闭
 				}
 				LineBuffer.Append(ReadBuf.GetData(), BytesRead);
@@ -242,7 +274,7 @@ bool FPetControlClient::ReadAndWriteLoop()
 			else
 			{
 				UE_LOG(LogPet, Warning, TEXT("控制管道读失败: %u（对端关闭？）"), ReadErr);
-				CloseHandle(Ov.hEvent);
+				CleanupRead();
 				return false;
 			}
 		}
@@ -252,16 +284,16 @@ bool FPetControlClient::ReadAndWriteLoop()
 			if (Wait == WAIT_OBJECT_0)
 			{
 				DWORD BytesRead = 0;
+				bReadPending = false;
 				if (!GetOverlappedResult(PipeHandle, &Ov, &BytesRead, 0 /*FALSE*/))
 				{
 					UE_LOG(LogPet, Warning, TEXT("控制管道读完成错误: %u"), GetLastError());
-					CloseHandle(Ov.hEvent);
+					CleanupRead();
 					return false;
 				}
-				bReadPending = false;
 				if (BytesRead == 0)
 				{
-					CloseHandle(Ov.hEvent);
+					CleanupRead();
 					return false; // 对端关闭
 				}
 				LineBuffer.Append(ReadBuf.GetData(), BytesRead);
@@ -273,12 +305,12 @@ bool FPetControlClient::ReadAndWriteLoop()
 			}
 			else
 			{
-				CloseHandle(Ov.hEvent);
+				CleanupRead();
 				return false;
 			}
 		}
 	}
-	CloseHandle(Ov.hEvent);
+	CleanupRead();
 	return true;
 }
 
