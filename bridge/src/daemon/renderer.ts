@@ -20,6 +20,9 @@ export function backoffDelayMs(round: number): number {
 
 export type SpawnFn = (command: string, args: string[], options: { cwd: string }) => ChildProcess;
 
+/** UE 渲染进程启动参数（docs/Slate与UMG会话面板方案.md §5.1）。 */
+const RENDERER_ARGS = ['-NOSPLASH', '-windowed', '-ResX=16', '-ResY=16'] as const;
+
 export interface RendererSupervisorOptions {
   rendererPath: string;
   restartMaxAttempts: number;
@@ -155,9 +158,10 @@ export class RendererSupervisor {
     let child: ChildProcess;
     try {
       // cwd 取可执行文件所在目录：UE 需要相对自身目录加载数据包。
-      // -RenderOffScreen：游戏主窗口从创建起就不显示（CreateGameWindow 里跳过 ShowWindow），
-      // 根除启动时全屏黑窗口闪现；SceneCapture→RT→回读与窗口可见性无关，不受影响。
-      child = this.spawnFn(this.rendererPath, ['-RenderOffScreen'], { cwd: path.dirname(this.rendererPath) });
+      // 不使用离屏渲染启动模式：该模式会阻止会话面板创建真实平台窗口。
+      // NOSPLASH 和最小窗口参数用于降低默认游戏窗口启动时可见的影响；
+      // 默认窗口的隐藏由 UE 侧 Slate 启动守卫负责。
+      child = this.spawnFn(this.rendererPath, [...RENDERER_ARGS], { cwd: path.dirname(this.rendererPath) });
     } catch (err) {
       this.child = null;
       this.statusValue = 'missing';

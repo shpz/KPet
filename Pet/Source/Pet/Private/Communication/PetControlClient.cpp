@@ -86,10 +86,18 @@ void FPetControlClient::Tick()
 	}
 }
 
-void FPetControlClient::SendOpenTui()
+void FPetControlClient::SendOpenTui(const FString& SessionId)
 {
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 	Payload->SetStringField(TEXT("source"), TEXT("pet"));
+	if (SessionId.IsEmpty())
+	{
+		Payload->SetField(TEXT("session_id"), MakeShared<FJsonValueNull>());
+	}
+	else
+	{
+		Payload->SetStringField(TEXT("session_id"), SessionId);
+	}
 	EnqueueEnvelope(TEXT("open_tui"), Payload);
 }
 
@@ -334,7 +342,7 @@ bool FPetControlClient::SendHello()
 	const FString Msg = FString::Printf(
 		TEXT("{\"v\":1,\"type\":\"hello\",\"id\":\"%s\",\"ts\":\"%s\",\"session_id\":null,"
 			"\"payload\":{\"protocol_version\":1,\"role\":\"renderer\",\"pid\":%d,\"version\":\"%s\","
-			"\"capabilities\":[\"pet_state\",\"task_start\",\"task_end\",\"tasks_snapshot\",\"notify\","
+			"\"capabilities\":[\"pet_state\",\"sessions_snapshot\",\"session_state\",\"task_start\",\"task_end\",\"tasks_snapshot\",\"notify\","
 			"\"open_tui\",\"heartbeat\",\"pet_moved\",\"shutdown\"]}}"),
 		*FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens),
 		*FDateTime::UtcNow().ToIso8601(),
@@ -434,6 +442,11 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		RecordProtocolError(TEXT("信封 session_id 必须为字符串或 null"), Line);
 		return;
 	}
+	FString SessionId;
+	if (SessionValue && SessionValue->IsValid() && (*SessionValue)->Type == EJson::String)
+	{
+		SessionId = (*SessionValue)->AsString();
+	}
 	const TSharedPtr<FJsonObject>* PayloadField = nullptr;
 	if (!Envelope->TryGetObjectField(TEXT("payload"), PayloadField) || !PayloadField->IsValid())
 	{
@@ -482,6 +495,39 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 			OnShutdown(Reason);
 		}
 	}
+	else if (Type == TEXT("sessions_snapshot"))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* SessionValues = nullptr;
+		TArray<FPetSessionInfo> Sessions;
+		if (Payload->TryGetArrayField(TEXT("sessions"), SessionValues) && SessionValues)
+		{
+			Sessions.Reserve(SessionValues->Num());
+			for (const TSharedPtr<FJsonValue>& Value : *SessionValues)
+			{
+				if (!Value.IsValid() || Value->Type != EJson::Object)
+				{
+					continue;
+				}
+				const TSharedPtr<FJsonObject> Item = Value->AsObject();
+				FPetSessionInfo Session;
+				if (!Item.IsValid() || !Item->TryGetStringField(TEXT("session_id"), Session.SessionId) || Session.SessionId.IsEmpty())
+				{
+					continue;
+				}
+				Item->TryGetStringField(TEXT("title"), Session.Title);
+				Item->TryGetStringField(TEXT("cwd"), Session.Cwd);
+				Item->TryGetBoolField(TEXT("active"), Session.bActive);
+				Item->TryGetBoolField(TEXT("working"), Session.bWorking);
+				Item->TryGetBoolField(TEXT("unread"), Session.bUnread);
+				Sessions.Add(MoveTemp(Session));
+			}
+		}
+		UE_LOG(LogPet, Log, TEXT("收到 sessions_snapshot: %d 个 Kimi Code 会话"), Sessions.Num());
+		if (OnSessionsSnapshot)
+		{
+			OnSessionsSnapshot(Sessions);
+		}
+	}
 	else if (Type == TEXT("tasks_snapshot"))
 	{
 		const TArray<TSharedPtr<FJsonValue>>* Tasks = nullptr;
@@ -517,13 +563,38 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		bool Resume = false;
 		Payload->TryGetStringField(TEXT("cwd"), Cwd);
 		Payload->TryGetBoolField(TEXT("resume"), Resume);
-		UE_LOG(LogPet, Log, TEXT("收到 session_start: cwd=%s resume=%d"), *Cwd, Resume ? 1 : 0);
+		UE_LOG(LogPet, Log, TEXT("收到 session_start: session=%s cwd=%s resume=%d"), *SessionId, *Cwd, Resume ? 1 : 0);
+		if (!SessionId.IsEmpty() && OnSessionStart)
+		{
+			OnSessionStart(SessionId, Cwd, Resume);
+		}
 	}
 	else if (Type == TEXT("session_end"))
 	{
 		FString Reason;
 		Payload->TryGetStringField(TEXT("reason"), Reason);
-		UE_LOG(LogPet, Log, TEXT("收到 session_end: reason=%s"), *Reason);
+		UE_LOG(LogPet, Log, TEXT("收到 session_end: session=%s reason=%s"), *SessionId, *Reason);
+		if (!SessionId.IsEmpty() && OnSessionEnd)
+		{
+			OnSessionEnd(SessionId, Reason);
+		}
+	}
+	else if (Type == TEXT("session_state"))
+	{
+		bool bWorking = false;
+		bool bUnread = false;
+		if (SessionId.IsEmpty() || !Payload->TryGetBoolField(TEXT("working"), bWorking) ||
+			!Payload->TryGetBoolField(TEXT("unread"), bUnread))
+		{
+			UE_LOG(LogPet, Warning, TEXT("协议: session_state 字段非法，忽略"));
+			return;
+		}
+		UE_LOG(LogPet, Log, TEXT("收到 session_state: session=%s working=%d unread=%d"),
+			*SessionId, bWorking ? 1 : 0, bUnread ? 1 : 0);
+		if (OnSessionState)
+		{
+			OnSessionState(SessionId, bWorking, bUnread);
+		}
 	}
 	else if (Type == TEXT("protocol_error"))
 	{

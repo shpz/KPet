@@ -14,10 +14,12 @@ export const MESSAGE_TYPES = [
   'hello', // 双向 | 连接建立后首条 | 握手与版本协商
   'session_start', // 守→渲 | SessionStart
   'session_end', // 守→渲 | SessionEnd
+  'session_state', // 守→渲 | 单个会话的工作/未读状态
   'pet_state', // 守→渲 | 守护进程状态推导 | 状态切换的唯一权威消息
   'task_start', // 守→渲 | PreToolUse / SubagentStart | 悬浮卡列表项
   'task_end', // 守→渲 | PostToolUse(Failure) / SubagentStop | 触发完成气泡
   'tasks_snapshot', // 守→渲 | 连接建立 / 渲染进程重启后 | 全量状态恢复
+  'sessions_snapshot', // 守→渲 | 连接建立 / 渲染进程重启后 | CLI 历史与活跃会话目录
   'notify', // 守→渲 | 任务完成/失败、Notification | 消息气泡
   'open_tui', // 渲→守 | 点击宠物 / 点击气泡 | 请求打开终端
   'heartbeat', // 渲→守 | 每 3 秒 | 保活心跳
@@ -62,6 +64,12 @@ export interface SessionEndPayload {
   reason: string;
 }
 
+/** 单个会话的展示状态（通过信封 session_id 关联会话）。 */
+export interface SessionStatePayload {
+  working: boolean;
+  unread: boolean;
+}
+
 export type PetStateValue = 'Idle' | 'Working';
 
 export interface PetStatePayload {
@@ -95,6 +103,22 @@ export interface TaskInfo {
 
 export interface TasksSnapshotPayload {
   tasks: TaskInfo[];
+}
+
+/** sessions_snapshot 中的单条 CLI 会话展示项。 */
+export interface SessionSnapshotItem {
+  session_id: string;
+  title: string;
+  cwd: string;
+  active: boolean;
+  working: boolean;
+  unread: boolean;
+  /** CLI state.json 的 updatedAt，统一为 Int64 毫秒时间戳；未落盘的活跃会话为 0。 */
+  updated_at: number;
+}
+
+export interface SessionsSnapshotPayload {
+  sessions: SessionSnapshotItem[];
 }
 
 export type NotifyLevel = 'info' | 'success' | 'error';
@@ -147,10 +171,12 @@ export interface PayloadMap {
   hello: HelloPayload;
   session_start: SessionStartPayload;
   session_end: SessionEndPayload;
+  session_state: SessionStatePayload;
   pet_state: PetStatePayload;
   task_start: TaskStartPayload;
   task_end: TaskEndPayload;
   tasks_snapshot: TasksSnapshotPayload;
+  sessions_snapshot: SessionsSnapshotPayload;
   notify: NotifyPayload;
   open_tui: OpenTuiPayload;
   heartbeat: HeartbeatPayload;

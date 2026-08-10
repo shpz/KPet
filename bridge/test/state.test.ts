@@ -36,7 +36,7 @@ function byType(out: OutgoingMessage[], type: string): OutgoingMessage[] {
   return out.filter((m) => m.type === type);
 }
 
-test('SessionStart：记录活跃会话、下发 session_start（cwd/resume）、宠物保持 Idle', () => {
+test('SessionStart：记录活跃会话、下发 session_start + session_state(false,false)、宠物保持 Idle', () => {
   const { machine } = makeMachine();
   const r = machine.processHostEvent(ev('SessionStart', 's1'));
   assert.equal(r.ok, true);
@@ -44,6 +44,10 @@ test('SessionStart：记录活跃会话、下发 session_start（cwd/resume）�
   const ss = byType(r.out, 'session_start');
   assert.equal(ss.length, 1);
   assert.equal((ss[0] as { payload: { cwd: string } }).payload.cwd, 'D:\\ws');
+  const state = byType(r.out, 'session_state');
+  assert.equal(state.length, 1);
+  assert.equal(state[0]!.session_id, 's1');
+  assert.deepEqual(state[0]!.payload, { working: false, unread: false });
   assert.equal(machine.activeSessions, 1);
   assert.equal(machine.state, 'Idle');
   const snap = machine.getSnapshot();
@@ -65,7 +69,23 @@ test('UserPromptSubmit：会话转忙 → pet_state Working（reason=user_prompt
   const ps = byType(r.out, 'pet_state');
   assert.equal(ps.length, 1);
   assert.deepEqual(ps[0]!.payload, { state: 'Working', reason: 'user_prompt' });
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: true, unread: false });
   assert.equal(machine.state, 'Working');
+});
+
+test('UserPromptSubmit：清除会话未读标记并保持 working=true', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  machine.processHostEvent(ev('Stop', 's1'));
+  const r = machine.processHostEvent(ev('UserPromptSubmit', 's1'));
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: true, unread: false });
+  assert.deepEqual(machine.getSnapshot().sessions[0], {
+    sessionId: 's1',
+    cwd: 'D:\\ws',
+    resume: false,
+    busy: true,
+    unread: false,
+  });
 });
 
 test('PreToolUse：生成任务 id 下发 task_start（标题取 tool_input.command），保持 Working', () => {
@@ -172,6 +192,7 @@ test('Stop：会话转闲，无忙会话 → pet_state Idle；未完成任务静
   assert.equal(machine.getSnapshot().tasks.length, 0, 'Stop 后任务表清空');
   assert.equal(machine.drainThrottled('s1', true).length, 0, '节流缓冲一并丢弃');
   assert.equal(byType(r.out, 'notify').length, 0);
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: true });
 });
 
 test('StopFailure：转 Idle + notify(error)「任务出错」，不弹完成气泡', () => {
@@ -182,6 +203,7 @@ test('StopFailure：转 Idle + notify(error)「任务出错」，不弹完成气
   const notify = byType(r.out, 'notify');
   assert.equal(notify.length, 1);
   assert.deepEqual((notify[0] as { payload: unknown }).payload, { text: '任务出错', level: 'error' });
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: true });
 });
 
 test('Interrupt：转 Idle，不弹完成气泡（§3.4）', () => {
@@ -190,6 +212,15 @@ test('Interrupt：转 Idle，不弹完成气泡（§3.4）', () => {
   const r = machine.processHostEvent(ev('Interrupt', 's1'));
   assert.deepEqual(byType(r.out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'interrupt' });
   assert.equal(byType(r.out, 'notify').length, 0);
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: false });
+});
+
+test('Interrupt：保留已有 unread 标记，只更新 working=false', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  machine.processHostEvent(ev('Stop', 's1'));
+  const r = machine.processHostEvent(ev('Interrupt', 's1'));
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: true });
 });
 
 test('Notification：notify(success) 气泡，不改主状态（Working 期间到达）', () => {
@@ -238,7 +269,8 @@ test('多会话汇总：任一会话忙 → Working，全部闲 → Idle（§3.4
   machine.processHostEvent(ev('UserPromptSubmit', 's2'));
   assert.equal(machine.state, 'Working');
   const r = machine.processHostEvent(ev('Stop', 's1'));
-  assert.equal(r.out.length, 0, 's2 仍忙，状态不切换');
+  assert.equal(byType(r.out, 'pet_state').length, 0, 's2 仍忙，状态不切换');
+  assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: true });
   assert.equal(machine.state, 'Working');
   const r2 = machine.processHostEvent(ev('Stop', 's2'));
   assert.deepEqual(byType(r2.out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'stop' });
@@ -282,6 +314,7 @@ test('卡死兜底（§3.4）：忙会话超过 staleMinutes 无事件 → 强�
   advance(10 * 60_000 + 1000); // 超过 10 分钟
   const out = machine.markStaleSessions();
   assert.deepEqual(byType(out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'stale' });
+  assert.deepEqual(byType(out, 'session_end')[0]!.payload, { reason: 'stale' });
   assert.equal(machine.state, 'Idle');
   assert.equal(machine.getSnapshot().tasks.length, 0);
   assert.equal(machine.activeSessions, 0, '超时会话整体回收（防孤儿会话卡死退出倒计时）');
@@ -296,13 +329,14 @@ test('卡死兜底：未超时的忙会话不动', () => {
   assert.equal(machine.activeSessions, 1);
 });
 
-test('卡死兜底：idle 会话超时同样回收（不产生 pet_state，不打扰）', () => {
+test('卡死兜底：idle 会话超时同样回收并下发 session_end(stale)', () => {
   const { machine, advance } = makeMachine(10);
   machine.processHostEvent(ev('SessionStart', 's1'));
   machine.processHostEvent(ev('SessionStart', 's2'));
   advance(10 * 60_000 + 1000);
   const out = machine.markStaleSessions();
-  assert.equal(out.length, 0, '全闲超时只回收会话，无状态切换消息');
+  assert.equal(byType(out, 'pet_state').length, 0, '全闲超时不产生状态切换消息');
+  assert.deepEqual(byType(out, 'session_end').map((m) => m.payload), [{ reason: 'stale' }, { reason: 'stale' }]);
   assert.equal(machine.activeSessions, 0);
 });
 
@@ -375,6 +409,19 @@ test('SessionEnd 丢弃该会话节流缓冲（已死会话的任务消息不再
   machine.processHostEvent(ev('SessionEnd', 's1'));
   assert.equal(machine.drainThrottled('s1', true).length, 0);
   assert.equal(machine.hasPendingThrottle('s1'), false);
+});
+
+test('markSessionRead：打开会话清除 unread 并返回 session_state 更新', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  machine.processHostEvent(ev('Stop', 's1'));
+  const update = machine.markSessionRead('s1');
+  assert.ok(update);
+  assert.equal(update!.type, 'session_state');
+  assert.equal(update!.session_id, 's1');
+  assert.deepEqual(update!.payload, { working: false, unread: false });
+  assert.equal(machine.markSessionRead('s1'), null, '重复打开已读会话不重复下发');
+  assert.equal(machine.markSessionRead('missing'), null, '会话不存在时不生成更新');
 });
 
 test('同会话重开（SessionStart 再次到达）：任务表与节流缓冲重置', () => {

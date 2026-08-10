@@ -28,5 +28,16 @@ public class Pet : ModuleRules
 			"Json",
 			"JsonUtilities"
 		});
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[]
+			{
+				"MovieScene",
+				"MovieSceneTracks",
+				"UMGEditor",
+				"UnrealEd"
+			});
+		}
 	}
 }

@@ -23,7 +23,13 @@ import { createLineFramedServer } from './pipes.js';
 import { RendererSupervisor, type SpawnFn } from './renderer.js';
 import { replayStagingDir } from './staging.js';
 import { PetStateMachine, type OutgoingMessage } from './state.js';
-import { openTui } from './terminal.js';
+import { openTui, type OpenTuiOptions, type OpenTuiResult } from './terminal.js';
+import {
+  mergeSessionSnapshots,
+  readSessionCatalog,
+  type SessionCatalogEntry,
+  type SessionCatalogReader,
+} from './session-catalog.js';
 import { getEventPipeName, getControlPipeName } from '../bridge/user.js';
 import {
   PROTOCOL_VERSION,
@@ -64,6 +70,10 @@ export interface DaemonAppOptions {
   onExit?: (reason: ShutdownReason) => void;
   /** 时钟注入（测试用），缺省 Date.now。 */
   now?: () => number;
+  /** 终端唤起函数注入（测试用），缺省使用 openTui。 */
+  openTuiFn?: (opts: OpenTuiOptions) => Promise<OpenTuiResult>;
+  /** CLI 会话目录读取函数注入（测试用），缺省读取 KIMI_CODE_HOME/session_index.jsonl。 */
+  sessionCatalog?: SessionCatalogReader;
   /** 渲染进程收到 shutdown 后的强制结束宽限（毫秒），缺省 3000。 */
   exitGraceMs?: number;
 }
@@ -80,6 +90,10 @@ export class DaemonApp {
   private readonly stagingDir: string;
   private readonly onExit: (reason: ShutdownReason) => void;
   private readonly exitGraceMs: number;
+  private readonly openTuiFn: (opts: OpenTuiOptions) => Promise<OpenTuiResult>;
+  private readonly sessionCatalogFn: SessionCatalogReader;
+  private sessionCatalogEntries: SessionCatalogEntry[] = [];
+  private sessionCatalogLoaded = false;
 
   private eventServer: net.Server | null = null;
   private controlServer: net.Server | null = null;
@@ -100,6 +114,8 @@ export class DaemonApp {
     this.stagingDir = opts.stagingDir ?? getStagingDir();
     this.onExit = opts.onExit ?? (() => process.exit(0));
     this.exitGraceMs = opts.exitGraceMs ?? RENDERER_EXIT_GRACE_MS;
+    this.openTuiFn = opts.openTuiFn ?? openTui;
+    this.sessionCatalogFn = opts.sessionCatalog ?? (() => readSessionCatalog());
     const now = opts.now ?? Date.now;
 
     this.state = new PetStateMachine({
@@ -269,25 +285,60 @@ export class DaemonApp {
       }),
     );
     const snap = this.state.getSnapshot();
+    this.sessionCatalogEntries = this.readSessionCatalogSafely();
+    this.sessionCatalogLoaded = true;
+    const sessionsSnapshot = mergeSessionSnapshots(this.sessionCatalogEntries, snap.sessions);
+    session.send(createEnvelope('sessions_snapshot', { sessions: sessionsSnapshot }, {}));
     for (const s of snap.sessions) {
       session.send(createEnvelope('session_start', { cwd: s.cwd ?? '', resume: s.resume }, { session_id: s.sessionId }));
+      session.send(
+        createEnvelope(
+          'session_state',
+          { working: s.busy, unread: s.unread },
+          { session_id: s.sessionId },
+        ),
+      );
     }
     session.send(createEnvelope('pet_state', { state: snap.state, reason: snap.reason }, {}));
     session.send(createEnvelope('tasks_snapshot', { tasks: snap.tasks }, {}));
     this.logger.info(
-      `快照回放: ${snap.sessions.length} 个会话, pet_state=${snap.state}(${snap.reason}), ${snap.tasks.length} 个未完成任务`,
+      `快照回放: ${sessionsSnapshot.length} 个目录会话（${snap.sessions.length} 个活跃）, pet_state=${snap.state}(${snap.reason}), ${snap.tasks.length} 个未完成任务`,
     );
   }
 
   /** open_tui（§4.5-3）：会话 id 为空 → 最近会话；cwd 取会话 cwd，取不到回退用户主目录。 */
   private onOpenTui(payload: OpenTuiPayload): void {
-    const sessionId = payload.session_id ?? this.state.mostRecentSession()?.sessionId ?? null;
-    const cwd = (sessionId ? this.state.getSessionCwd(sessionId) : null) ?? this.state.mostRecentSession()?.cwd ?? os.homedir();
+    if (!this.sessionCatalogLoaded) {
+      this.sessionCatalogEntries = this.readSessionCatalogSafely();
+      this.sessionCatalogLoaded = true;
+    }
+    const recentActive = this.state.mostRecentSession();
+    const requestedSession = payload.session_id;
+    const sessionId = requestedSession ?? recentActive?.sessionId ?? this.sessionCatalogEntries[0]?.sessionId ?? null;
+    const catalogEntry = sessionId
+      ? this.sessionCatalogEntries.find((entry) => entry.sessionId === sessionId)
+      : undefined;
+    const cwd = (sessionId ? this.state.getSessionCwd(sessionId) : null) ?? catalogEntry?.cwd ?? recentActive?.cwd ?? os.homedir();
+    if (sessionId) {
+      const readUpdate = this.state.markSessionRead(sessionId);
+      if (readUpdate) this.sendToRenderer(readUpdate);
+    }
     this.logger.info(`open_tui source=${payload.source} session=${sessionId ?? '(最近会话)'} cwd=${cwd}`);
-    void openTui({ terminal: this.config.terminal, cwd, sessionId }).then((res) => {
+    void this.openTuiFn({ terminal: this.config.terminal, cwd, sessionId }).then((res) => {
       if (res.ok) this.logger.info(`open_tui 唤起成功（${res.terminal}）`);
       else this.logger.warn(`open_tui 唤起失败（${res.terminal}）: ${res.error ?? ''}`);
     });
+  }
+
+  /** 目录属于外部 CLI 状态，读取失败时按空目录处理，不能阻断握手。 */
+  private readSessionCatalogSafely(): SessionCatalogEntry[] {
+    try {
+      return this.sessionCatalogFn();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`读取 Kimi Code 会话目录失败: ${detail}`);
+      return [];
+    }
   }
 
   /** 下发一条消息给渲染进程；未连接时丢弃（快照在握手时补发，§2.2 D1）。 */

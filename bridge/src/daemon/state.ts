@@ -23,6 +23,7 @@ import type {
   PetStateValue,
   SessionEndPayload,
   SessionStartPayload,
+  SessionStatePayload,
   TaskEndPayload,
   TaskInfo,
   TaskStartPayload,
@@ -44,6 +45,8 @@ export interface Session {
   /** 是否为恢复会话（SessionStart matcher=resume，§3.2）。 */
   resume: boolean;
   busy: boolean;
+  /** 是否有尚未在会话面板中查看的新回复。 */
+  unread: boolean;
   /** 最近一次事件时间（epoch ms），用于卡死兜底判定。 */
   lastEventAt: number;
   tasks: Map<string, TaskRecord>;
@@ -61,6 +64,7 @@ export interface TaskRecord {
 export type OutgoingMessage =
   | { type: 'session_start'; session_id: string; payload: SessionStartPayload }
   | { type: 'session_end'; session_id: string; payload: SessionEndPayload }
+  | { type: 'session_state'; session_id: string; payload: SessionStatePayload }
   | { type: 'pet_state'; session_id: null; payload: { state: PetStateValue; reason: string } }
   | { type: 'task_start'; session_id: string; payload: TaskStartPayload }
   | { type: 'task_end'; session_id: string; payload: TaskEndPayload }
@@ -84,7 +88,7 @@ export interface ProcessResult {
 
 /** 快照内容（§4.5-1/4 补发：活跃会话 + 当前 pet_state + 未完成任务列表）。 */
 export interface SnapshotData {
-  sessions: Array<{ sessionId: string; cwd: string | null; resume: boolean }>;
+  sessions: Array<{ sessionId: string; cwd: string | null; resume: boolean; busy: boolean; unread: boolean }>;
   state: PetStateValue;
   reason: string;
   tasks: TaskInfo[];
@@ -216,6 +220,8 @@ export class PetStateMachine {
         sessionId: s.sessionId,
         cwd: s.cwd,
         resume: s.resume,
+        busy: s.busy,
+        unread: s.unread,
       })),
       state: this.currentState,
       reason: this.stateReason,
@@ -258,22 +264,27 @@ export class PetStateMachine {
       case 'SessionStart':
         // 记录活跃会话；同 id 重开则重置（清空旧任务与节流缓冲）；忙标志复位后重判主状态
         session.busy = false;
+        session.unread = false;
         session.resume = extractResume(parsed);
         this.clearSessionTasks(session);
         this.recomputeIdle(out, 'session_start');
         out.push({ type: 'session_start', session_id: sessionId, payload: { cwd: session.cwd ?? '', resume: session.resume } });
+        out.push(this.makeSessionState(session));
         break;
 
       case 'UserPromptSubmit':
         // 该会话标记为忙 → Working（比等 PreToolUse 更早，§3.4）
         session.busy = true;
+        session.unread = false;
         this.setWorking(out, 'user_prompt');
+        out.push(this.makeSessionState(session));
         break;
 
       case 'PreToolUse':
       case 'SubagentStart': {
         session.busy = true;
         this.setWorking(out, 'tool_use');
+        out.push(this.makeSessionState(session));
         const task = this.addTask(session, parsed);
         this.queuePending(sessionId, {
           kind: 'task_start',
@@ -315,12 +326,16 @@ export class PetStateMachine {
       case 'Stop':
         // 该会话转闲；任务静默清空（不发 task_end：Stop 表示本轮工作已收尾，不弹完成气泡）
         this.idleSession(session);
+        session.unread = true;
         this.recomputeIdle(out, 'stop');
+        out.push(this.makeSessionState(session));
         break;
 
       case 'StopFailure':
         this.idleSession(session);
+        session.unread = true;
         this.recomputeIdle(out, 'stop_failure');
+        out.push(this.makeSessionState(session));
         out.push({ type: 'notify', session_id: sessionId, payload: { text: '任务出错', level: 'error' } });
         break;
 
@@ -328,6 +343,8 @@ export class PetStateMachine {
         // 该会话转闲，不弹完成气泡（§3.4）
         this.idleSession(session);
         this.recomputeIdle(out, 'interrupt');
+        // Interrupt 不改变 unread：它表示中断，而不是新的 Agent 回复。
+        out.push(this.makeSessionState(session));
         break;
 
       case 'Notification':
@@ -379,6 +396,8 @@ export class PetStateMachine {
           this.idleSession(s);
           this.recomputeIdle(out, 'stale');
         }
+        // 渲染进程必须收到结束事件，否则面板会残留已经被守护进程回收的会话行。
+        out.push({ type: 'session_end', session_id: sid, payload: { reason: 'stale' } });
         stale.push(sid);
       }
     }
@@ -431,6 +450,18 @@ export class PetStateMachine {
     return this.pending.has(sessionId);
   }
 
+  /**
+   * 打开指定会话后标记为已读，并返回应下发给渲染进程的状态更新。
+   * 会话不存在时返回 null（例如会话已结束或已被 stale 回收）。
+   */
+  markSessionRead(sessionId: string): OutgoingMessage | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    if (!session.unread) return null;
+    session.unread = false;
+    return this.makeSessionState(session);
+  }
+
   /** 所有会话的待冲刷缓冲都丢弃（调用方退出/清场时）。 */
   clearAllPending(): void {
     this.pending.clear();
@@ -449,6 +480,7 @@ export class PetStateMachine {
         cwd: str(parsed['cwd']),
         resume: extractResume(parsed),
         busy: false,
+        unread: false,
         lastEventAt: now,
         tasks: new Map(),
       };
@@ -538,6 +570,14 @@ export class PetStateMachine {
       this.pending.set(sessionId, bucket);
     }
     bucket.msgs.push(msg);
+  }
+
+  private makeSessionState(session: Session): { type: 'session_state'; session_id: string; payload: SessionStatePayload } {
+    return {
+      type: 'session_state',
+      session_id: session.sessionId,
+      payload: { working: session.busy, unread: session.unread },
+    };
   }
 }
 

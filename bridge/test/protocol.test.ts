@@ -107,8 +107,8 @@ test('validateEnvelope：id 可选，缺省信封通过（§4.2 id 可选）', (
   assert.equal('id' in input, false);
 });
 
-test('isKnownType 覆盖 §4.3 全部 14 种消息类型', () => {
-  assert.equal(MESSAGE_TYPES.length, 14);
+test('isKnownType 覆盖协议全部 16 种消息类型', () => {
+  assert.equal(MESSAGE_TYPES.length, 16);
   for (const t of MESSAGE_TYPES) assert.equal(isKnownType(t), true);
   assert.equal(isKnownType('nope'), false);
 });

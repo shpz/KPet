@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/Runnable.h"
+#include "Communication/PetSessionTypes.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Windows.h>
@@ -38,14 +39,18 @@ public:
 
 	bool IsConnected() const { return bConnected.load(); }
 
-	/** 上报单击（§6.5 → open_tui，source="pet"）。 */
-	void SendOpenTui();
+	/** 上报会话打开请求；SessionId 为空时恢复最近会话。 */
+	void SendOpenTui(const FString& SessionId = FString());
 
 	/** 上报拖拽结束（§6.4 → pet_moved，含所在显示器 id）。 */
 	void SendPetMoved(int32 X, int32 Y);
 
 	// ---- 事件回调（游戏线程触发） ----
 	TFunction<void(const FString& State, const FString& Reason)> OnPetState;
+	TFunction<void(const TArray<FPetSessionInfo>& Sessions)> OnSessionsSnapshot;
+	TFunction<void(const FString& SessionId, const FString& Cwd, bool bResume)> OnSessionStart;
+	TFunction<void(const FString& SessionId, const FString& Reason)> OnSessionEnd;
+	TFunction<void(const FString& SessionId, bool bWorking, bool bUnread)> OnSessionState;
 	TFunction<void(const FString& Reason)> OnShutdown;
 
 private:

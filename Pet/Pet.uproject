@@ -7,7 +7,7 @@
 		{
 			"Name": "Pet",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreLoadingScreen"
 		}
 	],
 	"Plugins": [

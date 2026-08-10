@@ -2,6 +2,9 @@
 #include "Pet.h"
 
 static const TCHAR* PetWindowClassName = TEXT("KimiPetLayeredWindow");
+static constexpr UINT PetCameraWheelMessage = WM_APP + 51;
+static constexpr UINT PetCameraRotateMessage = WM_APP + 52;
+PetLayeredWindow* PetLayeredWindow::MouseHookOwner = nullptr;
 
 bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 {
@@ -62,12 +65,43 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 	// 立即上一帧全透明画面（DibBits 已清零）：否则首个有效 capture 帧上屏之前，
 	// 窗口从未调用过 UpdateLayeredWindow，DWM 会把它显示为纯黑方块
 	UpdateOnScreen();
+	CameraCursor = CreateCameraCursor();
+	MouseHookOwner = this;
+	HMODULE HookModule = GetModuleHandle(TEXT("UnrealEditor-Pet.dll"));
+	if (!HookModule)
+	{
+		HookModule = GetModuleHandle(nullptr);
+	}
+	MouseHook = SetWindowsHookEx(WH_MOUSE_LL, &PetLayeredWindow::StaticLowLevelMouseProc, HookModule, 0);
+	if (!MouseHook)
+	{
+		UE_LOG(LogPet, Warning, TEXT("安装摄像机滚轮监听失败: %u，将回退为窗口滚轮消息"), GetLastError());
+	}
 	UE_LOG(LogPet, Log, TEXT("Layered window created: %dx%d at (%d,%d)"), Size, Size, Pos.x, Pos.y);
 	return true;
 }
 
 void PetLayeredWindow::Destroy()
 {
+	if (MouseHook)
+	{
+		UnhookWindowsHookEx(MouseHook);
+		MouseHook = nullptr;
+	}
+	if (MouseHookOwner == this)
+	{
+		MouseHookOwner = nullptr;
+	}
+	if (GetCapture() == WindowHandle)
+	{
+		ReleaseCapture();
+	}
+	::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+	if (CameraCursor)
+	{
+		DestroyCursor(CameraCursor);
+		CameraCursor = nullptr;
+	}
 	if (WindowHandle)
 	{
 		DestroyWindow(WindowHandle);
@@ -75,6 +109,23 @@ void PetLayeredWindow::Destroy()
 	}
 	if (MemDC) { DeleteDC(MemDC); MemDC = nullptr; }
 	if (DibSection) { DeleteObject(DibSection); DibSection = nullptr; DibBits = nullptr; }
+}
+
+void PetLayeredWindow::Tick(float)
+{
+	if (bCameraAdjusting && (GetAsyncKeyState('R') & 0x8000) == 0)
+	{
+		bSuppressClickUntilButtonUp = true;
+		bCameraAdjusting = false;
+		ReleaseCapture();
+		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+	}
+	if (bWheelCameraCursorActive &&
+		((GetAsyncKeyState('R') & 0x8000) == 0 || GetTickCount64() >= WheelCameraCursorExpireTick))
+	{
+		bWheelCameraCursorActive = false;
+		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+	}
 }
 
 void PetLayeredWindow::Present(const uint8* SrcBGRA)
@@ -175,12 +226,33 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 {
 	switch (Msg)
 	{
+	case WM_NCHITTEST:
+	{
+		POINT ScreenPoint = {
+			static_cast<LONG>(static_cast<short>(LOWORD(LParam))),
+			static_cast<LONG>(static_cast<short>(HIWORD(LParam)))
+		};
+		return IsOpaqueScreenPoint(ScreenPoint) ? HTCLIENT : HTTRANSPARENT;
+	}
 	case WM_LBUTTONDOWN:
 	{
 		// 只有不透明像素会收到此消息（透明像素系统自动穿透），记录锚点等待超阈值
 		// 客户区坐标 == 相对窗口左上（WS_POPUP 无边框）
 		const int32 ClientX = static_cast<int32>(static_cast<short>(LOWORD(LParam)));
 		const int32 ClientY = static_cast<int32>(static_cast<short>(HIWORD(LParam)));
+		bSuppressClickUntilButtonUp = false;
+		if ((GetAsyncKeyState('R') & 0x8000) != 0)
+		{
+			bCameraAdjusting = true;
+			bDragging = false;
+			bDragThresholdMet = false;
+			PressTick = 0;
+			bSuppressClickUntilButtonUp = true;
+			SetCapture(WindowHandle);
+			GetCursorPos(&LastCameraCursor);
+			::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
+			return 0;
+		}
 		bDragging = true;
 		bDragThresholdMet = false;
 		PressTick = GetTickCount64(); // §6.5-1：按下只记录时间戳与锚点，不做任何动作
@@ -193,6 +265,39 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 	}
 	case WM_MOUSEMOVE:
 	{
+		if (bDragging && (GetAsyncKeyState('R') & 0x8000) != 0)
+		{
+			bDragging = false;
+			bCameraAdjusting = true;
+			bDragThresholdMet = false;
+			PressTick = 0;
+			bSuppressClickUntilButtonUp = true;
+			GetCursorPos(&LastCameraCursor);
+			::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
+			return 0;
+		}
+		if (bCameraAdjusting)
+		{
+			if ((GetAsyncKeyState('R') & 0x8000) == 0)
+			{
+				bSuppressClickUntilButtonUp = true;
+				bCameraAdjusting = false;
+				ReleaseCapture();
+				::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+				return 0;
+			}
+			POINT Cursor;
+			GetCursorPos(&Cursor);
+			const int32 DeltaX = Cursor.x - LastCameraCursor.x;
+			const int32 DeltaY = Cursor.y - LastCameraCursor.y;
+			LastCameraCursor = Cursor;
+			if ((DeltaX != 0 || DeltaY != 0) && OnCameraRotate)
+			{
+				OnCameraRotate(static_cast<float>(DeltaX), static_cast<float>(DeltaY));
+			}
+			::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
+			return 0;
+		}
 		if (bDragging)
 		{
 			POINT Cursor;
@@ -220,13 +325,33 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 	}
 	case WM_LBUTTONUP:
 	{
+		if (bCameraAdjusting)
+		{
+			bCameraAdjusting = false;
+			ReleaseCapture();
+			bSuppressClickUntilButtonUp = false;
+			::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+			return 0;
+		}
+		if (bSuppressClickUntilButtonUp)
+		{
+			bSuppressClickUntilButtonUp = false;
+			bDragging = false;
+			if (GetCapture() == WindowHandle)
+			{
+				ReleaseCapture();
+			}
+			return 0;
+		}
+		const bool bClick = bDragging && !bDragThresholdMet && (GetTickCount64() - PressTick < 800);
+		const bool bCompletedDrag = bDragging && bDragThresholdMet;
 		if (bDragging)
 		{
 			bDragging = false;
 			ReleaseCapture();
+			bSuppressClickUntilButtonUp = false;
 		}
 		// §6.5 单击判定：位移未超阈值（未进入拖拽）且按下时长 < 800ms → 单击；否则拖拽结束上报位置
-		const bool bClick = !bDragThresholdMet && (GetTickCount64() - PressTick < 800);
 		if (bClick)
 		{
 			if (OnClick)
@@ -234,7 +359,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 				OnClick();
 			}
 		}
-		else if (bDragThresholdMet)
+		else if (bCompletedDrag)
 		{
 			if (OnDragEnd)
 			{
@@ -244,6 +369,51 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		// 长按（>800ms 无位移）：MVP 不绑定功能，松开不触发点击（§6.5-4）
 		return 0;
 	}
+	case WM_MOUSEWHEEL:
+	{
+		POINT Cursor = {};
+		GetCursorPos(&Cursor);
+		if (!MouseHook && (GetAsyncKeyState('R') & 0x8000) != 0 && IsOpaqueScreenPoint(Cursor))
+		{
+			HandleCameraWheel(static_cast<float>(GET_WHEEL_DELTA_WPARAM(WParam)) / static_cast<float>(WHEEL_DELTA));
+			return 0;
+		}
+		return DefWindowProc(WindowHandle, Msg, WParam, LParam);
+	}
+	case PetCameraWheelMessage:
+	{
+		const int16 RawDelta = static_cast<int16>(LOWORD(WParam));
+		HandleCameraWheel(static_cast<float>(RawDelta) / static_cast<float>(WHEEL_DELTA));
+		return 0;
+	}
+	case PetCameraRotateMessage:
+	{
+		// 锁屏后的自动化桌面不会更新 GetAsyncKeyState。与滚轮回归消息相同，
+		// 该消息只复用已经存在的摄像机回调，不改变正常 R 加拖动输入路径。
+		const int16 DeltaX = static_cast<int16>(LOWORD(WParam));
+		const int16 DeltaY = static_cast<int16>(HIWORD(WParam));
+		if ((DeltaX != 0 || DeltaY != 0) && OnCameraRotate)
+		{
+			OnCameraRotate(static_cast<float>(DeltaX), static_cast<float>(DeltaY));
+		}
+		bWheelCameraCursorActive = true;
+		WheelCameraCursorExpireTick = GetTickCount64() + 250;
+		::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
+		return 0;
+	}
+	case WM_CANCELMODE:
+	case WM_CAPTURECHANGED:
+	{
+		const bool bWasInteracting = bCameraAdjusting || bDragging;
+		bCameraAdjusting = false;
+		bDragging = false;
+		if (bWasInteracting)
+		{
+			bSuppressClickUntilButtonUp = true;
+		}
+		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+		return 0;
+	}
 	case WM_SETCURSOR:
 	{
 		// 光标悬停在不透明像素（HTCLIENT）时，钉死为箭头并返回 TRUE 吃掉消息。
@@ -251,7 +421,8 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		// Slate 按自己的悬停状态反复 SetCursor 成别的光标，与本类光标来回打架 -> 肉眼闪烁。
 		if (LOWORD(LParam) == HTCLIENT)
 		{
-			::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+			const bool bCameraCursor = bCameraAdjusting || bWheelCameraCursorActive || ((GetAsyncKeyState('R') & 0x8000) != 0);
+			::SetCursor(bCameraCursor ? (CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS)) : LoadCursor(nullptr, IDC_ARROW));
 			return (LRESULT)1; // TRUE（UE 头文件环境里 TRUE 宏可能已被隐藏）
 		}
 		return DefWindowProc(WindowHandle, Msg, WParam, LParam);
@@ -266,4 +437,139 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 	default:
 		return DefWindowProc(WindowHandle, Msg, WParam, LParam);
 	}
+}
+
+LRESULT CALLBACK PetLayeredWindow::StaticLowLevelMouseProc(int32 Code, WPARAM WParam, LPARAM LParam)
+{
+	PetLayeredWindow* Owner = MouseHookOwner;
+	if (Code >= 0 && Owner && Owner->WindowHandle && WParam == WM_MOUSEWHEEL &&
+		(GetAsyncKeyState('R') & 0x8000) != 0)
+	{
+		const MSLLHOOKSTRUCT* MouseInfo = reinterpret_cast<const MSLLHOOKSTRUCT*>(LParam);
+		if (MouseInfo && Owner->IsOpaqueScreenPoint(MouseInfo->pt))
+		{
+			const int16 Delta = static_cast<int16>(HIWORD(MouseInfo->mouseData));
+			PostMessageW(Owner->WindowHandle, PetCameraWheelMessage, MAKEWPARAM(static_cast<uint16>(Delta), 0), 0);
+		}
+	}
+	return CallNextHookEx(Owner ? Owner->MouseHook : nullptr, Code, WParam, LParam);
+}
+
+bool PetLayeredWindow::IsOpaqueScreenPoint(const POINT& ScreenPoint) const
+{
+	if (!WindowHandle || !DibBits || !IsWindowVisible(WindowHandle))
+	{
+		return false;
+	}
+
+	const int32 X = ScreenPoint.x - Pos.x;
+	const int32 Y = ScreenPoint.y - Pos.y;
+	if (X < 0 || X >= Size || Y < 0 || Y >= Size)
+	{
+		return false;
+	}
+
+	const uint8* Pixels = static_cast<const uint8*>(DibBits);
+	return Pixels[(Y * Size + X) * 4 + 3] >= 16;
+}
+
+void PetLayeredWindow::HandleCameraWheel(float WheelDelta)
+{
+	if (FMath::IsNearlyZero(WheelDelta))
+	{
+		return;
+	}
+	if (OnCameraZoom)
+	{
+		OnCameraZoom(WheelDelta);
+	}
+	bWheelCameraCursorActive = true;
+	WheelCameraCursorExpireTick = GetTickCount64() + 250;
+	::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
+}
+
+HCURSOR PetLayeredWindow::CreateCameraCursor()
+{
+	constexpr int32 CursorSize = 32;
+	BITMAPV5HEADER Header = {};
+	Header.bV5Size = sizeof(Header);
+	Header.bV5Width = CursorSize;
+	Header.bV5Height = -CursorSize;
+	Header.bV5Planes = 1;
+	Header.bV5BitCount = 32;
+	Header.bV5Compression = BI_BITFIELDS;
+	Header.bV5RedMask = 0x00FF0000;
+	Header.bV5GreenMask = 0x0000FF00;
+	Header.bV5BlueMask = 0x000000FF;
+	Header.bV5AlphaMask = 0xFF000000;
+
+	void* ColorBits = nullptr;
+	HDC ScreenDC = GetDC(nullptr);
+	HBITMAP ColorBitmap = CreateDIBSection(ScreenDC, reinterpret_cast<BITMAPINFO*>(&Header), DIB_RGB_COLORS, &ColorBits, nullptr, 0);
+	ReleaseDC(nullptr, ScreenDC);
+	uint32 MaskBits[CursorSize] = {};
+	HBITMAP MaskBitmap = CreateBitmap(CursorSize, CursorSize, 1, 1, MaskBits);
+	if (!ColorBitmap || !MaskBitmap || !ColorBits)
+	{
+		if (ColorBitmap) DeleteObject(ColorBitmap);
+		if (MaskBitmap) DeleteObject(MaskBitmap);
+		return nullptr;
+	}
+
+	uint32* Pixels = static_cast<uint32*>(ColorBits);
+	FMemory::Memzero(Pixels, CursorSize * CursorSize * sizeof(uint32));
+	auto PutPixel = [Pixels](int32 X, int32 Y, uint32 Color)
+	{
+		if (X >= 0 && X < CursorSize && Y >= 0 && Y < CursorSize)
+		{
+			Pixels[Y * CursorSize + X] = Color;
+		}
+	};
+	// 白色相机机身、蓝色镜头与深色描边，热点位于左上取景角。
+	for (int32 Y = 9; Y <= 23; ++Y)
+	{
+		for (int32 X = 5; X <= 25; ++X)
+		{
+			const bool bBorder = X == 5 || X == 25 || Y == 9 || Y == 23;
+			PutPixel(X, Y, bBorder ? 0xFF172033 : 0xFFF4F7FC);
+		}
+	}
+	for (int32 Y = 6; Y <= 10; ++Y)
+	{
+		for (int32 X = 9; X <= 16; ++X)
+		{
+			PutPixel(X, Y, 0xFFF4F7FC);
+		}
+	}
+	for (int32 Y = 12; Y <= 20; ++Y)
+	{
+		for (int32 X = 12; X <= 20; ++X)
+		{
+			const int32 Dx = X - 16;
+			const int32 Dy = Y - 16;
+			if (Dx * Dx + Dy * Dy <= 16)
+			{
+				PutPixel(X, Y, 0xFF4BB0FF);
+			}
+		}
+	}
+	for (int32 Y = 12; Y <= 20; ++Y)
+	{
+		const int32 HalfWidth = (Y <= 16) ? Y - 11 : 21 - Y;
+		for (int32 X = 26; X <= 26 + HalfWidth; ++X)
+		{
+			PutPixel(X, Y, 0xFFF4F7FC);
+		}
+	}
+
+	ICONINFO Info = {};
+	Info.fIcon = 0;
+	Info.xHotspot = 5;
+	Info.yHotspot = 9;
+	Info.hbmMask = MaskBitmap;
+	Info.hbmColor = ColorBitmap;
+	HCURSOR Result = CreateIconIndirect(&Info);
+	DeleteObject(ColorBitmap);
+	DeleteObject(MaskBitmap);
+	return Result;
 }

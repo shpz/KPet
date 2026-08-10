@@ -33,15 +33,24 @@ function fakeChild(): FakeChild {
 interface Harness {
   supervisor: RendererSupervisor;
   children: FakeChild[];
+  spawnCalls: SpawnCall[];
   spawnCount: number;
+}
+
+interface SpawnCall {
+  command: string;
+  args: string[];
+  options: { cwd: string };
 }
 
 /** 构造测试台：假 spawn（每次返回新假子进程）、短退避间隔（10ms，逻辑同 1s/2s/4s/8s）。 */
 function makeHarness(opts: { rendererPath: string; maxAttempts?: number; windowS?: number }): Harness {
   const children: FakeChild[] = [];
+  const spawnCalls: SpawnCall[] = [];
   let spawnCount = 0;
-  const spawnFn: SpawnFn = () => {
+  const spawnFn: SpawnFn = (command, args, options) => {
     spawnCount++;
+    spawnCalls.push({ command, args: [...args], options: { ...options } });
     const child = fakeChild();
     children.push(child);
     // spawn 成功：由 supervisor 挂 error/exit 监听后再触发
@@ -61,6 +70,7 @@ function makeHarness(opts: { rendererPath: string; maxAttempts?: number; windowS
   return {
     supervisor,
     children,
+    spawnCalls,
     get spawnCount() {
       return spawnCount;
     },
@@ -82,6 +92,26 @@ function waitFor(cond: () => boolean, waitMs = 3000): Promise<void> {
 
 test('backoffDelayMs：1s/2s/4s/8s 指数序列，之后封顶 8s（§4.5-4）', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(backoffDelayMs), [1000, 2000, 4000, 8000, 8000, 8000]);
+});
+
+test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数（Slate 方案 §5.1）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
+  const exe = path.join(dir, 'KimiPet.exe');
+  fs.writeFileSync(exe, '');
+  try {
+    const h = makeHarness({ rendererPath: exe });
+    h.supervisor.start();
+    await waitFor(() => h.spawnCalls.length === 1);
+
+    assert.deepEqual(h.spawnCalls[0], {
+      command: exe,
+      args: ['-NOSPLASH', '-windowed', '-ResX=16', '-ResY=16'],
+      options: { cwd: dir },
+    });
+    assert.equal(h.spawnCalls[0]!.args.includes('-RenderOffScreen'), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('冷启动拉起渲染进程（§4.5-1）；崩溃后按 1s/2s/4s 退避重启', async () => {

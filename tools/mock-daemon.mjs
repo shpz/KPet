@@ -3,7 +3,8 @@
  * mock-daemon：控制管道（\\.\pipe\KimiPet.PET.<用户名>）上的模拟守护进程。
  * 用于在真实守护进程缺位时联调渲染进程（UE 侧 Pet 工程）：
  * - 收 hello / heartbeat / open_tui / pet_moved / protocol_error 等并打印
- * - 收到 hello 回 hello 并下发初始 pet_state:Idle，此后每 10 秒交替下发 Working/Idle（验证状态切换可视化）
+ * - 收到 hello 回 hello，并下发三条会话演示数据及初始 pet_state:Idle
+ * - 此后每 10 秒交替下发 Working/Idle 和逐会话工作状态（验证状态与三点动画）
  * - Ctrl+C 退出；退出后重启可验证渲染进程断线重连（§4.5-5：每 5 秒重连）
  *
  * 消息约定与 bridge/ 完全一致（§4.2）：UTF-8 JSON + '\n' 行分帧；未知类型忽略（§4.2 向前兼容）。
@@ -34,8 +35,11 @@ function getUserName() {
 
 const PIPE_NAME = `\\\\.\\pipe\\KimiPet.PET.${sanitizePipeUser(getUserName())}`;
 const ts = () => new Date().toISOString();
+const verificationMode = process.argv.includes('--verification-mode');
 
 let client = null; // 当前连接的渲染进程（单连接）
+let verificationStateTimer = null;
+let verificationShutdownTimer = null;
 
 const server = net.createServer((socket) => {
   if (client) {
@@ -78,13 +82,13 @@ const server = net.createServer((socket) => {
 });
 
 /** 按 §4.2 信封构造并发送一条消息（\n 行分帧）。 */
-function send(socket, type, payload) {
+function send(socket, type, payload, sessionId = null) {
   const msg = {
     v: 1,
     type,
     id: randomUUID(),
     ts: new Date().toISOString(),
-    session_id: null,
+    session_id: sessionId,
     payload,
   };
   socket.write(JSON.stringify(msg) + '\n');
@@ -110,19 +114,90 @@ function handleMessage(socket, line) {
         role: 'daemon',
         pid: process.pid,
         version: 'mock-daemon',
-        capabilities: ['pet_state', 'tasks_snapshot', 'task_start', 'task_end', 'notify', 'shutdown'],
+        capabilities: [
+          'pet_state',
+          'sessions_snapshot',
+          'session_state',
+          'tasks_snapshot',
+          'task_start',
+          'task_end',
+          'notify',
+          'shutdown',
+        ],
       });
+      const sessions = [
+          {
+            session_id: 'demo-working-session',
+            title: '正在工作的会话',
+            cwd: 'D:\\Workspace\\UnrealProject\\KimiPet',
+            active: true,
+            working: true,
+            unread: false,
+            updated_at: Date.now(),
+          },
+          {
+            session_id: 'demo-unread-session',
+            title: '有新回复的会话',
+            cwd: 'D:\\Workspace\\UnrealProject\\KimiPet',
+            active: true,
+            working: false,
+            unread: true,
+            updated_at: Date.now() - 1000,
+          },
+          {
+            session_id: 'demo-history-session',
+            title: '未激活的历史会话',
+            cwd: 'D:\\Workspace\\UnrealProject',
+            active: false,
+            working: false,
+            unread: false,
+            updated_at: Date.now() - 2000,
+          },
+        ];
+      if (verificationMode) {
+        for (let index = sessions.length; index < 50; index += 1) {
+          sessions.push({
+            session_id: `demo-history-session-${String(index).padStart(2, '0')}`,
+            title: `历史会话 ${String(index).padStart(2, '0')}`,
+            cwd: `D:\\Workspace\\UnrealProject\\History${String(index).padStart(2, '0')}`,
+            active: false,
+            working: false,
+            unread: false,
+            updated_at: Date.now() - index * 1000,
+          });
+        }
+      }
+      send(socket, 'sessions_snapshot', { sessions });
       send(socket, 'pet_state', { state: 'Idle', reason: 'mock:initial' });
-      console.log(`[${ts()}] 已回 hello 并下发 pet_state: Idle`);
+      console.log(`[${ts()}] 已回 hello，并下发 ${sessions.length} 条会话演示数据与 pet_state: Idle`);
+      if (verificationMode) console.log(`[${ts()}] VERIFY_CATALOG_SIZE=${sessions.length}`);
+      if (verificationMode && !verificationStateTimer) {
+        verificationStateTimer = setTimeout(() => {
+          if (!client) return;
+          send(client, 'session_state', { working: false, unread: false }, 'demo-working-session');
+          send(client, 'session_state', { working: false, unread: false }, 'demo-unread-session');
+          console.log(`[${ts()}] VERIFY_STATE_CLEARED`);
+        }, 5000);
+      }
       break;
     }
     case 'heartbeat':
       console.log(`[${ts()}] 收到心跳: pid=${p.pid} uptime_s=${p.uptime_s} state=${p.state}`);
       break;
     case 'open_tui':
+      if (typeof p.session_id === 'string' && p.session_id.length > 0) {
+        send(socket, 'session_state', { working: false, unread: false }, p.session_id);
+      }
       console.log(
         `[${ts()}] OPEN_TUI: source=${p.source} session_id=${msg.session_id ?? p.session_id ?? 'null'} task_id=${p.task_id ?? 'null'}`,
       );
+      if (verificationMode && !verificationShutdownTimer) {
+        verificationShutdownTimer = setTimeout(() => {
+          if (!client) return;
+          send(client, 'shutdown', { reason: 'verification_complete' });
+          console.log(`[${ts()}] VERIFY_SHUTDOWN_SENT`);
+        }, 3000);
+      }
       break;
     case 'pet_moved':
       console.log(`[${ts()}] 宠物位置: x=${p.x} y=${p.y} monitor_id=${p.monitor_id}`);
@@ -141,6 +216,9 @@ setInterval(() => {
   if (!client) return;
   state = state === 'Idle' ? 'Working' : 'Idle';
   send(client, 'pet_state', { state, reason: 'mock:interval' });
+  if (!verificationMode) {
+    send(client, 'session_state', { working: state === 'Working', unread: false }, 'demo-working-session');
+  }
   console.log(`[${ts()}] 下发 pet_state: ${state}`);
 }, 10_000);
 

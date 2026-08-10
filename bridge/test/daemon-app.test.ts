@@ -266,6 +266,78 @@ test('重连快照（§4.5-4）：握手时补发活跃会话 + 当前 pet_state
   }
 });
 
+test('会话状态快照与 open_tui：握手补发状态，打开会话清除 unread 并回传更新', { skip: !isWindows }, async () => {
+  const opened: Array<{ terminal: string; cwd: string; sessionId: string | null }> = [];
+  const t = await startApp({}, {
+    openTuiFn: async (opts) => {
+      opened.push(opts);
+      return { terminal: opts.terminal, ok: true };
+    },
+  });
+  try {
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"D:\\\\w"}');
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"Stop","session_id":"s1","cwd":"D:\\\\w"}');
+
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    const ss = await r.waitFor('session_start');
+    assert.equal(ss.session_id, 's1');
+    const snapshotState = await r.waitFor('session_state');
+    assert.equal(snapshotState.session_id, 's1');
+    assert.deepEqual(snapshotState.payload, { working: false, unread: true });
+
+    r.send(createEnvelope('open_tui', { session_id: 's1', source: 'pet' }));
+    const readState = await r.waitFor('session_state');
+    assert.equal(readState.session_id, 's1');
+    assert.deepEqual(readState.payload, { working: false, unread: false });
+    await waitUntil(() => opened.length === 1, 1000);
+    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\w', sessionId: 's1' });
+    r.close();
+  } finally {
+    await stopApp(t);
+  }
+});
+
+test('会话目录握手合并与历史 open_tui：目录项下发并使用目录 cwd', { skip: !isWindows }, async () => {
+  const opened: Array<{ terminal: string; cwd: string; sessionId: string | null }> = [];
+  const t = await startApp({}, {
+    sessionCatalog: () => [
+      { sessionId: 'history-1', title: '历史会话', cwd: 'D:\\history', updatedAt: 1234 },
+    ],
+    openTuiFn: async (opts) => {
+      opened.push(opts);
+      return { terminal: opts.terminal, ok: true };
+    },
+  });
+  try {
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"active-1","cwd":"D:\\\\active"}');
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    const sessions = await r.waitFor('sessions_snapshot');
+    assert.deepEqual(sessions.payload, {
+      sessions: [
+        {
+          session_id: 'history-1', title: '历史会话', cwd: 'D:\\history', active: false,
+          working: false, unread: false, updated_at: 1234,
+        },
+        {
+          session_id: 'active-1', title: 'active-1', cwd: 'D:\\active', active: true,
+          working: false, unread: false, updated_at: 0,
+        },
+      ],
+    });
+
+    r.send(createEnvelope('open_tui', { session_id: 'history-1', source: 'bubble' }));
+    await waitUntil(() => opened.length === 1, 1000);
+    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\history', sessionId: 'history-1' });
+    r.close();
+  } finally {
+    await stopApp(t);
+  }
+});
+
 test('并发风暴（§3.3/R9）：30 条转发器并发写入全部处理，互不干扰', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {

@@ -29,16 +29,29 @@ public:
 	 *  并把 A=0 像素的 RGB 清零（恢复预乘契约，防 ULW 加性虚影）后上屏。Src 至少 Size*Size*4 字节，紧密排列。 */
 	void Present(const uint8* SrcBGRA);
 
+	/** 驱动宠物窗口的摄像机输入状态与光标清理。 */
+	void Tick(float DeltaTime);
+
 	/** 单击宠物（§6.5，消息处理线程 = 游戏线程，直接调用）。 */
 	TFunction<void()> OnClick;
 
 	/** 拖拽结束（§6.4，参数为窗口左上角屏幕坐标）。 */
 	TFunction<void(int32 X, int32 Y)> OnDragEnd;
 
+	/** R 加左键拖动产生的摄像机轨道增量，单位为屏幕像素。 */
+	TFunction<void(float DeltaX, float DeltaY)> OnCameraRotate;
+
+	/** R 加滚轮产生的缩放增量，正数表示滚轮向上。 */
+	TFunction<void(float WheelDelta)> OnCameraZoom;
+
 private:
 	static LRESULT CALLBACK StaticWndProc(HWND Hwnd, UINT Msg, WPARAM WParam, LPARAM LParam);
+	static LRESULT CALLBACK StaticLowLevelMouseProc(int32 Code, WPARAM WParam, LPARAM LParam);
 	LRESULT HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam);
 	void UpdateOnScreen();
+	HCURSOR CreateCameraCursor();
+	void HandleCameraWheel(float WheelDelta);
+	bool IsOpaqueScreenPoint(const POINT& ScreenPoint) const;
 
 	HWND WindowHandle = nullptr;
 	HDC MemDC = nullptr;
@@ -52,6 +65,14 @@ private:
 	POINT DragAnchorCursor{ 0, 0 }; // 按下时的屏幕光标位置
 	POINT DragGrabOffset{ 0, 0 };   // 按下点相对窗口左上角的偏移
 	uint64 PressTick = 0;           // 左键按下时刻（GetTickCount64，§6.5 单击时长判定）
+	bool bCameraAdjusting = false;
+	bool bSuppressClickUntilButtonUp = false;
+	bool bWheelCameraCursorActive = false;
+	POINT LastCameraCursor{ 0, 0 };
+	HCURSOR CameraCursor = nullptr;
+	HHOOK MouseHook = nullptr;
+	uint64 WheelCameraCursorExpireTick = 0;
+	static PetLayeredWindow* MouseHookOwner;
 
 	int32 FrameCounter = 0;
 };

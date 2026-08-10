@@ -3,23 +3,19 @@
 #include "Pet.h"
 #include "Communication/PetControlClient.h"
 #include "Platform/PetLayeredWindow.h"
+#include "UI/PetSessionPanelWidget.h"
+#include "UI/PetSessionWindowHost.h"
 
+#include "Blueprint/UserWidget.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "Engine/GameViewportClient.h"
-#include "Engine/Engine.h"
-#include "TimerManager.h"
-#include "Widgets/SWindow.h"
-#include "GenericPlatform/GenericWindow.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformMisc.h"
+#include "Layout/SlateRect.h"
 
 #include "RHIGPUReadback.h"
 #include "RenderingThread.h"
-
-#include "Windows/AllowWindowsPlatformTypes.h"
-#include <Windows.h>
-#include "Windows/HideWindowsPlatformTypes.h"
 
 APetCapturePawn::APetCapturePawn()
 {
@@ -55,6 +51,10 @@ APetCapturePawn::~APetCapturePawn() = default;
 void APetCapturePawn::BeginPlay()
 {
 	Super::BeginPlay();
+	const FVector InitialOffset = Capture->GetRelativeLocation();
+	CameraDistance = FMath::Clamp(InitialOffset.Size(), CameraMinDistance, FMath::Max(CameraMinDistance, CameraMaxDistance));
+	InitialCameraDirection = InitialOffset.GetSafeNormal(UE_SMALL_NUMBER, FVector(-1.0f, 0.0f, 0.0f));
+	ApplyCameraTransform();
 
 	// 320x320 BGRA8 RT，清屏为全透明
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
@@ -77,23 +77,13 @@ void APetCapturePawn::BeginPlay()
 	{
 		WindowScreenPosition = PetWindow->GetScreenPosition();
 	}
+	InitializeSessionPanel();
 
 	ENQUEUE_RENDER_COMMAND(CreatePetReadback)(
 		[this](FRHICommandListImmediate&)
 		{
 			Readback = new FRHIGPUTextureReadback(TEXT("KimiPetReadback"));
 		});
-
-	// PIE 的 GameViewport 可能挂在编辑器主窗口中，不能对它调用 SW_HIDE。
-	// 仅非编辑器运行时隐藏游戏主窗口；主修复仍是启动参数 -RenderOffScreen。
-	if (!GIsEditor)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			FTimerHandle Timer;
-			World->GetTimerManager().SetTimer(Timer, FTimerDelegate::CreateUObject(this, &APetCapturePawn::HideGameWindow), 1.0f, false);
-		}
-	}
 
 	// 控制管道客户端：接入守护进程（§4.1 / §4.5-5），回调全部在游戏线程触发
 	ControlClient = new FPetControlClient();
@@ -111,11 +101,8 @@ void APetCapturePawn::BeginPlay()
 	{
 		PetWindow->OnClick = [this]()
 		{
-			UE_LOG(LogPet, Log, TEXT("单击宠物 -> 发送 open_tui (source=pet)"));
-			if (ControlClient)
-			{
-				ControlClient->SendOpenTui();
-			}
+			UE_LOG(LogPet, Log, TEXT("单击宠物 -> 排队切换会话面板"));
+			bSessionPanelTogglePending = true;
 		};
 		PetWindow->OnDragEnd = [this](int32 X, int32 Y)
 		{
@@ -125,40 +112,148 @@ void APetCapturePawn::BeginPlay()
 				ControlClient->SendPetMoved(X, Y);
 			}
 		};
+		PetWindow->OnCameraRotate = [this](float DeltaX, float DeltaY)
+		{
+			AdjustCameraRotation(DeltaX, DeltaY);
+		};
+		PetWindow->OnCameraZoom = [this](float WheelDelta)
+		{
+			AdjustCameraZoom(WheelDelta);
+		};
 	}
+	ControlClient->OnSessionsSnapshot = [this](const TArray<FPetSessionInfo>& Sessions)
+	{
+		if (!SessionPanelWidget)
+		{
+			return;
+		}
+		SessionPanelWidget->ApplySnapshot(Sessions);
+	};
+	ControlClient->OnSessionStart = [this](const FString& SessionId, const FString& Cwd, bool bResume)
+	{
+		if (SessionPanelWidget)
+		{
+			SessionPanelWidget->AddOrUpdateSession(SessionId, FString(), Cwd, true);
+		}
+	};
+	ControlClient->OnSessionEnd = [this](const FString& SessionId, const FString& Reason)
+	{
+		if (SessionPanelWidget)
+		{
+			SessionPanelWidget->SetSessionActive(SessionId, false);
+		}
+	};
+	ControlClient->OnSessionState = [this](const FString& SessionId, bool bWorking, bool bUnread)
+	{
+		if (SessionPanelWidget)
+		{
+			SessionPanelWidget->UpdateSessionState(SessionId, bWorking, bUnread);
+		}
+	};
 	ControlClient->Start();
 
 	UE_LOG(LogPet, Log, TEXT("PetCapturePawn BeginPlay done"));
 }
 
-void APetCapturePawn::HideGameWindow()
+void APetCapturePawn::InitializeSessionPanel()
 {
-	// BeginPlay 已阻止 PIE 调用；这里再做保护，避免其他调用路径误隐藏编辑器窗口。
-	if (GIsEditor)
+	if (SessionPanelWidgetClass.IsNull())
+	{
+		UE_LOG(LogPet, Error, TEXT("未配置会话面板 Widget 类；请在 BP_PetCapturePawn 中设置软类引用"));
+		return;
+	}
+
+	const TSubclassOf<UPetSessionPanelWidget> LoadedWidgetClass = SessionPanelWidgetClass.LoadSynchronous();
+	if (!LoadedWidgetClass)
+	{
+		UE_LOG(LogPet, Error, TEXT("加载会话面板 Widget 类失败；宠物本体将继续运行"));
+		return;
+	}
+
+	SessionPanelWidget = CreateWidget<UPetSessionPanelWidget>(GetWorld(), LoadedWidgetClass);
+	if (!SessionPanelWidget)
+	{
+		UE_LOG(LogPet, Error, TEXT("创建会话面板 Widget 失败；宠物本体将继续运行"));
+		return;
+	}
+
+	SessionPanelWidget->OnSessionSelected.AddUObject(this, &APetCapturePawn::HandleSessionSelected);
+	SessionWindowHost = new FPetSessionWindowHost();
+	if (!SessionWindowHost->Create(SessionPanelWidget))
+	{
+		UE_LOG(LogPet, Error, TEXT("创建 Slate 会话窗口失败；宠物本体将继续运行"));
+		delete SessionWindowHost;
+		SessionWindowHost = nullptr;
+		SessionPanelWidget->OnSessionSelected.RemoveAll(this);
+		SessionPanelWidget = nullptr;
+		return;
+	}
+
+	UpdateSessionPanelAnchor();
+	UE_LOG(LogPet, Log, TEXT("Slate 与 UMG 会话面板已初始化"));
+}
+
+void APetCapturePawn::ShutdownSessionPanel()
+{
+	bSessionPanelPresentationPending = false;
+	bSessionPanelTogglePending = false;
+
+	if (SessionPanelWidget)
+	{
+		SessionPanelWidget->OnSessionSelected.RemoveAll(this);
+	}
+
+	if (SessionWindowHost)
+	{
+		SessionWindowHost->Destroy();
+		delete SessionWindowHost;
+		SessionWindowHost = nullptr;
+	}
+
+	SessionPanelWidget = nullptr;
+}
+
+void APetCapturePawn::UpdateSessionPanelAnchor()
+{
+	if (!SessionWindowHost || !PetWindow)
 	{
 		return;
 	}
 
-	HWND GameHwnd = nullptr;
-	if (GEngine && GEngine->GameViewport)
+	// PetLayeredWindow::GetScreenPosition() 返回 Win32 屏幕物理像素，RTSize 也是物理像素；
+	// Host 契约（方案 §6.4）只接受 Slate 屏幕坐标。引擎约定 Slate 屏幕坐标 = 物理像素 /
+	// DPIScale（SWindow 创建时 AdjustInitialSizeAndPositionForDPIScale 路径以 WindowPosition
+	// *= DPIScale 转入平台层，SlateApplication::CalculatePopupWindowPosition 同样按
+	// InSize * DPIScale 进平台层、结果 / DPIScale 返回），因此先在坐标契约边界用宠物所在
+	// 监视器的 DPI 缩放完成转换；Host 内部不理解物理像素。
+	const FIntPoint PetPositionPhysicalPixels = PetWindow->GetScreenPosition();
+	const float PetSizePhysicalPixels = static_cast<float>(RTSize);
+	const float PetDPIScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(
+		static_cast<float>(PetPositionPhysicalPixels.X),
+		static_cast<float>(PetPositionPhysicalPixels.Y));
+	const FSlateRect PetBoundsInSlateScreen(
+		PetPositionPhysicalPixels.X / PetDPIScale,
+		PetPositionPhysicalPixels.Y / PetDPIScale,
+		(PetPositionPhysicalPixels.X + PetSizePhysicalPixels) / PetDPIScale,
+		(PetPositionPhysicalPixels.Y + PetSizePhysicalPixels) / PetDPIScale);
+	SessionWindowHost->UpdateAnchor(PetBoundsInSlateScreen);
+}
+
+void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
+{
+	if (SessionId.IsEmpty())
 	{
-		if (TSharedPtr<SWindow> SlateWin = GEngine->GameViewport->GetWindow())
-		{
-			if (TSharedPtr<FGenericWindow> NativeWin = SlateWin->GetNativeWindow())
-			{
-				GameHwnd = static_cast<HWND>(NativeWin->GetOSWindowHandle());
-			}
-		}
+		return;
 	}
-	if (GameHwnd)
+
+	UE_LOG(LogPet, Log, TEXT("选择会话 %s -> 发送 open_tui"), *SessionId);
+	if (ControlClient)
 	{
-		ShowWindow(GameHwnd, SW_HIDE);
-		UE_LOG(LogPet, Log, TEXT("Game window hidden (HWND=%p)"), GameHwnd);
+		ControlClient->SendOpenTui(SessionId);
 	}
-	else
+	if (SessionWindowHost)
 	{
-		// -RenderOffScreen 启动时游戏窗口从不可见/不存在，属预期情况
-		UE_LOG(LogPet, Verbose, TEXT("Game window handle not found (expected with -RenderOffScreen)"));
+		SessionWindowHost->Close();
 	}
 }
 
@@ -173,6 +268,43 @@ void APetCapturePawn::Tick(float DeltaTime)
 	if (PetWindow)
 	{
 		WindowScreenPosition = PetWindow->GetScreenPosition();
+		PetWindow->Tick(DeltaTime);
+	}
+	if (bSessionPanelPresentationPending)
+	{
+		bSessionPanelPresentationPending = false;
+		ReplaySessionPanelPresentation();
+	}
+	if (bSessionPanelTogglePending)
+	{
+		bSessionPanelTogglePending = false;
+		if (SessionWindowHost && SessionPanelWidget)
+		{
+			UpdateSessionPanelAnchor();
+			const bool bWasVisible = SessionWindowHost->IsVisible();
+			SessionWindowHost->Toggle();
+			if (!bWasVisible)
+			{
+				// 等到下一帧再重播：此时窗口已可见，ListView 条目也完成了 Slate 布局。
+				bSessionPanelPresentationPending = true;
+			}
+		}
+		else
+		{
+			UE_LOG(LogPet, Warning, TEXT("会话面板资源未就绪，保持宠物本体可用"));
+		}
+	}
+	if (SessionWindowHost)
+	{
+		if (SessionWindowHost->IsVisible())
+		{
+			UpdateSessionPanelAnchor();
+		}
+		SessionWindowHost->TickWindowAnimation(DeltaTime);
+		if (SessionPanelWidget && SessionWindowHost->IsVisible())
+		{
+			SessionPanelWidget->TickDetachedWindowAnimations(DeltaTime);
+		}
 	}
 
 	if (!RenderTarget)
@@ -230,6 +362,45 @@ void APetCapturePawn::Tick(float DeltaTime)
 		});
 }
 
+void APetCapturePawn::ReplaySessionPanelPresentation()
+{
+	if (!SessionPanelWidget || !SessionWindowHost || !SessionWindowHost->IsVisible())
+	{
+		return;
+	}
+
+	SessionPanelWidget->PlayPanelContentAnimation();
+	SessionPanelWidget->ReplayVisibleRowAnimations();
+}
+
+void APetCapturePawn::AdjustCameraRotation(float DeltaX, float DeltaY)
+{
+	CameraYaw = FMath::Clamp(CameraYaw + DeltaX * CameraRotateSensitivity, -CameraYawLimit, CameraYawLimit);
+	CameraPitch = FMath::Clamp(CameraPitch + DeltaY * CameraRotateSensitivity, -CameraPitchLimit, CameraPitchLimit);
+	ApplyCameraTransform();
+	UE_LOG(LogPet, Verbose, TEXT("摄像机旋转调整 yaw=%.2f pitch=%.2f"), CameraYaw, CameraPitch);
+}
+
+void APetCapturePawn::AdjustCameraZoom(float WheelDelta)
+{
+	const float MinDistance = FMath::Min(CameraMinDistance, CameraMaxDistance);
+	const float MaxDistance = FMath::Max(CameraMinDistance, CameraMaxDistance);
+	CameraDistance = FMath::Clamp(CameraDistance - WheelDelta * CameraZoomStep, MinDistance, MaxDistance);
+	ApplyCameraTransform();
+	UE_LOG(LogPet, Verbose, TEXT("摄像机距离调整 distance=%.2f"), CameraDistance);
+}
+
+void APetCapturePawn::ApplyCameraTransform()
+{
+	if (!Capture)
+	{
+		return;
+	}
+	const FVector Offset = FRotator(CameraPitch, CameraYaw, 0.0f).RotateVector(InitialCameraDirection * CameraDistance);
+	Capture->SetRelativeLocation(Offset);
+	Capture->SetRelativeRotation((-Offset).Rotation());
+}
+
 void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 {
 	if (Pixels->Num() < RTSize * RTSize * 4)
@@ -269,13 +440,22 @@ void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 
 void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// 先停控制管道（等待工作线程退出，回调不再触发），再销毁窗口
+	// 先断开控制回调并等待工作线程退出，确保之后不会再触碰 Widget。
 	if (ControlClient)
 	{
+		ControlClient->OnPetState = nullptr;
+		ControlClient->OnSessionsSnapshot = nullptr;
+		ControlClient->OnSessionStart = nullptr;
+		ControlClient->OnSessionEnd = nullptr;
+		ControlClient->OnSessionState = nullptr;
+		ControlClient->OnShutdown = nullptr;
 		ControlClient->Shutdown();
 		delete ControlClient;
 		ControlClient = nullptr;
 	}
+
+	bSessionPanelTogglePending = false;
+	ShutdownSessionPanel();
 
 	delete PetWindow;
 	PetWindow = nullptr;
