@@ -8,7 +8,6 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Components/SceneCaptureComponent2D.h"
-#include "Components/PointLightComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformMisc.h"
@@ -24,12 +23,6 @@ APetCapturePawn::APetCapturePawn()
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = RootComp;
 
-	Light = CreateDefaultSubobject<UPointLightComponent>(TEXT("Light"));
-	Light->SetupAttachment(RootComp);
-	Light->SetRelativeLocation(FVector(-200.0, 100.0, 150.0));
-	Light->SetIntensity(5000.0f);
-	Light->CastShadows = false; // 无接收面，阴影只会污染 alpha
-
 	Capture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("Capture"));
 	Capture->SetupAttachment(RootComp);
 	Capture->SetRelativeLocation(FVector(-350.0, 0.0, 0.0)); // 面向 +X 看向原点
@@ -42,7 +35,7 @@ APetCapturePawn::APetCapturePawn()
 	Capture->ShowFlags.Fog = false;             // 背景像素只应有 alpha=0
 	Capture->ShowFlags.VolumetricFog = false;
 	Capture->ShowFlags.Cloud = false;
-	Capture->ShowFlags.SkyLighting = false;
+	Capture->ShowFlags.SkyLighting = true;
 	Capture->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
 }
 

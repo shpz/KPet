@@ -6,7 +6,6 @@
 #include "PetCapturePawn.generated.h"
 
 class USceneCaptureComponent2D;
-class UPointLightComponent;
 class UTextureRenderTarget2D;
 class FRHIGPUTextureReadback;
 class PetLayeredWindow;
@@ -16,7 +15,7 @@ class UPetSessionPanelWidget;
 
 /**
  * 方案一渲染管线 Pawn：
- * 骨骼网格体 + 点光源 → 场景捕获组件输出到 320x320 BGRA8 RT（背景应全透明）
+ * 骨骼网格体 + 关卡灯光 → 场景捕获组件输出到 320x320 BGRA8 RT（背景应全透明）
  * → FRHIGPUTextureReadback 异步回读（取上一帧，延迟 1 帧）
  * → 预乘转换 → UpdateLayeredWindow 上屏到自建分层窗口。
  * 默认 UE 游戏窗口由 FPetModule 的纯 Slate 启动守卫隐藏，编辑器 PIE 不受影响。
@@ -47,9 +46,6 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	USceneComponent* RootComp = nullptr;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
-	UPointLightComponent* Light = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	USceneCaptureComponent2D* Capture = nullptr;
