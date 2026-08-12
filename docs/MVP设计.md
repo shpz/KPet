@@ -163,7 +163,7 @@ main():
 
 **字段取值防御**：除 `hook_event_name`/`session_id`/`cwd` 外不依赖任何宿主字段；任务标题取工具名/命令文本，取不到就降级为通用文案"正在工作…"。事件原始 JSON 整体放入 `payload._raw` 透传，后续启用新字段零成本。
 
-**状态卡死兜底**：任一会话超过 10 分钟（可配 `session.staleMinutes`）没有任何事件，守护进程强制将其转闲——防止丢失的 `Stop` 导致宠物永远 Working。
+**状态卡死兜底**：任一忙会话超过 10 分钟（可配 `session.staleMinutes`）没有任何事件，守护进程强制将其转闲但保留活跃会话——防止丢失的 `Stop` 导致宠物永远 Working。只有超过更长的 `session.cleanupMinutes`（默认 60 分钟）才清理异常孤儿会话。
 
 **高频事件节流**：`PreToolUse`/`PostToolUse` 高频到达时，守护进程在 200ms 窗口内合并同会话的连续任务事件再下发，避免渲染进程 UI 抖动。
 
@@ -215,6 +215,7 @@ main():
 | `open_tui` | 渲→守 | 点击会话行 / 点击气泡 | `session_id`（可空=最近会话）, `source`(`"pet"`/`"bubble"`), `task_id`（可空） | 请求打开终端；打开会话后清除该会话未读状态 |
 | `heartbeat` | 渲→守 | 每 3 秒 | `pid`, `uptime_s`, `state` | 保活心跳 |
 | `pet_moved` | 渲→守 | 拖拽结束 | `x`, `y`, `monitor_id` | 位置持久化（由守护进程统一写配置，避免多头写文件） |
+| `close_pet` | 渲→守 | ESC 加左键关闭 | `reason`（固定为 `"user"`） | 写入用户关闭抑制标记，停止重启并请求守护进程优雅退出 |
 | `shutdown` | 守→渲 | 守护进程退出前 | `reason`(`"host_gone"`/`"user"`/`"error"`) | 通知渲染进程退出 |
 | `protocol_error` | 双向 | 收到非法消息 | `description`, `raw_excerpt`（截断 256 字符） | 仅日志用途 |
 
@@ -233,6 +234,7 @@ main():
 4. **渲染进程崩溃**：控制管道断开 → 守护进程按 1s/2s/4s/8s 指数退避重启（60 秒内最多 5 次，超限则停止重启并记日志，等下一个宿主事件再试一轮）→ 重连后回放状态快照（CLI 历史与活跃会话目录 + 当前 `pet_state` + 未完成任务列表）。
 5. **守护进程崩溃**：渲染进程写管道失败 → 每 5 秒重连，期间宠物保持离线渲染；下一个宿主事件到达时转发器会重新拉起守护进程。
 6. **宿主退出**：最后一个 `SessionEnd` → 倒计时 120 秒（`host_grace_seconds`）→ `shutdown` → 渲染进程退出 → 守护进程退出；倒计时内新开 `kimi` 则取消退出。
+7. **用户关闭与恢复**：按住 ESC 左键单击宠物 → UE 写入 `%TEMP%\kimi-pet\pet.disabled` 并发送 `close_pet` → 守护进程停止渲染进程重启、发送 `shutdown(reason=user)`、释放管道并退出；抑制期非 `SessionStart` 事件直接丢弃。下一次合法 `SessionStart` 消费标记并恢复；若旧管道未及时释放，该事件先暂存，由独立恢复进程等待管道释放后拉起新守护进程，不依赖第二个宿主事件。
 
 ## 5. 渲染进程（UE5）启动窗口、会话窗口与性能
 
@@ -475,7 +477,8 @@ Working 内子状态:
 | `host_grace_seconds` | 120 | 宿主全部退出后的退出倒计时 |
 | `auto_quit_with_host` | true | 倒计时结束是否自动退出 |
 | `terminal` | `"wt"` | 终端唤起方式：Windows 终端（`wt`）或传统控制台（`cmd`） |
-| `session.staleMinutes` | 10 | 会话无事件强制转闲的时长 |
+| `session.staleMinutes` | 10 | 忙会话无事件强制转闲但保留活跃会话的时长 |
+| `session.cleanupMinutes` | 60 | 异常会话长期无事件才清理的时长，必须大于 `session.staleMinutes` |
 | `log_level` | `"info"` | 日志级别 |
 
 渲染进程侧（本地配置 + 守护进程下发覆盖）：

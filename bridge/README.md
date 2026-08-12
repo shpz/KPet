@@ -2,12 +2,11 @@
 
 KimiPet 桌面宠物的宿主集成层，对应 `docs/MVP设计.md` §3（宿主集成）/ §4（进程间通信协议）。
 
-本工程目前包含两部分：
+本工程目前包含三部分：
 
 - **协议包 `src/protocol/`**：消息信封与全部消息类型定义（§4.2 / §4.3），供转发器、守护进程、渲染进程共享。校验/构造辅助供守护进程、渲染进程复用（如 §4.4 的非法消息处理）。
 - **转发器 `src/bridge/`**：`kimi-pet-bridge`（§3.3）。宿主每发生一个事件拉起一次，读取 stdin 事件 JSON → 包装成 `host_event` 信封 → 写入事件管道 `\\.\pipe\KimiPet.H2D.<用户名>`；管道不存在则分离拉起守护进程 `kimi-petd.exe`（防并发风暴）；连接+写入超时 200ms，失败写本地暂存 `%TEMP%/kimi-pet-events/`；任何情况以退出码 0 结束（失败放行，§2.2 D4）。
-
-> 守护进程（`kimi-petd`）不在本任务范围，由后续任务实现。
+- **守护进程 `src/daemon/`**：维护会话与全局 `Idle`/`Working` 状态、管理渲染进程及控制管道。用户通过 `close_pet` 关闭后，以 `%TEMP%/kimi-pet/pet.disabled` 抑制当前会话的后续拉起；下一次合法 `SessionStart` 自动恢复。
 
 ## 目录结构
 
@@ -25,6 +24,7 @@ bridge/
       daemon.ts          # 守护进程分离拉起（KIMI_PLUGIN_ROOT 推导 + 锁文件防并发风暴）
       staging.ts         # 本地暂存 %TEMP%/kimi-pet-events/（时间戳+随机文件名，可排序回收）
       user.ts            # 用户名获取与非法字符过滤（管道名段）
+    daemon/              # 常驻守护进程、会话状态机、渲染进程与控制管道管理（§3.4 / §4.5）
   test/                  # node:test 单测 + 命名管道集成测试（Windows）
   packaging/
     kimi-pet/
