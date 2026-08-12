@@ -11,3 +11,7 @@ dist/
 .kimi-code/
 .pet/
 .codex/
+
+
+# DCC
+*.blend1
