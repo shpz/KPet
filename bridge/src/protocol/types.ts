@@ -24,6 +24,7 @@ export const MESSAGE_TYPES = [
   'open_tui', // 渲→守 | 点击宠物 / 点击气泡 | 请求打开终端
   'heartbeat', // 渲→守 | 每 3 秒 | 保活心跳
   'pet_moved', // 渲→守 | 拖拽结束 | 位置持久化
+  'close_pet', // 渲→守 | 用户请求关闭宠物；payload.reason=user
   'shutdown', // 守→渲 | 守护进程退出前 | 通知渲染进程退出
   'protocol_error', // 双向 | 收到非法消息 | 仅日志用途
 ] as const;
@@ -153,6 +154,11 @@ export interface PetMovedPayload {
   monitor_id: string;
 }
 
+/** 渲染进程请求关闭宠物；关闭后由下一次 SessionStart 恢复。 */
+export interface ClosePetPayload {
+  reason: 'user';
+}
+
 export type ShutdownReason = 'host_gone' | 'user' | 'error';
 
 export interface ShutdownPayload {
@@ -181,6 +187,7 @@ export interface PayloadMap {
   open_tui: OpenTuiPayload;
   heartbeat: HeartbeatPayload;
   pet_moved: PetMovedPayload;
+  close_pet: ClosePetPayload;
   shutdown: ShutdownPayload;
   protocol_error: ProtocolErrorPayload;
 }

@@ -11,7 +11,8 @@
  * - WS_EX_LAYERED + UpdateLayeredWindow：逐像素透明，透明像素自动鼠标穿透（Windows 文档化行为）
  * - WS_EX_TOPMOST / WS_EX_TOOLWINDOW / WS_EX_NOACTIVATE：置顶、不占任务栏、不抢焦点
  * - 左键手势消解（§6.4/§6.5）：按下记录时间戳，位移超系统拖拽阈值 → 拖拽（松手回调 OnDragEnd）；
- *   松开时未超阈值且按下时长 < 800ms → 单击（回调 OnClick）
+ *   松开时未超阈值且按下时长 < 800ms → 单击（回调 OnClick）；按下时 ESC 已按住的有效单击
+ *   优先回调 OnCloseRequested，不再触发普通单击
  */
 class PetLayeredWindow
 {
@@ -34,6 +35,9 @@ public:
 
 	/** 单击宠物（§6.5，消息处理线程 = 游戏线程，直接调用）。 */
 	TFunction<void()> OnClick;
+
+	/** 按住 ESC 开始的有效单击，请求关闭宠物；优先于 OnClick。 */
+	TFunction<void()> OnCloseRequested;
 
 	/** 拖拽结束（§6.4，参数为窗口左上角屏幕坐标）。 */
 	TFunction<void(int32 X, int32 Y)> OnDragEnd;
@@ -62,6 +66,7 @@ private:
 
 	bool bDragging = false;
 	bool bDragThresholdMet = false;
+	bool bCloseGestureArmed = false; // 左键按下瞬间 ESC 已按住；只在本次有效单击中触发关闭
 	POINT DragAnchorCursor{ 0, 0 }; // 按下时的屏幕光标位置
 	POINT DragGrabOffset{ 0, 0 };   // 按下点相对窗口左上角的偏移
 	uint64 PressTick = 0;           // 左键按下时刻（GetTickCount64，§6.5 单击时长判定）

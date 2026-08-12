@@ -1,4 +1,5 @@
 #include "Platform/PetLayeredWindow.h"
+#include "Platform/PetLayeredWindowInput.h"
 #include "Pet.h"
 
 static const TCHAR* PetWindowClassName = TEXT("KimiPetLayeredWindow");
@@ -241,7 +242,11 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		const int32 ClientX = static_cast<int32>(static_cast<short>(LOWORD(LParam)));
 		const int32 ClientY = static_cast<int32>(static_cast<short>(HIWORD(LParam)));
 		bSuppressClickUntilButtonUp = false;
-		if ((GetAsyncKeyState('R') & 0x8000) != 0)
+		// 修饰键语义固定在按下瞬间，避免用户先普通按下、再补按 ESC 造成意外关闭。
+		// 既有 R 摄像机手势优先；只有不处于摄像机手势时，ESC 才武装关闭单击。
+		const bool bCameraModifierDown = (GetAsyncKeyState('R') & 0x8000) != 0;
+		bCloseGestureArmed = !bCameraModifierDown && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+		if (bCameraModifierDown)
 		{
 			bCameraAdjusting = true;
 			bDragging = false;
@@ -265,7 +270,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 	}
 	case WM_MOUSEMOVE:
 	{
-		if (bDragging && (GetAsyncKeyState('R') & 0x8000) != 0)
+		if (bDragging && !bCloseGestureArmed && (GetAsyncKeyState('R') & 0x8000) != 0)
 		{
 			bDragging = false;
 			bCameraAdjusting = true;
@@ -328,6 +333,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		if (bCameraAdjusting)
 		{
 			bCameraAdjusting = false;
+			bCloseGestureArmed = false;
 			ReleaseCapture();
 			bSuppressClickUntilButtonUp = false;
 			::SetCursor(LoadCursor(nullptr, IDC_ARROW));
@@ -337,14 +343,20 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		{
 			bSuppressClickUntilButtonUp = false;
 			bDragging = false;
+			bCloseGestureArmed = false;
 			if (GetCapture() == WindowHandle)
 			{
 				ReleaseCapture();
 			}
 			return 0;
 		}
-		const bool bClick = bDragging && !bDragThresholdMet && (GetTickCount64() - PressTick < 800);
-		const bool bCompletedDrag = bDragging && bDragThresholdMet;
+		const uint64 PressDurationMs = bDragging ? GetTickCount64() - PressTick : MAX_uint64;
+		const EPetPointerReleaseAction ReleaseAction = PetLayeredWindowInput::ResolveReleaseAction(
+			bDragging,
+			bDragThresholdMet,
+			PressDurationMs,
+			bCloseGestureArmed);
+		bCloseGestureArmed = false;
 		if (bDragging)
 		{
 			bDragging = false;
@@ -352,14 +364,21 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 			bSuppressClickUntilButtonUp = false;
 		}
 		// §6.5 单击判定：位移未超阈值（未进入拖拽）且按下时长 < 800ms → 单击；否则拖拽结束上报位置
-		if (bClick)
+		if (ReleaseAction == EPetPointerReleaseAction::Close)
+		{
+			if (OnCloseRequested)
+			{
+				OnCloseRequested();
+			}
+		}
+		else if (ReleaseAction == EPetPointerReleaseAction::Click)
 		{
 			if (OnClick)
 			{
 				OnClick();
 			}
 		}
-		else if (bCompletedDrag)
+		else if (ReleaseAction == EPetPointerReleaseAction::Drag)
 		{
 			if (OnDragEnd)
 			{
@@ -407,6 +426,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		const bool bWasInteracting = bCameraAdjusting || bDragging;
 		bCameraAdjusting = false;
 		bDragging = false;
+		bCloseGestureArmed = false;
 		if (bWasInteracting)
 		{
 			bSuppressClickUntilButtonUp = true;

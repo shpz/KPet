@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "Player/PetWorkState.h"
 #include "UObject/SoftObjectPtr.h"
 #include "PetCapturePawn.generated.h"
 
@@ -33,6 +34,11 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 
+protected:
+	/** 工作状态实际改变时触发；重连收到相同状态不会重复触发。动画层可在蓝图中实现。 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "宠物状态")
+	void OnPetStateChanged(EPetWorkState NewState);
+
 private:
 	void OnFrameReady(TSharedRef<TArray<uint8>> Pixels);
 	void AdjustCameraRotation(float DeltaX, float DeltaY);
@@ -43,6 +49,8 @@ private:
 	void UpdateSessionPanelAnchor();
 	void ReplaySessionPanelPresentation();
 	void HandleSessionSelected(const FString& SessionId);
+	void HandlePetState(const FString& State, const FString& Reason);
+	void HandleCloseRequested();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	USceneComponent* RootComp = nullptr;
@@ -89,6 +97,10 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "窗口", meta = (AllowPrivateAccess = "true"))
 	FIntPoint WindowScreenPosition = FIntPoint::ZeroValue;
 
+	/** 当前权威工作状态；动画蓝图可直接读取，初始状态为 Idle。 */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "宠物状态", meta = (AllowPrivateAccess = "true"))
+	EPetWorkState CurrentPetState = EPetWorkState::Idle;
+
 	FRHIGPUTextureReadback* Readback = nullptr;      // 仅渲染线程访问
 	std::atomic<bool> bCopyInFlight{ false };        // 仅渲染线程写，游戏线程不依赖其值做决策
 
@@ -100,10 +112,14 @@ private:
 	FPetSessionWindowHost* SessionWindowHost = nullptr; // 跨平台 Slate 窗口宿主，生命周期由 Pawn 管理
 	bool bSessionPanelTogglePending = false; // 原生窗口回调只置位，由游戏线程 Tick 安全切换 Slate 窗口
 	bool bSessionPanelPresentationPending = false; // 显示后下一帧重播 UMG 动画，确保条目已进入可见列表
+	bool bCloseRequestPending = false; // 原生窗口回调只置位，关闭流程统一在游戏线程 Tick 中执行
+	bool bCloseRequested = false; // 已发送用户关闭请求，等待守护进程 shutdown 或本地超时兜底
+	double CloseFallbackDeadline = 0.0;
 	FVector InitialCameraDirection = FVector(-1.0f, 0.0f, 0.0f);
 	float CameraYaw = 0.0f;
 	float CameraPitch = 0.0f;
 	float CameraDistance = 350.0f;
 
 	static constexpr int32 RTSize = 320;
+	static constexpr double CloseFallbackSeconds = 3.0;
 };

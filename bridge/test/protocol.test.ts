@@ -25,6 +25,13 @@ test('createEnvelope 构造合法信封（§4.2 字段齐全）', () => {
   assert.deepEqual(env.payload, { task_id: 't1', title: '运行测试', tool: 'Bash' });
 });
 
+test('close_pet：渲染进程用户关闭请求使用 reason=user 且无会话归属', () => {
+  const env = createEnvelope('close_pet', { reason: 'user' });
+  assert.equal(env.type, 'close_pet');
+  assert.equal(env.session_id, null);
+  assert.deepEqual(env.payload, { reason: 'user' });
+});
+
 test('createEnvelope 支持显式 id / session_id / ts', () => {
   const env = createEnvelope('notify', { text: '完成', level: 'success' }, {
     id: 'fixed-id',
@@ -107,8 +114,8 @@ test('validateEnvelope：id 可选，缺省信封通过（§4.2 id 可选）', (
   assert.equal('id' in input, false);
 });
 
-test('isKnownType 覆盖协议全部 16 种消息类型', () => {
-  assert.equal(MESSAGE_TYPES.length, 16);
+test('isKnownType 覆盖协议全部 17 种消息类型', () => {
+  assert.equal(MESSAGE_TYPES.length, 17);
   for (const t of MESSAGE_TYPES) assert.equal(isKnownType(t), true);
   assert.equal(isKnownType('nope'), false);
 });

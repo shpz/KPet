@@ -34,6 +34,8 @@ export interface DaemonConfig {
   session: {
     /** 会话无事件强制转闲的时长（分钟，§3.4 状态卡死兜底）。 */
     staleMinutes: number;
+    /** 会话长期无事件才清理的时长（分钟）；应明显大于 staleMinutes。 */
+    cleanupMinutes: number;
   };
   log_level: LogLevel;
 }
@@ -143,7 +145,7 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
     host_grace_seconds: 120,
     auto_quit_with_host: true,
     terminal: 'wt',
-    session: { staleMinutes: 10 },
+    session: { staleMinutes: 10, cleanupMinutes: 60 },
     log_level: 'info',
   };
 }
@@ -152,7 +154,7 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
  * 加载守护进程配置（§7）。
  * - 文件不存在/JSON 非法 → 整体使用默认值（warnings 说明原因）；
  * - 字段缺失/类型非法 → 逐项回退默认值；
- * - session.staleMinutes 兼容「扁平带点键」与「嵌套 session 对象」两种写法。
+ * - session.staleMinutes/session.cleanupMinutes 兼容「扁平带点键」与「嵌套 session 对象」两种写法。
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: string = getConfigPath(env)): ConfigResult {
   const warnings: string[] = [];
@@ -173,7 +175,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
   }
   const obj = raw as Record<string, unknown>;
 
-  // session.staleMinutes：先读扁平带点键，再读嵌套对象
+  // session.staleMinutes/session.cleanupMinutes：先读扁平带点键，再读嵌套对象
   const flatStale = obj['session.staleMinutes'];
   const nestedSession = typeof obj['session'] === 'object' && obj['session'] !== null && !Array.isArray(obj['session'])
     ? (obj['session'] as Record<string, unknown>)
@@ -186,8 +188,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
     warnings.push(`配置项 session.staleMinutes 非法（需要正数），使用默认值 ${defaults.session.staleMinutes}`);
   }
 
+  const flatCleanup = obj['session.cleanupMinutes'];
+  const cleanupRaw = flatCleanup ?? nestedSession?.['cleanupMinutes'];
+  // 未配置时保持文档默认值 60；只有默认值不大于 staleMinutes 时，才提升到
+  // staleMinutes 之后的最小整分钟间隔，确保清理一定晚于卡死转闲。
+  const fallbackCleanupMinutes = Math.max(defaults.session.cleanupMinutes, staleMinutes + 1);
+  let cleanupMinutes = fallbackCleanupMinutes;
+  if (typeof cleanupRaw === 'number' && Number.isFinite(cleanupRaw) && cleanupRaw > staleMinutes) {
+    cleanupMinutes = cleanupRaw;
+  } else if (cleanupRaw !== undefined) {
+    warnings.push(
+      `配置项 session.cleanupMinutes 非法（需要大于 staleMinutes 的正数），使用默认值 ${cleanupMinutes}`,
+    );
+  }
+
+  const rendererPathRaw = obj['renderer_path'];
+  let rendererPath: string;
+  if (rendererPathRaw === undefined || typeof rendererPathRaw === 'string') {
+    rendererPath = resolveRendererPath(rendererPathRaw as string | undefined, env);
+  } else {
+    warnings.push('配置项 renderer_path 非法（需要字符串），使用默认渲染进程路径');
+    rendererPath = resolveRendererPath(undefined, env);
+  }
+
   const config: DaemonConfig = {
-    renderer_path: resolveRendererPath(obj['renderer_path'] as string | undefined, env),
+    renderer_path: rendererPath,
     heartbeat_interval_ms: readPositiveNumber(obj, 'heartbeat_interval_ms', defaults.heartbeat_interval_ms, warnings),
     heartbeat_timeout_ms: readNonNegativeNumber(obj, 'heartbeat_timeout_ms', defaults.heartbeat_timeout_ms, warnings),
     restart_max_attempts: readPositiveNumber(obj, 'restart_max_attempts', defaults.restart_max_attempts, warnings),
@@ -195,7 +220,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
     host_grace_seconds: readPositiveNumber(obj, 'host_grace_seconds', defaults.host_grace_seconds, warnings),
     auto_quit_with_host: readBoolean(obj, 'auto_quit_with_host', defaults.auto_quit_with_host, warnings),
     terminal: readTerminal(obj, warnings),
-    session: { staleMinutes },
+    session: { staleMinutes, cleanupMinutes },
     log_level: readLogLevel(obj, warnings),
   };
   return { config, warnings, source };

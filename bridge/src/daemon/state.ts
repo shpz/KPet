@@ -7,7 +7,8 @@
  * - 按会话 id 维护活跃会话集合与任务表；任一会话忙 → Working，全部空闲 → Idle；
  * - 字段取值防御：除 hook_event_name/session_id/cwd 外不依赖任何宿主字段（§3.4）；
  *   任务标题取工具名/命令文本，取不到降级「正在工作…」；事件原始 JSON 由调用方整体透传 _raw；
- * - 状态卡死兜底：会话超过 session.staleMinutes 无事件 → 强制转闲（防丢失的 Stop 导致永远 Working）；
+ * - 状态卡死兜底：忙会话超过 session.staleMinutes 无事件 → 强制转闲但保留活跃会话；
+ * - 异常会话超过 session.cleanupMinutes 无事件才清理，默认 60 分钟；
  * - 高频事件节流：PreToolUse/PostToolUse 在 200ms 窗口内合并同会话的连续任务事件再下发
  *   （同窗内 task_start+task_end 折叠为一条 task_end），避免渲染进程 UI 抖动。
  *
@@ -107,6 +108,8 @@ interface PendingTaskMsg {
 export interface StateMachineOptions {
   /** 会话无事件强制转闲时长（毫秒），§3.4 卡死兜底。 */
   staleMs: number;
+  /** 长期无事件的异常会话清理时长（毫秒），必须大于 staleMs；缺省 staleMs 的 6 倍。 */
+  cleanupMs?: number;
   /** 任务事件合并窗口（毫秒），缺省 200ms（§3.4）。 */
   throttleMs?: number;
   /** 任务 id 生成器，测试注入。 */
@@ -156,6 +159,7 @@ export class PetStateMachine {
   private currentState: PetStateValue = 'Idle';
   private stateReasonValue = 'boot';
   private readonly staleMs: number;
+  private readonly cleanupMs: number;
   private readonly throttleMs: number;
   private readonly genTaskId: () => string;
   private readonly now: () => number;
@@ -164,6 +168,7 @@ export class PetStateMachine {
 
   constructor(opts: StateMachineOptions) {
     this.staleMs = opts.staleMs;
+    this.cleanupMs = Math.max(opts.cleanupMs ?? opts.staleMs * 6, opts.staleMs + 1);
     this.throttleMs = opts.throttleMs ?? TASK_THROTTLE_MS;
     this.genTaskId = opts.genTaskId ?? (() => randomUUID());
     this.now = opts.now ?? Date.now;
@@ -368,6 +373,9 @@ export class PetStateMachine {
           // 无活跃会话 → Idle 并启动退出倒计时（§3.4 / §4.5-6）
           this.setIdle(out, 'session_end');
           hostIdle = true;
+        } else {
+          // 删除任意会话后都重新汇总，避免「忙会话结束、剩余会话全闲」卡在 Working。
+          this.recomputeIdle(out, 'session_end');
         }
         break;
       }
@@ -381,23 +389,24 @@ export class PetStateMachine {
   }
 
   /**
-   * 卡死兜底（§3.4）：扫描所有会话，超过 staleMs 无事件的忙会话强制转闲，并把该会话整体回收删除
-   * （10 分钟无任何事件 = 会话已死亡，含「暂存重放的孤儿会话」——其 SessionEnd 可能已随守护进程
-   * 不在场期间丢失；不回收会让退出倒计时永远等不到「无活跃会话」）。
-   * 返回因此产生的消息（pet_state 切换）。注意：不触发退出倒计时 —— 宿主可能只是长时间空闲。
+   * 卡死兜底（§3.4）：扫描所有会话，超过 staleMs 无事件的忙会话强制转闲但保留会话；
+   * 超过更长期 cleanupMs 才回收异常会话，避免正常空闲会话在短暂无事件时消失。
+   * 返回因此产生的消息（pet_state/session_state/session_end）。调用方可在长期清理导致无活跃会话时启动退出倒计时。
    */
   markStaleSessions(): OutgoingMessage[] {
     const out: OutgoingMessage[] = [];
     const now = this.now();
     const stale: string[] = [];
     for (const [sid, s] of this.sessions) {
-      if (now - s.lastEventAt > this.staleMs) {
-        if (s.busy) {
-          this.idleSession(s);
-          this.recomputeIdle(out, 'stale');
-        }
-        // 渲染进程必须收到结束事件，否则面板会残留已经被守护进程回收的会话行。
-        out.push({ type: 'session_end', session_id: sid, payload: { reason: 'stale' } });
+      const age = now - s.lastEventAt;
+      if (age > this.staleMs && s.busy) {
+        this.idleSession(s);
+        this.recomputeIdle(out, 'stale');
+        out.push(this.makeSessionState(s));
+      }
+      if (age > this.cleanupMs) {
+        // 只有更长期完全失联才从活跃集合移除；普通 stale 会话仍等待真实 SessionEnd。
+        out.push({ type: 'session_end', session_id: sid, payload: { reason: 'stale_cleanup' } });
         stale.push(sid);
       }
     }

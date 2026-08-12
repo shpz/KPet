@@ -11,6 +11,7 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformTime.h"
 #include "Layout/SlateRect.h"
 
 #include "RHIGPUReadback.h"
@@ -80,6 +81,10 @@ void APetCapturePawn::BeginPlay()
 
 	// 控制管道客户端：接入守护进程（§4.1 / §4.5-5），回调全部在游戏线程触发
 	ControlClient = new FPetControlClient();
+	ControlClient->OnPetState = [this](const FString& State, const FString& Reason)
+	{
+		HandlePetState(State, Reason);
+	};
 	ControlClient->OnShutdown = [this](const FString& Reason)
 	{
 		if (GIsEditor)
@@ -96,6 +101,11 @@ void APetCapturePawn::BeginPlay()
 		{
 			UE_LOG(LogPet, Log, TEXT("单击宠物 -> 排队切换会话面板"));
 			bSessionPanelTogglePending = true;
+		};
+		PetWindow->OnCloseRequested = [this]()
+		{
+			UE_LOG(LogPet, Log, TEXT("ESC + 左键单击宠物 -> 排队请求关闭"));
+			bCloseRequestPending = true;
 		};
 		PetWindow->OnDragEnd = [this](int32 X, int32 Y)
 		{
@@ -250,6 +260,58 @@ void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
 	}
 }
 
+void APetCapturePawn::HandlePetState(const FString& State, const FString& Reason)
+{
+	const EPetWorkStateApplyResult ApplyResult = PetWorkStateLogic::ApplyProtocolValue(State, CurrentPetState);
+	if (ApplyResult == EPetWorkStateApplyResult::Invalid)
+	{
+		UE_LOG(LogPet, Warning, TEXT("收到无法应用的宠物工作状态: %s"), *State);
+		return;
+	}
+	if (ApplyResult == EPetWorkStateApplyResult::Unchanged)
+	{
+		UE_LOG(LogPet, Verbose, TEXT("pet_state 与当前状态相同，跳过重复蓝图事件: %s (reason=%s)"), *State, *Reason);
+		return;
+	}
+
+	UE_LOG(LogPet, Log, TEXT("宠物工作状态改变: %s (reason=%s)"), *State, *Reason);
+	OnPetStateChanged(CurrentPetState);
+}
+
+void APetCapturePawn::HandleCloseRequested()
+{
+	if (bCloseRequested)
+	{
+		return;
+	}
+	if (GIsEditor)
+	{
+		UE_LOG(LogPet, Warning, TEXT("PIE 调试中忽略 ESC + 左键关闭，避免退出编辑器或关闭共享守护进程"));
+		return;
+	}
+
+	bCloseRequested = true;
+	bSessionPanelTogglePending = false;
+	bSessionPanelPresentationPending = false;
+	ShutdownSessionPanel();
+	if (PetWindow)
+	{
+		PetWindow->Destroy();
+	}
+
+	const bool bSent = ControlClient && ControlClient->SendClosePet();
+	if (bSent)
+	{
+		CloseFallbackDeadline = FPlatformTime::Seconds() + CloseFallbackSeconds;
+		UE_LOG(LogPet, Log, TEXT("用户关闭请求已发送，等待守护进程确认退出"));
+	}
+	else
+	{
+		UE_LOG(LogPet, Warning, TEXT("守护进程未连接，直接执行本地退出兜底"));
+		FPlatformMisc::RequestExit(false);
+	}
+}
+
 void APetCapturePawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -257,6 +319,17 @@ void APetCapturePawn::Tick(float DeltaTime)
 	if (ControlClient)
 	{
 		ControlClient->Tick(); // 收包转交 + 心跳
+	}
+	if (bCloseRequestPending)
+	{
+		bCloseRequestPending = false;
+		HandleCloseRequested();
+	}
+	if (bCloseRequested && CloseFallbackDeadline > 0.0 && FPlatformTime::Seconds() >= CloseFallbackDeadline)
+	{
+		CloseFallbackDeadline = 0.0;
+		UE_LOG(LogPet, Warning, TEXT("等待守护进程 shutdown 超时，执行本地退出兜底"));
+		FPlatformMisc::RequestExit(false);
 	}
 	if (PetWindow)
 	{
@@ -448,6 +521,7 @@ void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	bSessionPanelTogglePending = false;
+	bCloseRequestPending = false;
 	ShutdownSessionPanel();
 
 	delete PetWindow;

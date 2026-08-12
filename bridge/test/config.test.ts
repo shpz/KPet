@@ -37,6 +37,7 @@ test('默认配置：§7 全部键与默认值', () => {
   assert.equal(cfg.auto_quit_with_host, true);
   assert.equal(cfg.terminal, 'wt');
   assert.equal(cfg.session.staleMinutes, 10);
+  assert.equal(cfg.session.cleanupMinutes, 60);
   assert.equal(cfg.log_level, 'info');
 });
 
@@ -71,6 +72,7 @@ test('部分键覆盖：其余键保持默认', () => {
 test('类型非法逐项回退：字符串数字/负数/非法枚举 → 默认值 + 告警', () => {
   const dir = tempDir();
   const p = writeConfig(dir, {
+    renderer_path: 123,
     host_grace_seconds: 'abc',
     restart_max_attempts: -1,
     terminal: 'xterm',
@@ -79,14 +81,15 @@ test('类型非法逐项回退：字符串数字/负数/非法枚举 → 默认�
   });
   const { config, warnings } = loadConfig({}, p);
   assert.equal(config.host_grace_seconds, 120);
+  assert.equal(config.renderer_path, path.join(process.cwd(), 'renderer', 'Pet.exe'));
   assert.equal(config.restart_max_attempts, 5);
   assert.equal(config.terminal, 'wt');
   assert.equal(config.auto_quit_with_host, true);
   assert.equal(config.log_level, 'info');
-  assert.ok(warnings.length >= 5, `应有逐项告警，实际 ${warnings.length} 条`);
+  assert.ok(warnings.length >= 6, `应有逐项告警，实际 ${warnings.length} 条`);
 });
 
-test('session.staleMinutes：嵌套对象与扁平带点键两种写法都支持', () => {
+test('session.staleMinutes/session.cleanupMinutes：嵌套对象与扁平带点键两种写法都支持', () => {
   const dir = tempDir();
   const p1 = writeConfig(dir, { session: { staleMinutes: 3 } });
   const r1 = loadConfig({}, p1);
@@ -96,6 +99,40 @@ test('session.staleMinutes：嵌套对象与扁平带点键两种写法都支持
   assert.equal(r2.config.session.staleMinutes, 5);
   const p3 = writeConfig(dir, { session: { staleMinutes: 'x' } });
   assert.equal(loadConfig({}, p3).config.session.staleMinutes, 10, '非法值回退默认');
+  const p4 = writeConfig(dir, { session: { staleMinutes: 3, cleanupMinutes: 30 } });
+  const r4 = loadConfig({}, p4);
+  assert.equal(r4.config.session.cleanupMinutes, 30);
+  const p5 = writeConfig(dir, { 'session.staleMinutes': 3, 'session.cleanupMinutes': 40 });
+  const r5 = loadConfig({}, p5);
+  assert.equal(r5.config.session.cleanupMinutes, 40);
+  const p6 = writeConfig(dir, { session: { staleMinutes: 10, cleanupMinutes: 5 } });
+  assert.equal(loadConfig({}, p6).config.session.cleanupMinutes, 60, '清理时长必须大于 staleMinutes');
+  const p7 = writeConfig(dir, { session: { staleMinutes: 60 } });
+  assert.equal(
+    loadConfig({}, p7).config.session.cleanupMinutes,
+    61,
+    '未配置 cleanupMinutes 时，staleMinutes=60 应只提升到下一个整分钟',
+  );
+  const p8 = writeConfig(dir, { session: { staleMinutes: 90 } });
+  assert.equal(
+    loadConfig({}, p8).config.session.cleanupMinutes,
+    91,
+    '未配置 cleanupMinutes 时，不应按 staleMinutes 的倍数放大',
+  );
+  const p9 = writeConfig(dir, { session: { staleMinutes: 59.5 } });
+  assert.equal(
+    loadConfig({}, p9).config.session.cleanupMinutes,
+    60.5,
+    '默认清理时长必须严格大于小数 staleMinutes',
+  );
+});
+
+test('renderer_path 类型非法时逐项回退默认路径并告警', () => {
+  const dir = tempDir();
+  const p = writeConfig(dir, { renderer_path: { path: 'Pet.exe' } });
+  const { config, warnings } = loadConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' }, p);
+  assert.equal(config.renderer_path, path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
+  assert.ok(warnings.some((warning) => warning.includes('renderer_path')));
 });
 
 test('heartbeat_timeout_ms 允许 0（关闭心跳检测）', () => {

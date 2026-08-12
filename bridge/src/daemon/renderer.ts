@@ -33,6 +33,9 @@ export interface RendererSupervisorOptions {
   now?: () => number;
   /** 退避间隔计算（测试注入短间隔；缺省 1s/2s/4s/8s 封顶 8s，§4.5-4）。 */
   backoffDelay?: (round: number) => number;
+  /** 用户关闭标记检测；存在时不再重启，并通知守护进程进入 user 退出流程。 */
+  isSuppressed?: () => boolean;
+  onSuppressed?: () => void;
 }
 
 /** 渲染进程生命周期状态（供日志与测试断言）。 */
@@ -51,6 +54,8 @@ export class RendererSupervisor {
   private readonly spawnFn: SpawnFn;
   private readonly now: () => number;
   private readonly backoffDelay: (round: number) => number;
+  private readonly isSuppressed: () => boolean;
+  private readonly onSuppressed?: () => void;
 
   child: ChildProcess | null = null;
   private pendingTimer: NodeJS.Timeout | null = null;
@@ -68,6 +73,8 @@ export class RendererSupervisor {
     this.spawnFn = opts.spawnFn ?? ((command, args, options) => spawn(command, args, options));
     this.now = opts.now ?? Date.now;
     this.backoffDelay = opts.backoffDelay ?? backoffDelayMs;
+    this.isSuppressed = opts.isSuppressed ?? (() => false);
+    this.onSuppressed = opts.onSuppressed;
   }
 
   get status(): RendererStatus {
@@ -98,6 +105,10 @@ export class RendererSupervisor {
   /** 控制管道断开 / 心跳超时 → 渲染进程失联（§4.5-4）。 */
   onConnectionLost(): void {
     if (this.status === 'shutdown') return;
+    if (this.isSuppressed()) {
+      this.handleSuppressed();
+      return;
+    }
     if (this.pendingTimer) return; // 已在退避等待中
     if (this.child) {
       // 管道断了但进程还在（异常挂起等）：杀掉走 exit 路径统一处理
@@ -132,6 +143,10 @@ export class RendererSupervisor {
 
   private spawn(): void {
     if (this.status === 'shutdown') return;
+    if (this.isSuppressed()) {
+      this.handleSuppressed();
+      return;
+    }
     if (this.child || this.pendingTimer) return;
 
     if (!fs.existsSync(this.rendererPath)) {
@@ -169,10 +184,21 @@ export class RendererSupervisor {
       return;
     }
     this.child = child;
+    // UE 先写 pet.disabled、随后才发送 close_pet。若标记恰在上方预检查与
+    // spawnFn 返回之间出现，立即杀掉刚拉起的进程并收敛退出。
+    if (this.isSuppressed()) {
+      this.handleSuppressed();
+      this.killChild();
+      return;
+    }
 
     child.once('error', (err) => {
       // spawn 失败（exe 缺失/权限等）：进程未启动
       this.child = null;
+      if (this.isSuppressed()) {
+        this.handleSuppressed();
+        return;
+      }
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'EACCES') {
         this.statusValue = 'missing';
@@ -185,6 +211,10 @@ export class RendererSupervisor {
     child.once('exit', (code, signal) => {
       this.child = null;
       if (this.status === 'shutdown') return;
+      if (this.isSuppressed()) {
+        this.handleSuppressed();
+        return;
+      }
       this.logger.info(`渲染进程退出 code=${code} signal=${signal ?? ''}`);
       this.scheduleRestart('渲染进程崩溃');
     });
@@ -192,6 +222,10 @@ export class RendererSupervisor {
 
   private scheduleRestart(cause: string): void {
     if (this.status === 'shutdown') return;
+    if (this.isSuppressed()) {
+      this.handleSuppressed();
+      return;
+    }
     if (this.pendingTimer || this.child) return;
     // 缺失路径不安排退避（等宿主事件），其余情况按 1s/2s/4s/8s 退避
     if (this.status === 'missing' || !fs.existsSync(this.rendererPath)) {
@@ -229,5 +263,13 @@ export class RendererSupervisor {
         // 进程已死，忽略
       }
     }
+  }
+
+  /** 抑制标记命中后的统一收敛点，先切换状态再回调，避免回调重入造成重复通知。 */
+  private handleSuppressed(): void {
+    if (this.status === 'shutdown') return;
+    this.logger.info('检测到用户关闭标记，停止渲染进程重启');
+    this.shutdown();
+    this.onSuppressed?.();
   }
 }

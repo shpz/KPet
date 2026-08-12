@@ -45,6 +45,9 @@ public:
 	/** 上报拖拽结束（§6.4 → pet_moved，含所在显示器 id）。 */
 	void SendPetMoved(int32 X, int32 Y);
 
+	/** 请求用户关闭宠物。返回 false 表示当前未连接，调用方应执行本地退出兜底。 */
+	bool SendClosePet();
+
 	// ---- 事件回调（游戏线程触发） ----
 	TFunction<void(const FString& State, const FString& Reason)> OnPetState;
 	TFunction<void(const TArray<FPetSessionInfo>& Sessions)> OnSessionsSnapshot;
@@ -76,7 +79,7 @@ private:
 	void SendProtocolError(const FString& Description, const FString& RawExcerpt);
 	void SendHeartbeat();
 	/** 构造 §4.2 信封并入发送队列（未连接时丢弃并记日志，§6.5 不重试轰炸）。 */
-	void EnqueueEnvelope(const FString& Type, const TSharedPtr<FJsonObject>& Payload);
+	bool EnqueueEnvelope(const FString& Type, const TSharedPtr<FJsonObject>& Payload);
 
 	// ---- 工具 ----
 	static FString BuildPipeName();

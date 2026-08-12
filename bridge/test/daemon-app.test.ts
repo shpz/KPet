@@ -19,7 +19,16 @@ import { defaultConfig, type DaemonConfig } from '../src/daemon/config.js';
 import { Logger } from '../src/daemon/logger.js';
 import { createEnvelope, createHostEventEnvelope, type MessageEnvelope } from '../src/protocol/index.js';
 import { PROTOCOL_VERSION, type ShutdownReason } from '../src/protocol/types.js';
-import { buildStagingFileName } from '../src/bridge/staging.js';
+import { buildStagingFileName, writeStaging } from '../src/bridge/staging.js';
+import {
+  clearPetSuppressed,
+  getDaemonLockPath,
+  getPetRecoveryGatePath,
+  getPetRecoveryPath,
+  isPetRecoveryPending,
+  setPetRecoveryPending,
+  setPetSuppressed,
+} from '../src/bridge/daemon.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -424,6 +433,139 @@ test('退出倒计时取消（§4.5-6）：倒计时内新宿主事件到达 →
   }
 });
 
+test('用户关闭协议：close_pet → shutdown(reason=user)，释放管道并持久化抑制标记', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-close-test-'));
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  const lockPath = getDaemonLockPath(path.join(markerBase, 'tmp'));
+  const t = await startApp({}, { suppressionPath, daemonLockPath: lockPath });
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    await r.waitFor('pet_state');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, 'old-lock', 'utf8');
+
+    r.send(createEnvelope('close_pet', { reason: 'user' }));
+    const shutdown = await r.waitFor('shutdown');
+    assert.deepEqual(shutdown.payload, { reason: 'user' });
+    await waitUntil(() => t.exits.length === 1, 3000);
+    assert.equal(t.exits[0], 'user');
+    assert.equal(fs.existsSync(suppressionPath), true, '用户关闭后保留抑制标记');
+    assert.equal(fs.existsSync(lockPath), true, '旧 daemon 不得无条件删除可能已被新进程接管的拉起锁');
+    r.close();
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('启动竞态：已有用户关闭标记时 daemon 立即退出并释放服务端管道', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-start-suppressed-test-'));
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  assert.equal(setPetSuppressed(suppressionPath), true);
+  const t = await startApp({}, { suppressionPath, daemonLockPath: path.join(markerBase, 'daemon.lock') });
+  try {
+    await waitUntil(() => t.exits.length === 1, 3000);
+    assert.equal(t.exits[0], 'user');
+    assert.equal(fs.existsSync(suppressionPath), true, '启动竞态退出不应误删关闭标记');
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('恢复启动竞态：构造后才消费抑制标记仍须取得恢复所有权并回放', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-late-recovery-owner-test-'));
+  const eventPipe = uniquePipeName('H2D');
+  const controlPipe = uniquePipeName('PET');
+  const stagingDir = path.join(markerBase, 'staging');
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  const recoveryPath = getPetRecoveryPath(markerBase);
+  const fakeChild = {
+    once: () => fakeChild,
+    kill: () => true,
+  } as unknown as import('node:child_process').ChildProcess;
+  assert.equal(setPetSuppressed(suppressionPath), true);
+  assert.equal(setPetRecoveryPending(recoveryPath), true);
+  const staged = writeStaging(
+    createHostEventEnvelope('{"hook_event_name":"SessionStart","session_id":"late-owner"}'),
+    stagingDir,
+  );
+  assert.ok(staged);
+  const app = new DaemonApp({
+    config: testConfig({ renderer_path: import.meta.filename }),
+    logger: silentLogger,
+    eventPipeName: eventPipe,
+    controlPipeName: controlPipe,
+    stagingDir,
+    suppressionPath,
+    recoveryPath,
+    rendererSpawn: () => fakeChild,
+  });
+
+  // 模拟 worker 在 DaemonApp 构造后、start 建立管道前才消费 suppression。
+  assert.equal(clearPetSuppressed(suppressionPath), true);
+  try {
+    await app.start();
+    assert.equal(isPetRecoveryPending(recoveryPath), false, '启动时应重新判定并完成恢复交接');
+    assert.deepEqual(fs.readdirSync(stagingDir), [], '恢复暂存必须完成回放');
+    const renderer = await FakeRenderer.connect(controlPipe);
+    renderer.hello();
+    await renderer.waitFor('hello');
+    const snapshot = await renderer.waitFor('sessions_snapshot');
+    assert.equal((snapshot.payload as { sessions: Array<{ session_id: string }> }).sessions.some(
+      (session) => session.session_id === 'late-owner',
+    ), true);
+    renderer.close();
+  } finally {
+    await app.stop();
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('关闭恢复竞态：旧 daemon 延迟 close_pet 不得重写抑制标记或删除恢复期 SessionStart', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-delayed-close-test-'));
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  const recoveryPath = getPetRecoveryPath(markerBase);
+  const stagingDir = path.join(markerBase, 'staging');
+  const lockPath = getDaemonLockPath(markerBase);
+  const t = await startApp({}, { suppressionPath, recoveryPath, stagingDir, daemonLockPath: lockPath });
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    await r.waitFor('pet_state');
+
+    assert.equal(setPetSuppressed(suppressionPath), true);
+    assert.equal(setPetRecoveryPending(recoveryPath), true);
+    const staged = writeStaging(
+      createHostEventEnvelope('{"hook_event_name":"SessionStart","session_id":"next","cwd":"D:\\\\next"}'),
+      stagingDir,
+    );
+    assert.ok(staged);
+
+    // 验证旧 daemon 不会把 suppression 重写成新的关闭时间。
+    const oldMarkerTime = new Date('2026-01-01T00:00:00.000Z');
+    fs.utimesSync(suppressionPath, oldMarkerTime, oldMarkerTime);
+    const markerMtimeBefore = fs.statSync(suppressionPath).mtimeMs;
+
+    r.send(createEnvelope('close_pet', { reason: 'user' }));
+    const shutdown = await r.waitFor('shutdown');
+    assert.deepEqual(shutdown.payload, { reason: 'user' });
+    await waitUntil(() => t.exits.length === 1, 3000);
+
+    assert.equal(isPetRecoveryPending(recoveryPath), true, '旧 daemon 不得消费恢复标记');
+    assert.equal(fs.existsSync(suppressionPath), true, '本用例原有标记仍在');
+    assert.equal(fs.statSync(suppressionPath).mtimeMs, markerMtimeBefore, '旧 daemon 不得重建或改写 suppression');
+    assert.equal(fs.readdirSync(stagingDir).filter((file) => file.endsWith('.json')).length, 1, '恢复期 SessionStart 必须保留');
+    r.close();
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
 test('心跳超时判死（§4.5-4）：停发心跳 → 连接被关闭', { skip: !isWindows }, async () => {
   const t = await startApp({ heartbeat_timeout_ms: 600 });
   try {
@@ -473,6 +615,138 @@ test('暂存回收（§3.3）：启动前落暂存文件 → 启动后按字典�
     await app.stop();
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+});
+
+test('恢复 daemon：交接锁内按序回放后才启动 renderer，随后新 close_pet 仍正常抑制', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-recovery-owner-test-'));
+  const eventPipe = uniquePipeName('H2D');
+  const controlPipe = uniquePipeName('PET');
+  const stagingDir = path.join(markerBase, 'staging');
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  const recoveryPath = getPetRecoveryPath(markerBase);
+  const gatePath = getPetRecoveryGatePath(recoveryPath);
+  const exits: ShutdownReason[] = [];
+  let rendererSpawns = 0;
+  const fakeChild = {
+    once: () => fakeChild,
+    kill: () => true,
+  } as unknown as import('node:child_process').ChildProcess;
+  assert.equal(setPetRecoveryPending(recoveryPath), true);
+  writeStaging(
+    createHostEventEnvelope('{"hook_event_name":"SessionStart","session_id":"r1","cwd":"D:\\\\r"}'),
+    stagingDir,
+    new Date('2026-08-12T01:00:00.000Z'),
+  );
+  writeStaging(
+    createHostEventEnvelope('{"hook_event_name":"UserPromptSubmit","session_id":"r1","cwd":"D:\\\\r"}'),
+    stagingDir,
+    new Date('2026-08-12T01:00:01.000Z'),
+  );
+
+  // rendererPath 必须存在才会调用注入 spawn，用当前测试文件作为无害占位。
+  const app = new DaemonApp({
+    config: testConfig({ renderer_path: import.meta.filename }),
+    logger: silentLogger,
+    eventPipeName: eventPipe,
+    controlPipeName: controlPipe,
+    stagingDir,
+    suppressionPath,
+    recoveryPath,
+    daemonLockPath: path.join(markerBase, 'daemon.lock'),
+    rendererSpawn: () => {
+      rendererSpawns++;
+      assert.equal(isPetRecoveryPending(recoveryPath), false, 'renderer 启动前必须已完成回放与恢复交接');
+      assert.deepEqual(fs.readdirSync(stagingDir), [], 'renderer 启动前 staging 必须已清空');
+      return fakeChild;
+    },
+    onExit: (reason) => exits.push(reason),
+    exitGraceMs: 100,
+  });
+
+  try {
+    await app.start();
+    assert.equal(rendererSpawns, 1);
+    assert.equal(fs.existsSync(gatePath), false, '回放完成后必须释放交接锁');
+
+    const renderer = await FakeRenderer.connect(controlPipe);
+    renderer.hello();
+    await renderer.waitFor('hello');
+    const state = await renderer.waitFor('pet_state');
+    assert.deepEqual(state.payload, { state: 'Working', reason: 'user_prompt' });
+    renderer.send(createEnvelope('close_pet', { reason: 'user' }));
+    const shutdown = await renderer.waitFor('shutdown');
+    assert.deepEqual(shutdown.payload, { reason: 'user' });
+    await waitUntil(() => exits.length === 1, 3000);
+    assert.equal(fs.existsSync(suppressionPath), true, '恢复 owner 上的新关闭必须重新写入 suppression');
+    renderer.close();
+  } finally {
+    await app.stop();
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('恢复 daemon：下一批恢复建立后，延迟 close_pet 不得覆盖新批次', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-recovery-owner-delayed-close-test-'));
+  const eventPipe = uniquePipeName('H2D');
+  const controlPipe = uniquePipeName('PET');
+  const stagingDir = path.join(markerBase, 'staging');
+  const suppressionPath = path.join(markerBase, 'pet.disabled');
+  const recoveryPath = getPetRecoveryPath(markerBase);
+  const exits: ShutdownReason[] = [];
+  const fakeChild = {
+    once: () => fakeChild,
+    kill: () => true,
+  } as unknown as import('node:child_process').ChildProcess;
+  assert.equal(setPetRecoveryPending(recoveryPath), true);
+  writeStaging(
+    createHostEventEnvelope('{"hook_event_name":"SessionStart","session_id":"r1","cwd":"D:\\\\r"}'),
+    stagingDir,
+  );
+  const app = new DaemonApp({
+    config: testConfig({ renderer_path: import.meta.filename }),
+    logger: silentLogger,
+    eventPipeName: eventPipe,
+    controlPipeName: controlPipe,
+    stagingDir,
+    suppressionPath,
+    recoveryPath,
+    daemonLockPath: path.join(markerBase, 'daemon.lock'),
+    rendererSpawn: () => fakeChild,
+    onExit: (reason) => exits.push(reason),
+    exitGraceMs: 100,
+  });
+
+  try {
+    await app.start();
+    const renderer = await FakeRenderer.connect(controlPipe);
+    renderer.hello();
+    await renderer.waitFor('hello');
+    await renderer.waitFor('pet_state');
+
+    // 模拟 UE 已落关闭标记、而下一次 SessionStart 先于旧 close_pet 到达并建立新恢复批次。
+    assert.equal(setPetSuppressed(suppressionPath), true);
+    assert.equal(setPetRecoveryPending(recoveryPath), true);
+    const nextStaged = writeStaging(
+      createHostEventEnvelope('{"hook_event_name":"SessionStart","session_id":"r2","cwd":"D:\\\\next"}'),
+      stagingDir,
+    );
+    assert.ok(nextStaged);
+    const markerTime = new Date('2026-01-02T00:00:00.000Z');
+    fs.utimesSync(suppressionPath, markerTime, markerTime);
+    const markerMtimeBefore = fs.statSync(suppressionPath).mtimeMs;
+
+    renderer.send(createEnvelope('close_pet', { reason: 'user' }));
+    await renderer.waitFor('shutdown');
+    await waitUntil(() => exits.length === 1, 3000);
+
+    assert.equal(fs.statSync(suppressionPath).mtimeMs, markerMtimeBefore, '延迟关闭不得改写下一批 suppression');
+    assert.equal(isPetRecoveryPending(recoveryPath), true, '延迟关闭不得清除下一批恢复标记');
+    assert.equal(fs.existsSync(nextStaged!), true, '延迟关闭不得删除下一批 SessionStart 暂存');
+    renderer.close();
+  } finally {
+    await app.stop();
+    fs.rmSync(markerBase, { recursive: true, force: true });
   }
 });
 

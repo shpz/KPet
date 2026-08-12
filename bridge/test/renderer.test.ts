@@ -230,6 +230,131 @@ test('shutdown 后不再重启（守护进程退出流程）', async () => {
   }
 });
 
+test('退避重启期间命中关闭标记：不再 spawn 且只通知一次', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
+  const exe = path.join(dir, 'KimiPet.exe');
+  fs.writeFileSync(exe, '');
+  try {
+    const children: FakeChild[] = [];
+    let spawnCount = 0;
+    let suppressed = false;
+    let suppressedCalls = 0;
+    const supervisor = new RendererSupervisor({
+      rendererPath: exe,
+      restartMaxAttempts: 5,
+      restartWindowMs: 60_000,
+      logger: silentLogger,
+      spawnFn: () => {
+        spawnCount++;
+        const child = fakeChild();
+        children.push(child);
+        return child as never;
+      },
+      backoffDelay: () => 10,
+      isSuppressed: () => suppressed,
+      onSuppressed: () => {
+        suppressedCalls++;
+      },
+    });
+
+    supervisor.start();
+    await waitFor(() => spawnCount === 1);
+    children[0]!.emit('exit', 1, null);
+    await waitFor(() => supervisor.status === 'waiting');
+
+    suppressed = true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(spawnCount, 1);
+    assert.equal(supervisor.status, 'shutdown');
+    assert.equal(suppressedCalls, 1);
+
+    // 之后任何事件都不能再次回调或拉起进程。
+    supervisor.onHostEvent();
+    supervisor.onConnectionLost();
+    assert.equal(spawnCount, 1);
+    assert.equal(suppressedCalls, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('spawn 和 scheduleRestart 入口命中关闭标记时统一关闭', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
+  const exe = path.join(dir, 'KimiPet.exe');
+  fs.writeFileSync(exe, '');
+  try {
+    let spawnCount = 0;
+    let suppressedCalls = 0;
+    const options = {
+      rendererPath: exe,
+      restartMaxAttempts: 5,
+      restartWindowMs: 60_000,
+      logger: silentLogger,
+      spawnFn: () => {
+        spawnCount++;
+        return fakeChild() as never;
+      },
+      backoffDelay: () => 10,
+      isSuppressed: () => true,
+      onSuppressed: () => {
+        suppressedCalls++;
+      },
+    };
+
+    const supervisor = new RendererSupervisor({ ...options, isSuppressed: () => true });
+    supervisor.start();
+    assert.equal(spawnCount, 0);
+    assert.equal(supervisor.status, 'shutdown');
+    assert.equal(suppressedCalls, 1);
+
+    const restartSupervisor = new RendererSupervisor({ ...options, isSuppressed: () => true });
+    (restartSupervisor as unknown as { scheduleRestart: (cause: string) => void }).scheduleRestart('测试');
+    assert.equal(spawnCount, 0);
+    assert.equal(restartSupervisor.status, 'shutdown');
+    assert.equal(suppressedCalls, 2);
+
+    supervisor.onHostEvent();
+    supervisor.onConnectionLost();
+    assert.equal(spawnCount, 0);
+    assert.equal(suppressedCalls, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('spawn 调用期间写入关闭标记：立即结束刚拉起的 renderer', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
+  const exe = path.join(dir, 'KimiPet.exe');
+  fs.writeFileSync(exe, '');
+  try {
+    let suppressed = false;
+    let suppressedCalls = 0;
+    const child = fakeChild();
+    const supervisor = new RendererSupervisor({
+      rendererPath: exe,
+      restartMaxAttempts: 5,
+      restartWindowMs: 60_000,
+      logger: silentLogger,
+      spawnFn: () => {
+        suppressed = true;
+        return child as never;
+      },
+      isSuppressed: () => suppressed,
+      onSuppressed: () => {
+        suppressedCalls++;
+      },
+    });
+
+    supervisor.start();
+    assert.equal(supervisor.status, 'shutdown');
+    assert.equal(suppressedCalls, 1);
+    assert.equal(child.killed, true, '竞态中已创建的 renderer 必须立即结束');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('spawn 抛异常（同步失败）→ 视为缺失等宿主事件，不崩溃', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
   const exe = path.join(dir, 'KimiPet.exe');

@@ -251,13 +251,26 @@ test('SessionEnd：移除会话、下发 session_end(reason)、最后一个 → 
   assert.equal(r.hostIdle, true, '无活跃会话 → 调用方启动退出倒计时');
 });
 
-test('SessionEnd 非最后一个：只移除会话，状态不变、不触发 hostIdle', () => {
+test('SessionEnd 非最后一个：删除忙会话后仍有空闲会话 → 重新汇总为 Idle', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('UserPromptSubmit', 's1'));
+  machine.processHostEvent(ev('SessionStart', 's2'));
+  assert.equal(machine.state, 'Working');
+  const r = machine.processHostEvent(ev('SessionEnd', 's1'));
+  assert.equal(r.hostIdle, false);
+  assert.deepEqual(byType(r.out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'session_end' });
+  assert.equal(machine.state, 'Idle', '剩余会话均空闲');
+  assert.equal(machine.activeSessions, 1);
+});
+
+test('SessionEnd 非最后一个：删除空闲会话后仍有忙会话 → 保持 Working', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('SessionStart', 's1'));
   machine.processHostEvent(ev('UserPromptSubmit', 's2'));
   const r = machine.processHostEvent(ev('SessionEnd', 's1'));
   assert.equal(r.hostIdle, false);
-  assert.equal(machine.state, 'Working', 's2 仍忙');
+  assert.equal(byType(r.out, 'pet_state').length, 0, 's2 仍忙，不应重复下发 Working');
+  assert.equal(machine.state, 'Working');
   assert.equal(machine.activeSessions, 1);
 });
 
@@ -307,17 +320,18 @@ test('非法输入：非法 JSON/非对象/缺 hook_event_name/缺 session_id �
   assert.equal(machine.activeSessions, 0, '非法事件不产生会话');
 });
 
-test('卡死兜底（§3.4）：忙会话超过 staleMinutes 无事件 → 强制转 Idle 并回收会话', () => {
+test('卡死兜底（§3.4）：忙会话超过 staleMinutes 无事件 → 强制转 Idle 但保留活跃会话', () => {
   const { machine, advance } = makeMachine(10);
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   assert.equal(machine.state, 'Working');
   advance(10 * 60_000 + 1000); // 超过 10 分钟
   const out = machine.markStaleSessions();
   assert.deepEqual(byType(out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'stale' });
-  assert.deepEqual(byType(out, 'session_end')[0]!.payload, { reason: 'stale' });
+  assert.deepEqual(byType(out, 'session_state')[0]!.payload, { working: false, unread: false });
+  assert.equal(byType(out, 'session_end').length, 0, '普通 stale 不移除活跃会话');
   assert.equal(machine.state, 'Idle');
   assert.equal(machine.getSnapshot().tasks.length, 0);
-  assert.equal(machine.activeSessions, 0, '超时会话整体回收（防孤儿会话卡死退出倒计时）');
+  assert.equal(machine.activeSessions, 1, '普通 stale 保留会话，等待真实 SessionEnd');
 });
 
 test('卡死兜底：未超时的忙会话不动', () => {
@@ -329,14 +343,23 @@ test('卡死兜底：未超时的忙会话不动', () => {
   assert.equal(machine.activeSessions, 1);
 });
 
-test('卡死兜底：idle 会话超时同样回收并下发 session_end(stale)', () => {
+test('卡死兜底：idle 会话超过 staleMinutes 仍保留，不下发 session_end', () => {
   const { machine, advance } = makeMachine(10);
   machine.processHostEvent(ev('SessionStart', 's1'));
   machine.processHostEvent(ev('SessionStart', 's2'));
   advance(10 * 60_000 + 1000);
   const out = machine.markStaleSessions();
   assert.equal(byType(out, 'pet_state').length, 0, '全闲超时不产生状态切换消息');
-  assert.deepEqual(byType(out, 'session_end').map((m) => m.payload), [{ reason: 'stale' }, { reason: 'stale' }]);
+  assert.equal(byType(out, 'session_end').length, 0);
+  assert.equal(machine.activeSessions, 2);
+});
+
+test('长期异常会话清理：超过 cleanup 时长才回收活跃会话', () => {
+  const { machine, advance } = makeMachine(10);
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  advance(60 * 60_000 + 1000);
+  const out = machine.markStaleSessions();
+  assert.deepEqual(byType(out, 'session_end').map((m) => m.payload), [{ reason: 'stale_cleanup' }]);
   assert.equal(machine.activeSessions, 0);
 });
 

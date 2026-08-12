@@ -7,7 +7,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { createEnvelope } from '../src/protocol/index.js';
-import { buildStagingFileName, getStagingDir, writeStaging } from '../src/bridge/staging.js';
+import {
+  buildStagingFileName,
+  clearStagingBeforeTimestamp,
+  getStagingDir,
+  writeStaging,
+} from '../src/bridge/staging.js';
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-test-'));
@@ -59,6 +64,37 @@ test('writeStaging：多个事件写入后按文件名排序即按时间排序',
     for (let i = 1; i < files.length; i++) {
       assert.ok(files[i - 1]! < files[i]!, '排序后时间递增');
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeStaging：默认时间戳严格递增，同一毫秒也保持事件顺序', () => {
+  const dir = makeTempDir();
+  try {
+    writeStaging(createEnvelope('host_event', { _raw: '{"hook_event_name":"SessionStart"}' }), dir);
+    writeStaging(createEnvelope('host_event', { _raw: '{"hook_event_name":"UserPromptSubmit"}' }), dir);
+    const hooks = fs.readdirSync(dir).sort().map((file) => {
+      const env = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')) as { payload: { _raw: string } };
+      return (JSON.parse(env.payload._raw) as { hook_event_name: string }).hook_event_name;
+    });
+    assert.deepEqual(hooks, ['SessionStart', 'UserPromptSubmit']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clearStagingBeforeTimestamp：按文件名时间清理关闭前事件，保留恢复期新事件', () => {
+  const dir = makeTempDir();
+  try {
+    const env = createEnvelope('host_event', { _raw: '{}' });
+    writeStaging(env, dir, new Date('2026-08-12T01:00:00.000Z'));
+    writeStaging(env, dir, new Date('2026-08-12T01:00:02.000Z'));
+    const files = fs.readdirSync(dir).sort();
+    // 故意把新文件 mtime 调到很早，验证判定不依赖 mtime。
+    fs.utimesSync(path.join(dir, files[1]!), new Date(0), new Date(0));
+    assert.equal(clearStagingBeforeTimestamp(dir, Date.parse('2026-08-12T01:00:01.000Z')), 1);
+    assert.deepEqual(fs.readdirSync(dir), [files[1]]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

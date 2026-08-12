@@ -5,11 +5,14 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/RunnableThread.h"
 #include "Misc/DateTime.h"
 #include "Misc/Guid.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -19,6 +22,33 @@
 
 /** 本进程软件版本（随 hello.version 上报，§4.3）。 */
 static const TCHAR* PetClientVersion = TEXT("0.1.0");
+
+namespace
+{
+	/**
+	 * 用户关闭标记与 bridge/src/bridge/daemon.ts 共用 %TEMP%/kimi-pet/pet.disabled。
+	 * UE 在控制管道断开时也先落标记，确保当前会话后续钩子不会重新拉起宠物。
+	 */
+	bool WriteCloseSuppressionMarker()
+	{
+		const FString MarkerDirectory = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("kimi-pet"));
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		if (!PlatformFile.CreateDirectoryTree(*MarkerDirectory))
+		{
+			UE_LOG(LogPet, Warning, TEXT("无法创建用户关闭标记目录: %s"), *MarkerDirectory);
+			return false;
+		}
+
+		const FString MarkerPath = FPaths::Combine(MarkerDirectory, TEXT("pet.disabled"));
+		const FString Contents = FDateTime::UtcNow().ToIso8601() + LINE_TERMINATOR;
+		if (!FFileHelper::SaveStringToFile(Contents, *MarkerPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			UE_LOG(LogPet, Warning, TEXT("无法写入用户关闭标记: %s"), *MarkerPath);
+			return false;
+		}
+		return true;
+	}
+}
 
 FPetControlClient::FPetControlClient()
 {
@@ -122,6 +152,23 @@ void FPetControlClient::SendPetMoved(int32 X, int32 Y)
 	Payload->SetStringField(TEXT("monitor_id"), MonitorId);
 	EnqueueEnvelope(TEXT("pet_moved"), Payload);
 	UE_LOG(LogPet, Log, TEXT("已发送 pet_moved (x=%d, y=%d, monitor=%s)"), X, Y, *MonitorId);
+}
+
+bool FPetControlClient::SendClosePet()
+{
+	const bool bMarkerWritten = WriteCloseSuppressionMarker();
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("reason"), TEXT("user"));
+	const bool bQueued = EnqueueEnvelope(TEXT("close_pet"), Payload);
+	if (bQueued)
+	{
+		UE_LOG(LogPet, Log, TEXT("已发送 close_pet(reason=user, marker=%s)"), bMarkerWritten ? TEXT("ok") : TEXT("failed"));
+	}
+	else if (bMarkerWritten)
+	{
+		UE_LOG(LogPet, Log, TEXT("控制管道未连接，但用户关闭标记已写入"));
+	}
+	return bQueued;
 }
 
 uint32 FPetControlClient::Run()
@@ -343,7 +390,7 @@ bool FPetControlClient::SendHello()
 		TEXT("{\"v\":1,\"type\":\"hello\",\"id\":\"%s\",\"ts\":\"%s\",\"session_id\":null,"
 			"\"payload\":{\"protocol_version\":1,\"role\":\"renderer\",\"pid\":%d,\"version\":\"%s\","
 			"\"capabilities\":[\"pet_state\",\"sessions_snapshot\",\"session_state\",\"task_start\",\"task_end\",\"tasks_snapshot\",\"notify\","
-			"\"open_tui\",\"heartbeat\",\"pet_moved\",\"shutdown\"]}}"),
+			"\"open_tui\",\"heartbeat\",\"pet_moved\",\"close_pet\",\"shutdown\"]}}"),
 		*FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens),
 		*FDateTime::UtcNow().ToIso8601(),
 		Pid,
@@ -436,10 +483,10 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		}
 	}
 	const TSharedPtr<FJsonValue>* SessionValue = Envelope->Values.Find(TEXT("session_id"));
-	if (SessionValue && SessionValue->IsValid() &&
-		(*SessionValue)->Type != EJson::String && (*SessionValue)->Type != EJson::Null)
+	if (!SessionValue || !SessionValue->IsValid() ||
+		((*SessionValue)->Type != EJson::String && (*SessionValue)->Type != EJson::Null))
 	{
-		RecordProtocolError(TEXT("信封 session_id 必须为字符串或 null"), Line);
+		RecordProtocolError(TEXT("信封 session_id 字段缺失或必须为字符串或 null"), Line);
 		return;
 	}
 	FString SessionId;
@@ -602,7 +649,7 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		Payload->TryGetStringField(TEXT("description"), Description);
 		UE_LOG(LogPet, Warning, TEXT("收到 protocol_error: %s"), *Description);
 	}
-	else if (Type == TEXT("heartbeat") || Type == TEXT("open_tui") || Type == TEXT("pet_moved") ||
+	else if (Type == TEXT("heartbeat") || Type == TEXT("open_tui") || Type == TEXT("pet_moved") || Type == TEXT("close_pet") ||
 		Type == TEXT("host_event"))
 	{
 		// 按 §4.3 这些类型不会发往渲染进程；收到仅记日志
@@ -643,13 +690,13 @@ void FPetControlClient::SendHeartbeat()
 	UE_LOG(LogPet, Log, TEXT("已发送 heartbeat (state=%s)"), *CurrentState);
 }
 
-void FPetControlClient::EnqueueEnvelope(const FString& Type, const TSharedPtr<FJsonObject>& Payload)
+bool FPetControlClient::EnqueueEnvelope(const FString& Type, const TSharedPtr<FJsonObject>& Payload)
 {
 	if (!bConnected.load())
 	{
 		// §6.5：断线时不重试轰炸，只记日志；心跳/位置等离线数据同样丢弃
 		UE_LOG(LogPet, Log, TEXT("控制管道未连接，丢弃待发消息 %s"), *Type);
-		return;
+		return false;
 	}
 
 	TSharedPtr<FJsonObject> Envelope = MakeShared<FJsonObject>();
@@ -671,6 +718,7 @@ void FPetControlClient::EnqueueEnvelope(const FString& Type, const TSharedPtr<FJ
 		FScopeLock Lock(&SendLock);
 		PendingSends.Add(Out);
 	}
+	return true;
 }
 
 FString FPetControlClient::BuildPipeName()

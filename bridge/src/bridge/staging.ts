@@ -40,14 +40,105 @@ export function getStagingDir(tmpDir: string = os.tmpdir()): string {
 export function writeStaging(
   envelope: MessageEnvelope,
   dir: string = getStagingDir(),
-  ts: Date = new Date(),
+  ts?: Date,
 ): string | null {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, buildStagingFileName(ts));
+    const file = path.join(dir, buildStagingFileName(ts ?? nextStagingTimestamp(dir)));
     fs.writeFileSync(file, JSON.stringify(envelope), 'utf8');
     return file;
   } catch {
     return null;
   }
+}
+
+/**
+ * 在已有暂存文件的最大文件名时间戳后至少递增 1ms。
+ * 恢复期写入由 pet.recovering.gate 串行化，因此即使 SessionStart 与后续事件
+ * 落在同一毫秒，字典序仍严格等于到达顺序。
+ */
+function nextStagingTimestamp(dir: string): Date {
+  let nextMs = Date.now();
+  try {
+    for (const file of fs.readdirSync(dir)) {
+      const parsed = parseStagingTimestamp(file);
+      if (parsed !== null && parsed >= nextMs) nextMs = parsed + 1;
+    }
+  } catch {
+    // 目录刚创建或并发消失时使用当前时间。
+  }
+  return new Date(nextMs);
+}
+
+function parseStagingTimestamp(file: string): number | null {
+  const match = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.(\d{3})-/.exec(file);
+  if (!match) return null;
+  const values = match.slice(1).map(Number);
+  const [year, month, day, hour, minute, second, millisecond] = values;
+  if ([year, month, day, hour, minute, second, millisecond].some((value) => value === undefined)) return null;
+  const timestamp = Date.UTC(year!, month! - 1, day!, hour!, minute!, second!, millisecond!);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+/**
+ * 清理指定暂存目录中的事件文件。
+ * 用户关闭后旧事件不应在下一次 SessionStart 恢复时重放；只删除本目录下的 .json 暂存，
+ * 目录中的其他文件保留，避免误伤宿主或调试文件。
+ */
+export function clearStagingDir(dir: string = getStagingDir(), beforeEach?: () => void): number {
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    beforeEach?.();
+    try {
+      fs.rmSync(path.join(dir, file), { force: true });
+      removed++;
+    } catch {
+      // 删除失败不阻塞恢复；后续启动仍会按正常暂存逻辑处理。
+    }
+  }
+  return removed;
+}
+
+/** 按文件名中的事件时间戳清理关闭前暂存，不受文件系统 mtime 精度影响。 */
+export function clearStagingBeforeTimestamp(
+  dir: string = getStagingDir(),
+  beforeMs: number,
+  beforeEach?: () => void,
+): number {
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    beforeEach?.();
+    const timestamp = parseStagingTimestamp(file);
+    if (timestamp === null) {
+      // 兼容旧版/损坏命名：只在 mtime 确认它属于关闭前时才清理。
+      try {
+        if (fs.statSync(path.join(dir, file)).mtimeMs > beforeMs) continue;
+      } catch {
+        continue;
+      }
+    } else if (timestamp > beforeMs) {
+      continue;
+    }
+    try {
+      fs.rmSync(path.join(dir, file), { force: true });
+      removed++;
+    } catch {
+      // 删除失败不阻塞恢复。
+    }
+  }
+  return removed;
 }

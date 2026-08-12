@@ -11,7 +11,14 @@
  */
 import * as net from 'node:net';
 import { createEnvelope, validateEnvelope, type MessageEnvelope } from '../protocol/index.js';
-import { MAX_RAW_EXCERPT_CHARS, PROTOCOL_VERSION, type HelloPayload, type OpenTuiPayload, type PetMovedPayload } from '../protocol/types.js';
+import {
+  MAX_RAW_EXCERPT_CHARS,
+  PROTOCOL_VERSION,
+  type ClosePetPayload,
+  type HelloPayload,
+  type OpenTuiPayload,
+  type PetMovedPayload,
+} from '../protocol/types.js';
 import type { Logger } from './logger.js';
 import { attachLineFraming, FRAME_DELIMITER } from './pipes.js';
 
@@ -20,6 +27,8 @@ export interface ControlCallbacks {
   onHello(payload: HelloPayload): void;
   onOpenTui(payload: OpenTuiPayload): void;
   onPetMoved(payload: PetMovedPayload): void;
+  /** 渲染进程请求用户关闭；守护进程应先持久化抑制标记再退出。 */
+  onClosePet(payload: ClosePetPayload): void;
   /** 连接关闭（对端断开/主动 close）后回调。 */
   onClosed(): void;
 }
@@ -74,6 +83,19 @@ export class ControlSession {
       return true;
     } catch {
       this.close();
+      return false;
+    }
+  }
+
+  /** 发送最后一条消息并半关闭写端，确保 shutdown 在销毁管道前刷出。 */
+  sendAndClose(envelope: MessageEnvelope): boolean {
+    if (this.closed) return false;
+    this.closed = true;
+    try {
+      this.socket.end(JSON.stringify(envelope) + FRAME_DELIMITER);
+      return true;
+    } catch {
+      this.socket.destroy();
       return false;
     }
   }
@@ -134,6 +156,9 @@ export class ControlSession {
         break;
       case 'pet_moved':
         this.callbacks.onPetMoved(env.payload as PetMovedPayload);
+        break;
+      case 'close_pet':
+        this.callbacks.onClosePet(env.payload as ClosePetPayload);
         break;
       case 'protocol_error':
         // 对端报告协议错误：仅日志

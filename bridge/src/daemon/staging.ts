@@ -19,6 +19,7 @@ export function replayStagingDir(
   dir: string = getStagingDir(),
   onEnvelope: (env: MessageEnvelope) => void,
   logger?: Logger,
+  beforeEach?: () => void,
 ): number {
   let files: string[];
   try {
@@ -35,6 +36,9 @@ export function replayStagingDir(
       // 非暂存格式的杂项文件不动
       continue;
     }
+    // 恢复交接锁可能需要在大量文件回放期间续租；该回调失败必须向上传播，
+    // 不能被当成坏暂存文件吞掉并删除。
+    beforeEach?.();
     try {
       const raw = fs.readFileSync(p, 'utf8');
       const validation = validateEnvelope(JSON.parse(raw));

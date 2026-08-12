@@ -38,7 +38,22 @@ import {
   type OpenTuiPayload,
   type ShutdownReason,
 } from '../protocol/types.js';
-import { getStagingDir } from '../bridge/staging.js';
+import { clearStagingDir, getStagingDir } from '../bridge/staging.js';
+import {
+  acquireOwnedDaemonLock,
+  clearPetRecoveryPending,
+  getDaemonLockPath,
+  getPetRecoveryPath,
+  getPetRecoveryGatePath,
+  getPetSuppressionPath,
+  hasActiveDeliveryLeases,
+  isPetRecoveryPending,
+  isPetSuppressed,
+  refreshDaemonLock,
+  RECOVERY_GATE_LOCK_TTL_MS,
+  setPetSuppressed,
+  type OwnedDaemonLock,
+} from '../bridge/daemon.js';
 
 /** 错误计数窗口（毫秒），§4.4：连续超阈值（10 条/分钟）记日志告警。 */
 const ERROR_WINDOW_MS = 60_000;
@@ -76,6 +91,12 @@ export interface DaemonAppOptions {
   sessionCatalog?: SessionCatalogReader;
   /** 渲染进程收到 shutdown 后的强制结束宽限（毫秒），缺省 3000。 */
   exitGraceMs?: number;
+  /** 用户关闭抑制标记路径，缺省 %TEMP%/kimi-pet/pet.disabled。 */
+  suppressionPath?: string;
+  /** 拉起锁路径，缺省 %TEMP%/kimi-pet/daemon.lock。 */
+  daemonLockPath?: string;
+  /** 恢复中标记路径，缺省 %TEMP%/kimi-pet/pet.recovering。 */
+  recoveryPath?: string;
 }
 
 export class DaemonApp {
@@ -88,6 +109,13 @@ export class DaemonApp {
   private readonly eventPipeName: string;
   private readonly controlPipeName: string;
   private readonly stagingDir: string;
+  private readonly suppressionPath: string;
+  private readonly daemonLockPath: string;
+  private readonly recoveryPath: string;
+  /** 启动时已进入恢复批次；该实例必须在锁内回放后才启动 renderer。 */
+  private recoveryOwner = false;
+  /** 启动回放期只恢复状态，不允许 host event 的重试逻辑提前拉起 renderer。 */
+  private replayingStaging = false;
   private readonly onExit: (reason: ShutdownReason) => void;
   private readonly exitGraceMs: number;
   private readonly openTuiFn: (opts: OpenTuiOptions) => Promise<OpenTuiResult>;
@@ -112,6 +140,9 @@ export class DaemonApp {
     this.eventPipeName = opts.eventPipeName ?? getEventPipeName();
     this.controlPipeName = opts.controlPipeName ?? getControlPipeName();
     this.stagingDir = opts.stagingDir ?? getStagingDir();
+    this.suppressionPath = opts.suppressionPath ?? getPetSuppressionPath();
+    this.daemonLockPath = opts.daemonLockPath ?? getDaemonLockPath();
+    this.recoveryPath = opts.recoveryPath ?? getPetRecoveryPath();
     this.onExit = opts.onExit ?? (() => process.exit(0));
     this.exitGraceMs = opts.exitGraceMs ?? RENDERER_EXIT_GRACE_MS;
     this.openTuiFn = opts.openTuiFn ?? openTui;
@@ -120,6 +151,7 @@ export class DaemonApp {
 
     this.state = new PetStateMachine({
       staleMs: this.config.session.staleMinutes * 60_000,
+      cleanupMs: this.config.session.cleanupMinutes * 60_000,
       now,
     });
     this.renderer = new RendererSupervisor({
@@ -129,6 +161,8 @@ export class DaemonApp {
       logger: this.logger,
       spawnFn: opts.rendererSpawn,
       now,
+      isSuppressed: () => isPetSuppressed(this.suppressionPath),
+      onSuppressed: () => this.requestShutdown('user'),
     });
     this.petState = new PetStateStore(undefined, { now });
   }
@@ -160,12 +194,49 @@ export class DaemonApp {
       `守护进程 v${DAEMON_VERSION} 就绪: 事件管道 ${this.eventPipeName} | 控制管道 ${this.controlPipeName}`,
     );
 
-    // 3. 冷启动拉起渲染进程（§4.5-1；路径缺失时等宿主事件重试）
-    this.renderer.start();
-
-    // 4. 回收暂存（§3.3：字典序=时间序，重放后删除）
-    const replayed = replayStagingDir(this.stagingDir, (env) => this.handleHostEnvelope(env), this.logger);
+    // 3. 启动判定与暂存回放统一放进恢复 gate。Bridge 无法在 daemon 已扫描目录后、
+    // 清恢复标记前再写入文件；第一次抑制检查之后才发生的关闭也会在锁内被看见。
+    const gatePath = getPetRecoveryGatePath(this.recoveryPath);
+    const gate = await acquireStartupGate(gatePath, this.recoveryPath);
+    if (!gate) throw new Error('恢复交接锁超时');
+    let replayed = 0;
+    let suppressedDuringStartup = false;
+    this.replayingStaging = true;
+    try {
+      suppressedDuringStartup = isPetSuppressed(this.suppressionPath);
+      if (!suppressedDuringStartup) {
+        // worker 可能在对象构造后、管道监听完成前才消费 suppression；恢复所有权必须
+        // 在启动临界点重新判定，不能使用构造时的过早快照。
+        this.recoveryOwner = isPetRecoveryPending(this.recoveryPath);
+        replayed = replayStagingDir(
+          this.stagingDir,
+          (env) => this.handleHostEnvelope(env),
+          this.logger,
+          () => assertGateOwnership(gatePath, gate),
+        );
+        assertGateOwnership(gatePath, gate);
+        suppressedDuringStartup = isPetSuppressed(this.suppressionPath);
+        if (this.recoveryOwner && !suppressedDuringStartup
+          && !clearPetRecoveryPending(this.recoveryPath)) {
+          throw new Error('无法清除恢复标记');
+        }
+      }
+    } finally {
+      gate.release();
+      this.replayingStaging = false;
+    }
+    if (suppressedDuringStartup) {
+      this.logger.info('启动交接期检测到用户关闭标记，守护进程立即按 user 退出并释放管道');
+      this.doExit('user');
+      return;
+    }
+    if (this.recoveryOwner) {
+      this.logger.info('恢复期暂存已完成有序重放，清除恢复标记并开放直接投递');
+    }
     if (replayed > 0) this.logger.info(`回收并重放 ${replayed} 条暂存事件`);
+
+    // 4. 先完成状态回放，再拉起 renderer，使其首次握手必然获得完整快照。
+    this.renderer.start();
 
     // 5. 周期任务：心跳超时判定（§4.5-4）/ 会话卡死兜底（§3.4）
     this.housekeepingTimer = setInterval(() => this.housekeeping(), 1000);
@@ -202,6 +273,11 @@ export class DaemonApp {
 
   /** 一行 → 信封校验 → 只接受 host_event（§4.3 唯一入站类型）；非法跳过并计数（§4.4）。 */
   private handleEventLine(line: string): void {
+    if (this.exiting || isPetSuppressed(this.suppressionPath)) {
+      // Bridge 是正常入口，但守护进程自身也要防御绕过 Bridge 的旧事件，避免关闭后复活。
+      this.logger.debug('用户关闭抑制期或退出中，丢弃事件管道输入');
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -228,13 +304,19 @@ export class DaemonApp {
 
   /** host_event 信封 → 状态机 → 下发消息（事件管道与暂存重放共用入口）。 */
   private handleHostEnvelope(env: MessageEnvelope): void {
+    if (this.exiting) {
+      this.logger.debug('守护进程正在退出，丢弃宿主事件');
+      return;
+    }
     this.cancelCountdown(); // 倒计时内新宿主事件取消退出（§4.5-6）
     const result = this.state.processHostEvent((env.payload as HostEventPayload)._raw);
     if (!result.ok) {
       this.countError(`host_event 处理失败: ${result.error}`);
       return;
     }
-    this.renderer.onHostEvent(); // 渲染进程停手/缺失时，宿主事件触发新一轮尝试（§4.5-4）
+    // 启动回放只恢复状态，renderer 在全部回放完成后统一拉起；
+    // 实时宿主事件仍可在停手/缺失时触发新一轮尝试（§4.5-4）。
+    if (!this.replayingStaging) this.renderer.onHostEvent();
     for (const msg of result.out) this.sendToRenderer(msg);
     // 节流会话以状态机解析结果为准（信封 session_id 可能缺失，如异常转发器/旧暂存文件）
     if (result.throttled && (result.sessionId ?? env.session_id)) {
@@ -248,6 +330,11 @@ export class DaemonApp {
   // -------------------------------------------------------------------------
 
   private onControlConnection(socket: net.Socket): void {
+    if (this.exiting || isPetSuppressed(this.suppressionPath)) {
+      socket.destroy();
+      if (!this.exiting) this.requestShutdown('user');
+      return;
+    }
     this.logger.info('渲染进程连入控制管道');
     if (this.controlSession && !this.controlSession.isClosed) {
       this.logger.warn('已有渲染进程连接，替换旧连接');
@@ -257,8 +344,15 @@ export class DaemonApp {
       onHello: (payload) => this.onRendererHello(session, payload),
       onOpenTui: (payload) => this.onOpenTui(payload),
       onPetMoved: (payload) => this.petState.updateWindow(payload.x, payload.y, payload.monitor_id),
+      onClosePet: (payload) => this.onClosePet(payload),
       onClosed: () => {
         if (this.controlSession === session) this.controlSession = null;
+        if (isPetSuppressed(this.suppressionPath)) {
+          // UE 可能先写标记后因断线未送达 close_pet；此时也必须走用户关闭退出路径。
+          this.logger.info('控制管道断开且检测到用户关闭标记，守护进程退出');
+          this.requestShutdown('user');
+          return;
+        }
         // 失联 → 渲染进程崩溃处理（§4.5-4）；已被新会话接管则忽略
         if (!this.controlSession) this.renderer.onConnectionLost();
       },
@@ -330,6 +424,15 @@ export class DaemonApp {
     });
   }
 
+  /** 用户从渲染进程请求关闭：持久化抑制、清理旧事件，再发送 shutdown(user)。 */
+  private onClosePet(payload: { reason: 'user' }): void {
+    if (payload.reason !== 'user') {
+      this.logger.warn(`忽略未知 close_pet.reason=${String(payload.reason)}`);
+      return;
+    }
+    this.requestShutdown('user');
+  }
+
   /** 目录属于外部 CLI 状态，读取失败时按空目录处理，不能阻断握手。 */
   private readSessionCatalogSafely(): SessionCatalogEntry[] {
     try {
@@ -393,6 +496,38 @@ export class DaemonApp {
     if (this.exiting) return;
     this.exiting = true;
     this.logger.info(`守护进程退出，reason=${reason}`);
+    if (reason === 'user') {
+      // 退出是同步回调，不能阻塞等锁；恢复标记用于区分真正的新恢复批次。
+      const gatePath = getPetRecoveryGatePath(this.recoveryPath);
+      const gate = acquireOwnedDaemonLock(gatePath, RECOVERY_GATE_LOCK_TTL_MS);
+      const suppressionAlreadyPresent = isPetSuppressed(this.suppressionPath);
+      const recoveryInFlight = isPetRecoveryPending(this.recoveryPath)
+        || (!gate && suppressionAlreadyPresent);
+      try {
+        // 无恢复交接时，即使本实例最初由上一批恢复拉起，也要正常记录新的用户关闭。
+        // 一旦下一批恢复已经建立，则当前这次 close_pet 必然是延迟到达的旧关闭；
+        // 不得重写 suppression，也不得清掉新 SessionStart 的暂存。
+        const delayedOldClose = recoveryInFlight;
+        if (!delayedOldClose && !setPetSuppressed(this.suppressionPath)) {
+          this.logger.warn(`无法写入用户关闭标记: ${this.suppressionPath}`);
+        }
+        if (!delayedOldClose && gate) {
+          try {
+            clearStagingDir(this.stagingDir, () => assertGateOwnership(gatePath, gate));
+          } catch {
+            this.logger.warn('清理关闭前暂存时恢复交接锁已被接管，停止清理以保护新事件');
+          }
+        } else if (!delayedOldClose) {
+          // 普通 Bridge 投递也会短暂持有 gate。此时抑制标记已经补写，不能把拿不到锁
+          // 误判成旧 close；暂存由下一次 SessionStart 按标记时间戳安全清理。
+          this.logger.debug('关闭时恢复交接锁正忙，跳过即时暂存清理');
+        }
+      } finally {
+        gate?.release();
+      }
+      // 不在旧 daemon 退出线程中无条件删除拉起锁：恢复 worker 会在确认旧事件管道
+      // 已释放后清理。否则旧进程延迟执行到这里，可能误删新 daemon 刚取得的锁。
+    }
     this.petState.flush();
     this.state.clearAllPending();
     if (this.countdownTimer) clearTimeout(this.countdownTimer);
@@ -400,15 +535,22 @@ export class DaemonApp {
     this.throttleTimers.clear();
     if (this.housekeepingTimer) clearInterval(this.housekeepingTimer);
 
-    this.controlSession?.send(createEnvelope('shutdown', { reason }, {}));
-    this.controlSession?.close();
-    this.renderer.shutdown(); // 停止重启逻辑；渲染进程收到 shutdown 后自行退出
+    // 先停止任何渲染进程重启，再发送最后一条 shutdown；随后释放两条服务端管道，
+    // 避免恢复期 SessionStart 写入正在退出的旧守护进程。
+    const eventServer = this.eventServer;
+    this.eventServer = null;
+    const controlServer = this.controlServer;
+    this.controlServer = null;
+    const controlSession = this.controlSession;
+    this.controlSession = null;
+    this.renderer.shutdown();
+    controlSession?.sendAndClose(createEnvelope('shutdown', { reason }, {}));
+    void closeServer(eventServer);
+    void closeServer(controlServer, false);
 
     // 宽限后强制结束渲染进程并退出（§2.3：渲染进程随守护进程退出）
     setTimeout(() => {
       this.renderer.forceKill();
-      void closeServer(this.eventServer);
-      void closeServer(this.controlServer);
       this.onExit(reason);
     }, this.exitGraceMs);
   }
@@ -419,6 +561,12 @@ export class DaemonApp {
 
   private housekeeping(): void {
     if (this.exiting) return;
+    // UE 落标记与 close_pet 送达之间也可能没有连接关闭或 renderer 退出事件；
+    // 周期兜底保证 daemon 最迟一秒内停止重启并释放管道。
+    if (isPetSuppressed(this.suppressionPath)) {
+      this.requestShutdown('user');
+      return;
+    }
     // 心跳超时判死（§4.5-4：heartbeat 3s，heartbeat_timeout_ms 10s；任意合法消息都刷新存活时间）
     const cs = this.controlSession;
     if (cs && !cs.isClosed && this.config.heartbeat_timeout_ms > 0) {
@@ -428,7 +576,11 @@ export class DaemonApp {
       }
     }
     // 会话卡死兜底（§3.4）：超时会话强制转闲，状态切换消息下发
-    for (const msg of this.state.markStaleSessions()) this.sendToRenderer(msg);
+    const staleMessages = this.state.markStaleSessions();
+    for (const msg of staleMessages) this.sendToRenderer(msg);
+    if (staleMessages.some((msg) => msg.type === 'session_end') && this.state.activeSessions === 0) {
+      this.startCountdown();
+    }
   }
 
   /** 错误计数（§4.4）：非法消息跳过 + 计数 +1；连续超阈值（10 条/分钟）告警，不中断连接。 */
@@ -444,13 +596,47 @@ export class DaemonApp {
   }
 }
 
+/** daemon 启动可等待交接锁；持锁方崩溃时由 TTL 自动接管。 */
+async function acquireRecoveryGate(lockPath: string): Promise<OwnedDaemonLock | null> {
+  const deadline = Date.now() + 20_000;
+  while (true) {
+    const gate = acquireOwnedDaemonLock(lockPath, RECOVERY_GATE_LOCK_TTL_MS);
+    if (gate) return gate;
+    if (Date.now() >= deadline) return null;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/**
+ * 启动回放必须等已登记的正常投递完成。无租约检查与持有 gate 是同一个原子判定：
+ * 新投递只有取得同一把 gate 才能登记，因此不会在扫描暂存目录时再插入一个在途写入。
+ */
+async function acquireStartupGate(lockPath: string, recoveryPath: string): Promise<OwnedDaemonLock | null> {
+  const deadline = Date.now() + 20_000;
+  while (true) {
+    const gate = acquireOwnedDaemonLock(lockPath, RECOVERY_GATE_LOCK_TTL_MS);
+    if (gate) {
+      if (!hasActiveDeliveryLeases(recoveryPath)) return gate;
+      gate.release();
+    }
+    if (Date.now() >= deadline) return null;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function assertGateOwnership(lockPath: string, gate: OwnedDaemonLock): void {
+  if (!refreshDaemonLock(lockPath, gate.owner)) throw new Error('恢复交接锁所有权已丢失');
+}
+
 /** 关闭一个 net.Server（未监听/已关闭时安全返回）。 */
-function closeServer(server: net.Server | null): Promise<void> {
+function closeServer(server: net.Server | null, forceConnections = true): Promise<void> {
   if (!server) return Promise.resolve();
   return new Promise((resolve) => {
     try {
       // closeAllConnections 在较新的 @types/node 中才有类型定义，这里按可选能力调用
-      (server as net.Server & { closeAllConnections?: () => void }).closeAllConnections?.(); // 强制断开残留连接（探测连接等）
+      if (forceConnections) {
+        (server as net.Server & { closeAllConnections?: () => void }).closeAllConnections?.(); // 强制断开残留连接（探测连接等）
+      }
       server.close(() => resolve());
     } catch {
       resolve();
