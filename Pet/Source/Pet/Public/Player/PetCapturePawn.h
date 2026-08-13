@@ -98,7 +98,7 @@ private:
 	FIntPoint WindowScreenPosition = FIntPoint::ZeroValue;
 
 	/** 当前权威工作状态；动画蓝图可直接读取，初始状态为 Idle。 */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "宠物状态", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Transient, Category = "宠物状态", meta = (AllowPrivateAccess = "true"))
 	EPetWorkState CurrentPetState = EPetWorkState::Idle;
 
 	FRHIGPUTextureReadback* Readback = nullptr;      // 仅渲染线程访问
