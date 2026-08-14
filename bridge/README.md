@@ -5,7 +5,7 @@ KimiPet 桌面宠物的宿主集成层，对应 `docs/MVP设计.md` §3（宿主
 本工程目前包含三部分：
 
 - **协议包 `src/protocol/`**：消息信封与全部消息类型定义（§4.2 / §4.3），供转发器、守护进程、渲染进程共享。校验/构造辅助供守护进程、渲染进程复用（如 §4.4 的非法消息处理）。
-- **转发器 `src/bridge/`**：`kimi-pet-bridge`（§3.3）。宿主每发生一个事件拉起一次，读取 stdin 事件 JSON → 包装成 `host_event` 信封 → 写入事件管道 `\\.\pipe\KimiPet.H2D.<用户名>`；管道不存在则分离拉起守护进程 `kimi-petd.exe`（防并发风暴）；连接+写入超时 200ms，失败写本地暂存 `%TEMP%/kimi-pet-events/`；任何情况以退出码 0 结束（失败放行，§2.2 D4）。
+- **转发器 `src/bridge/`**：宿主每发生一个事件拉起一次（§3.3），读取 stdin 事件 JSON → 包装成 `host_event` 信封 → 写入事件管道 `\\.\pipe\KimiPet.H2D.<用户名>`；管道不存在则分离拉起守护进程（防并发风暴）；连接+写入超时 200ms，失败写本地暂存 `%TEMP%/kimi-pet-events/`；任何情况以退出码 0 结束（失败放行，§2.2 D4）。
 - **守护进程 `src/daemon/`**：维护会话与全局 `Idle`/`Working` 状态、管理渲染进程及控制管道。用户通过 `close_pet` 关闭后，以 `%TEMP%/kimi-pet/pet.disabled` 抑制当前会话的后续拉起；下一次合法 `SessionStart` 自动恢复。
 
 ## 目录结构
@@ -25,6 +25,8 @@ bridge/
       staging.ts         # 本地暂存 %TEMP%/kimi-pet-events/（时间戳+随机文件名，可排序回收）
       user.ts            # 用户名获取与非法字符过滤（管道名段）
     daemon/              # 常驻守护进程、会话状态机、渲染进程与控制管道管理（§3.4 / §4.5）
+    launcher/            # 单 exe 分发入口（阶段五 P1：--relay / --daemon / --kimi-pet-recover 三模式）
+      main.ts
   test/                  # node:test 单测 + 命名管道集成测试（Windows）
   packaging/
     kimi-pet/
@@ -36,9 +38,10 @@ bridge/
 ```bash
 npm install        # 仅 devDependencies（typescript、@types/node），运行时零第三方依赖
 npm run build      # tsc 编译到 dist/（ESM，NodeNext）
+npm run build:exe  # bun 编译单 exe：bin/kimi-petd.exe（转发器/守护进程/恢复 worker 同体，按首参数分发）
 ```
 
-产物：`dist/bridge/main.js`（转发器入口）、`dist/protocol/`（协议包，含 .d.ts）。
+产物：`dist/launcher/main.js`（单 exe 分发入口）、`dist/bridge/main.js`（转发器核心）、`dist/protocol/`（协议包，含 .d.ts）；`build:exe` 额外产出 `bin/kimi-petd.exe`。
 
 ## 打包（生成可安装的插件目录）
 
@@ -64,4 +67,4 @@ npm test           # 编译 src + test 后运行 node --test
 - **分帧**：`node:net` 的命名管道是字节流模式而非文档假设的"消息模式"（§4.1），因此转发器每条消息追加一个 `\n` 作帧分隔，守护进程端按行读取（JSON 文本流惯例，消息模式收端亦可容忍尾部空白）。
 - **管道不存在判定**：`node:net` 对不存在的命名管道报告 `ENOENT` / `ECONNREFUSED`（`src/bridge/pipe.ts`）。
 - **防并发风暴**：多个转发器同时发现管道不存在时，由 `%TEMP%/kimi-pet/daemon.lock` 独占锁保证只拉一次；锁文件不主动删除，靠 mtime 超过 15s 视为陈旧接管（崩溃残留不阻塞拉起，`src/bridge/daemon.ts`）。
-- **守护进程路径**：优先 `KIMI_PLUGIN_ROOT/bin/kimi-petd.exe`（宿主注入，§3.1）；未设置时相对推导为 `cwd()/bin/kimi-petd.exe`（宿主保证钩子工作目录 = 插件根目录）。
+- **守护进程路径**：单 exe 合并后，bun --compile 产物下守护进程即当前可执行文件自身（`resolveDaemonPath` 直接返回 `argv[0]`）；开发模式（node/bun 直跑）仍优先 `KIMI_PLUGIN_ROOT/bin/kimi-petd.exe`（宿主注入，§3.1），未设置时相对推导为 `cwd()/bin/kimi-petd.exe`（宿主保证钩子工作目录 = 插件根目录）。

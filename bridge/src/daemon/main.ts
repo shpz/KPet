@@ -8,12 +8,14 @@
  * 单实例说明：Node 侧没有 Win32 命名互斥体 API（§4.1 原设计），改为「事件管道名占用」实现 ——
  * 同名管道创建失败（EADDRINUSE/EACCES）即视为已有实例，以退出码 0 静默结束（转发器感知不到
  * 失败，不会误报；守护进程是随首个宿主事件由转发器拉起的，重复拉起是常态）。
+ *
+ * 入口 main 由 src/launcher/main.ts 按 --daemon 参数分发调用。
  */
 import { DaemonApp, SingleInstanceError } from './app.js';
 import { DAEMON_VERSION, getLogFilePath, loadConfig } from './config.js';
 import { Logger } from './logger.js';
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const { config, warnings, source } = loadConfig(process.env);
   const logger = new Logger({ level: config.log_level, filePath: getLogFilePath(process.env) });
   logger.info(`守护进程 v${DAEMON_VERSION} 启动（配置来源: ${source === 'file' ? 'config.json' : '默认值'}）`);
@@ -40,5 +42,3 @@ async function main(): Promise<void> {
     app.requestShutdown('error');
   });
 }
-
-void main();

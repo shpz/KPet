@@ -1,5 +1,5 @@
 /**
- * 转发器主程序 kimi-pet-bridge（§3.3 伪代码）。
+ * 转发器主程序（§3.3 伪代码），单 exe 分发后由 src/launcher/main.ts 按 --relay 调用。
  *
  * 宿主每发生一个事件拉起本进程一次，流程：
  *   read_all(stdin) → 非法 JSON 直接放行 → 包装 host_event 信封
@@ -405,7 +405,8 @@ export async function runDaemonRecoveryWorker(
   return finish(recovered);
 }
 
-async function runRecoveryFromArgv(): Promise<void> {
+/** 解析 --kimi-pet-recover 的 7 个位置参数并运行 detached 恢复 worker（由 launcher 分发调用）。 */
+export async function runRecoveryFromArgv(): Promise<void> {
   const index = process.argv.indexOf(DAEMON_RECOVERY_ARG);
   const pipeName = process.argv[index + 1];
   const recoveryPath = process.argv[index + 2];
@@ -427,7 +428,7 @@ async function runRecoveryFromArgv(): Promise<void> {
 }
 
 /** 入口：任何情况都以 0 退出（失败放行，§2.2 D4 / §3.3）。 */
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   try {
     const raw = await readAllStdin();
     await relayHostEvent(raw);
@@ -435,10 +436,4 @@ async function main(): Promise<void> {
     // 极端异常也放行
   }
   process.exit(0);
-}
-
-if (process.argv.includes(DAEMON_RECOVERY_ARG)) {
-  void runRecoveryFromArgv();
-} else {
-  void main();
 }

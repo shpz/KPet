@@ -1,6 +1,9 @@
 /**
  * 守护进程拉起（§3.3：管道不存在时以分离方式拉起守护进程，不等待就绪）。
  *
+ * 单 exe 合并（阶段五 P1）：kimi-petd.exe 同时承载转发器与守护进程，按首参数分发
+ * （src/launcher/main.ts）；拉起守护进程时以 --daemon 分发，恢复 worker 以 --kimi-pet-recover 分发。
+ *
  * 防并发风暴：多个转发器同时发现管道不存在时，用独占锁文件保证只拉一次。
  * 锁文件不主动删除，靠 mtime 超过 TTL 视为陈旧 —— 持有锁的转发器（或守护进程）崩溃后，
  * 下一个转发器可接管重拉；spawn 同步失败（exe 缺失）则立即释放锁允许重试。
@@ -11,7 +14,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-/** 守护进程可执行文件名（随插件分发，见 packaging/kimi-pet/）。 */
+/** 守护进程可执行文件名（单 exe 合并后仅用于开发模式兜底路径，见 resolveDaemonPath）。 */
 export const DAEMON_EXE = 'kimi-petd.exe';
 
 /** 锁文件 TTL（毫秒）：超过该时长视为陈旧锁，下一个转发器可接管。 */
@@ -31,11 +34,19 @@ export const PET_RECOVERY_GATE_FILE = 'pet.recovering.gate';
 export const DAEMON_RECOVERY_ARG = '--kimi-pet-recover';
 
 /**
- * 解析守护进程可执行文件路径：
+ * 解析守护进程可执行文件路径。
+ *
+ * 单 exe 合并后，守护进程与转发器同体：bun build --compile 产物下当前进程自身即守护进程，
+ * 直接返回 argv[0]（跳过 bun.exe/node.exe 等开发运行时的宿主可执行文件）。
+ * 开发模式（node/bun 直跑）保留原解析逻辑：
  * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/kimi-petd.exe（宿主注入，§3.1）；
  * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录（§3.1），故取 cwd()/bin/kimi-petd.exe。
  */
 export function resolveDaemonPath(env: NodeJS.ProcessEnv = process.env): string {
+  const self = process.argv[0];
+  if (self && /\.exe$/i.test(self) && !/(?:bun|node)\.exe$/i.test(self)) {
+    return self;
+  }
   const root = env.KIMI_PLUGIN_ROOT;
   if (root && root.length > 0) return path.join(root, 'bin', DAEMON_EXE);
   return path.join(process.cwd(), 'bin', DAEMON_EXE);
@@ -242,7 +253,8 @@ export interface ScheduleDaemonRecoveryOptions {
  * 安排 detached recovery worker。
  *
  * 转发器本身会在当前 hook 结束时退出，因此恢复等待不能依赖当前进程的定时器。
- * worker 使用同一个 bridge 可执行文件的隐藏命令行入口，独立等待事件管道释放。
+ * worker 复用同一个 kimi-petd.exe 的 --kimi-pet-recover 隐藏命令行入口（launcher 分发），
+ * 独立等待事件管道释放。
  */
 export async function scheduleDaemonRecovery(opts: ScheduleDaemonRecoveryOptions): Promise<boolean> {
   const workerLockPath = opts.workerLockPath ?? `${opts.recoveryPath}.worker.lock`;
@@ -440,7 +452,8 @@ export function spawnDaemonIfNeeded(opts: SpawnDaemonOptions = {}): boolean {
       release();
       return false;
     }
-    const child = spawnDaemon(daemonPath, [], {
+    // 单 exe 合并后，守护进程即当前可执行文件自身，以 --daemon 参数分发（见 src/launcher/main.ts）。
+    const child = spawnDaemon(daemonPath, ['--daemon'], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,

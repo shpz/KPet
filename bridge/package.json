@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:exe": "npm run build && node -e \"require('node:fs').mkdirSync('bin',{recursive:true})\" && bun build --compile --windows-hide-console dist/launcher/main.js --outfile bin/kimi-petd.exe",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build && npm run build:test && node --test --test-force-exit \"dist-test/test/*.test.js\"",
     "clean": "node -e \"const fs=require('node:fs');for(const d of ['dist','dist-test'])fs.rmSync(d,{recursive:true,force:true})\""
