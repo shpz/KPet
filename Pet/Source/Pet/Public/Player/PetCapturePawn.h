@@ -6,20 +6,25 @@
 #include "UObject/SoftObjectPtr.h"
 #include "PetCapturePawn.generated.h"
 
-class USceneCaptureComponent2D;
-class UTextureRenderTarget2D;
 class FRHIGPUTextureReadback;
-class PetLayeredWindow;
-class FPetControlClient;
 class FPetSessionWindowHost;
+class PetLayeredWindow;
+class UPetCameraManagerComponent;
+class UPetCharacterMotionComponent;
+class UPetMessageChannelComponent;
 class UPetSessionPanelWidget;
+class UAnimInstance;
+class USceneCaptureComponent2D;
+class USkeletalMeshComponent;
+class USkeletalMesh;
+class UTextureRenderTarget2D;
+struct FPetSessionInfo;
 
 /**
- * 方案一渲染管线 Pawn：
- * 骨骼网格体 + 关卡灯光 → 场景捕获组件输出到 320x320 BGRA8 RT（背景应全透明）
- * → FRHIGPUTextureReadback 异步回读（取上一帧，延迟 1 帧）
- * → 预乘转换 → UpdateLayeredWindow 上屏到自建分层窗口。
- * 默认 UE 游戏窗口由 FPetModule 的纯 Slate 启动守卫隐藏，编辑器 PIE 不受影响。
+ * 桌宠渲染 Pawn。
+ *
+ * 负责场景捕获、桌面窗口、会话面板、权威业务状态和原生组件调度。
+ * 通信、状态镜头、小电脑运动与动画参数计算由各自组件或 AnimInstance 负责。
  */
 UCLASS()
 class PET_API APetCapturePawn : public APawn
@@ -30,38 +35,87 @@ public:
 	APetCapturePawn();
 	virtual ~APetCapturePawn() override;
 
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 
+	EPetWorkState GetCurrentPetState() const { return CurrentPetState; }
+	FIntPoint GetWindowScreenPosition() const { return WindowScreenPosition; }
+	USceneCaptureComponent2D* GetCaptureComponent() const { return CaptureComponent; }
+	USkeletalMeshComponent* GetPetMesh() const { return PetMeshComponent; }
+	USkeletalMeshComponent* GetComputerMesh() const { return ComputerMeshComponent; }
+	UPetCharacterMotionComponent* GetPetMotionComponent() const { return MotionComponent; }
+
+	/** 由主角色 Working 动画中的原生 AnimNotify 调用。 */
+	void HandleComputerHitNotify();
+
 protected:
-	/** 工作状态实际改变时触发；重连收到相同状态不会重复触发。动画层可在蓝图中实现。 */
+	/** 工作状态真实改变且原生组件已经收到新状态后触发。 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "宠物状态")
 	void OnPetStateChanged(EPetWorkState NewState);
 
 private:
+	bool ResolveRuntimeComponents();
+	void ApplyConfiguredCharacterAssets();
 	void OnFrameReady(TSharedRef<TArray<uint8>> Pixels);
 	void AdjustCameraRotation(float DeltaX, float DeltaY);
 	void AdjustCameraZoom(float WheelDelta);
-	void ApplyCameraTransform();
 	void InitializeSessionPanel();
 	void ShutdownSessionPanel();
 	void UpdateSessionPanelAnchor();
 	void ReplaySessionPanelPresentation();
 	void HandleSessionSelected(const FString& SessionId);
 	void HandlePetState(const FString& State, const FString& Reason);
+	void HandleSessionsSnapshot(const TArray<FPetSessionInfo>& Sessions);
+	void HandleSessionStart(const FString& SessionId, const FString& Cwd, bool bResume);
+	void HandleSessionEnd(const FString& SessionId, const FString& Reason);
+	void HandleSessionState(const FString& SessionId, bool bWorking, bool bUnread);
+	void HandleShutdown(const FString& Reason);
 	void HandleCloseRequested();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
-	USceneComponent* RootComp = nullptr;
+	TObjectPtr<USceneComponent> RootComp = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
-	USceneCaptureComponent2D* Capture = nullptr;
+	TObjectPtr<USkeletalMeshComponent> PetMeshComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> ComputerMeshComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneCaptureComponent2D> CaptureComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPetMessageChannelComponent> MessageChannelComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPetCameraManagerComponent> CameraManagerComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPetCharacterMotionComponent> MotionComponent = nullptr;
+
+	/** 主角色骨骼网格体资源，由 BP_PetCapturePawn 配置。 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "角色资源|主角色", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMesh> PetMeshAsset = nullptr;
+
+	/** 主角色动画蓝图类，由 BP_PetCapturePawn 配置。 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "角色资源|主角色", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UAnimInstance> PetAnimInstanceClass;
+
+	/** 小电脑骨骼网格体资源，由 BP_PetCapturePawn 配置。 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "角色资源|小电脑", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMesh> ComputerMeshAsset = nullptr;
+
+	/** 小电脑动画蓝图类，由 BP_PetCapturePawn 配置。 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "角色资源|小电脑", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UAnimInstance> ComputerAnimInstanceClass;
 
 	UPROPERTY()
-	UTextureRenderTarget2D* RenderTarget = nullptr;
+	TObjectPtr<UTextureRenderTarget2D> RenderTarget = nullptr;
 
-	/** 会话面板的 UMG Blueprint 类；由 BP_PetCapturePawn 配置软引用并参与 Cook。 */
+	/** 会话面板的 UMG Blueprint 类，由 BP_PetCapturePawn 配置软引用并参与 Cook。 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "会话面板", meta = (AllowPrivateAccess = "true"))
 	TSoftClassPtr<UPetSessionPanelWidget> SessionPanelWidgetClass;
 
@@ -69,56 +123,26 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UPetSessionPanelWidget> SessionPanelWidget = nullptr;
 
-	/** 摄像机相对初始方向的最大水平旋转角度。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "60.0"))
-	float CameraYawLimit = 30.0f;
-
-	/** 摄像机相对初始方向的最大垂直旋转角度。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "60.0", UIMin = "0.0", UIMax = "45.0"))
-	float CameraPitchLimit = 18.0f;
-
-	/** 鼠标每移动一个像素对应的旋转角度。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0"))
-	float CameraRotateSensitivity = 0.16f;
-
-	/** 摄像机允许靠近 Pawn 的最近距离。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "50.0"))
-	float CameraMinDistance = 260.0f;
-
-	/** 摄像机允许远离 Pawn 的最远距离。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "50.0"))
-	float CameraMaxDistance = 480.0f;
-
-	/** 每格滚轮改变的摄像机距离。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "摄像机调整", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
-	float CameraZoomStep = 24.0f;
-
-	/** 分层窗口左上角在 Windows 虚拟桌面中的屏幕像素坐标，供动画蓝图计算使用。 */
+	/** 分层窗口左上角在 Windows 虚拟桌面中的屏幕像素坐标。 */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "窗口", meta = (AllowPrivateAccess = "true"))
 	FIntPoint WindowScreenPosition = FIntPoint::ZeroValue;
 
-	/** 当前权威工作状态；动画蓝图可直接读取，初始状态为 Idle。 */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Transient, Category = "宠物状态", meta = (AllowPrivateAccess = "true"))
+	/** 守护进程下发的当前权威工作状态。 */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "宠物状态", meta = (AllowPrivateAccess = "true"))
 	EPetWorkState CurrentPetState = EPetWorkState::Idle;
 
-	FRHIGPUTextureReadback* Readback = nullptr;      // 仅渲染线程访问
-	std::atomic<bool> bCopyInFlight{ false };        // 仅渲染线程写，游戏线程不依赖其值做决策
+	FRHIGPUTextureReadback* Readback = nullptr;
+	std::atomic<bool> bCopyInFlight{ false };
 
-	PetLayeredWindow* PetWindow = nullptr; // new/delete 手动管理，避免前置声明类型被 UHT 生成代码实例化
+	PetLayeredWindow* PetWindow = nullptr;
+	FPetSessionWindowHost* SessionWindowHost = nullptr;
 	int32 PresentedFrames = 0;
-	bool bPresentedValidFrame = false; // 首个有效 capture 帧之前不 Present（避免零缓冲被上屏成黑方块）
-
-	FPetControlClient* ControlClient = nullptr; // new/delete 手动管理（同 PetWindow）
-	FPetSessionWindowHost* SessionWindowHost = nullptr; // 跨平台 Slate 窗口宿主，生命周期由 Pawn 管理
-	bool bSessionPanelTogglePending = false; // 原生窗口回调只置位，由游戏线程 Tick 安全切换 Slate 窗口
-	bool bSessionPanelPresentationPending = false; // 显示后下一帧重播 UMG 动画，确保条目已进入可见列表
-	bool bCloseRequestPending = false; // 原生窗口回调只置位，关闭流程统一在游戏线程 Tick 中执行
-	bool bCloseRequested = false; // 已发送用户关闭请求，等待守护进程 shutdown 或本地超时兜底
+	bool bPresentedValidFrame = false;
+	bool bSessionPanelTogglePending = false;
+	bool bSessionPanelPresentationPending = false;
+	bool bCloseRequestPending = false;
+	bool bCloseRequested = false;
 	double CloseFallbackDeadline = 0.0;
-	FVector InitialCameraDirection = FVector(-1.0f, 0.0f, 0.0f);
-	float CameraYaw = 0.0f;
-	float CameraPitch = 0.0f;
-	float CameraDistance = 350.0f;
 
 	static constexpr int32 RTSize = 320;
 	static constexpr double CloseFallbackSeconds = 3.0;

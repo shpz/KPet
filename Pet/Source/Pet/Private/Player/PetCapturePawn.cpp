@@ -1,13 +1,17 @@
 #include "Player/PetCapturePawn.h"
 
 #include "Pet.h"
-#include "Communication/PetControlClient.h"
+#include "Animation/PetComputerAnimInstance.h"
+#include "Communication/PetMessageChannelComponent.h"
 #include "Platform/PetLayeredWindow.h"
+#include "Player/PetCameraManagerComponent.h"
+#include "Player/PetCharacterMotionComponent.h"
 #include "UI/PetSessionPanelWidget.h"
 #include "UI/PetSessionWindowHost.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Components/SceneCaptureComponent2D.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformMisc.h"
@@ -17,6 +21,24 @@
 #include "RHIGPUReadback.h"
 #include "RenderingThread.h"
 
+namespace
+{
+template <typename TComponent>
+TComponent* FindOwnedComponentByName(const AActor& Owner, const FName ComponentName)
+{
+	TInlineComponentArray<TComponent*> Components;
+	Owner.GetComponents(Components);
+	for (TComponent* Component : Components)
+	{
+		if (Component && Component->GetFName() == ComponentName)
+		{
+			return Component;
+		}
+	}
+	return nullptr;
+}
+}
+
 APetCapturePawn::APetCapturePawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -24,31 +46,100 @@ APetCapturePawn::APetCapturePawn()
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = RootComp;
 
-	Capture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("Capture"));
-	Capture->SetupAttachment(RootComp);
-	Capture->SetRelativeLocation(FVector(-350.0, 0.0, 0.0)); // 面向 +X 看向原点
-	Capture->FOVAngle = 40.0f;
-	Capture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-	Capture->bCaptureEveryFrame = true;
-	Capture->bCaptureOnMovement = false;
-	Capture->bAlwaysPersistRenderingState = true;
-	Capture->ShowFlags.DynamicShadows = false; // 无接收面，动态阴影只会污染背景 alpha
-	Capture->ShowFlags.Fog = false;             // 背景像素只应有 alpha=0
-	Capture->ShowFlags.VolumetricFog = false;
-	Capture->ShowFlags.Cloud = false;
-	Capture->ShowFlags.SkyLighting = true;
-	Capture->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
+	PetMeshComponent = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("PetMesh"));
+	PetMeshComponent->SetupAttachment(RootComp);
+	PetMeshComponent->SetRelativeRotation(FRotator(0.0, 90.0, 0.0));
+	PetMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PetMeshComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+	ComputerMeshComponent = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ComputerMesh"));
+	ComputerMeshComponent->SetupAttachment(RootComp);
+	ComputerMeshComponent->SetRelativeLocation(FVector(0.0, 80.0, 0.0));
+	ComputerMeshComponent->SetRelativeRotation(FRotator(0.0, 90.0, 0.0));
+	ComputerMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ComputerMeshComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	ComputerMeshComponent->SetVisibility(false, true);
+
+	CaptureComponent = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("Capture"));
+	CaptureComponent->SetupAttachment(RootComp);
+	CaptureComponent->SetRelativeLocation(FVector(-350.0, 0.0, 0.0)); // 面向 +X 看向原点
+	CaptureComponent->FOVAngle = 40.0f;
+	CaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+	CaptureComponent->bCaptureEveryFrame = true;
+	CaptureComponent->bCaptureOnMovement = false;
+	CaptureComponent->bAlwaysPersistRenderingState = true;
+	CaptureComponent->ShowFlags.DynamicShadows = false; // 无接收面，动态阴影只会污染背景 alpha
+	CaptureComponent->ShowFlags.Fog = false;             // 背景像素只应有 alpha=0
+	CaptureComponent->ShowFlags.VolumetricFog = false;
+	CaptureComponent->ShowFlags.Cloud = false;
+	CaptureComponent->ShowFlags.SkyLighting = true;
+	CaptureComponent->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
+
+	MessageChannelComponent = CreateDefaultSubobject<UPetMessageChannelComponent>(TEXT("MessageChannel"));
+	CameraManagerComponent = CreateDefaultSubobject<UPetCameraManagerComponent>(TEXT("CameraManager"));
+	MotionComponent = CreateDefaultSubobject<UPetCharacterMotionComponent>(TEXT("CharacterMotion"));
+
+	MotionComponent->AddTickPrerequisiteComponent(MessageChannelComponent);
+	CameraManagerComponent->AddTickPrerequisiteComponent(MessageChannelComponent);
+	PetMeshComponent->AddTickPrerequisiteComponent(MotionComponent);
+	ComputerMeshComponent->AddTickPrerequisiteComponent(MotionComponent);
+	ComputerMeshComponent->AddTickPrerequisiteComponent(PetMeshComponent);
+	CaptureComponent->AddTickPrerequisiteComponent(CameraManagerComponent);
+	CaptureComponent->AddTickPrerequisiteComponent(ComputerMeshComponent);
 }
 
 APetCapturePawn::~APetCapturePawn() = default;
 
+void APetCapturePawn::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyConfiguredCharacterAssets();
+}
+
+void APetCapturePawn::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	ApplyConfiguredCharacterAssets();
+}
+
+void APetCapturePawn::ApplyConfiguredCharacterAssets()
+{
+	if (PetMeshComponent)
+	{
+		if (PetMeshAsset && PetMeshComponent->GetSkeletalMeshAsset() != PetMeshAsset)
+		{
+			PetMeshComponent->SetSkeletalMeshAsset(PetMeshAsset);
+		}
+		if (PetAnimInstanceClass && PetMeshComponent->GetAnimClass() != PetAnimInstanceClass)
+		{
+			PetMeshComponent->SetAnimInstanceClass(PetAnimInstanceClass);
+		}
+	}
+
+	if (ComputerMeshComponent)
+	{
+		if (ComputerMeshAsset && ComputerMeshComponent->GetSkeletalMeshAsset() != ComputerMeshAsset)
+		{
+			ComputerMeshComponent->SetSkeletalMeshAsset(ComputerMeshAsset);
+		}
+		if (ComputerAnimInstanceClass && ComputerMeshComponent->GetAnimClass() != ComputerAnimInstanceClass)
+		{
+			ComputerMeshComponent->SetAnimInstanceClass(ComputerAnimInstanceClass);
+		}
+	}
+}
+
 void APetCapturePawn::BeginPlay()
 {
 	Super::BeginPlay();
-	const FVector InitialOffset = Capture->GetRelativeLocation();
-	CameraDistance = FMath::Clamp(InitialOffset.Size(), CameraMinDistance, FMath::Max(CameraMinDistance, CameraMaxDistance));
-	InitialCameraDirection = InitialOffset.GetSafeNormal(UE_SMALL_NUMBER, FVector(-1.0f, 0.0f, 0.0f));
-	ApplyCameraTransform();
+	if (!ResolveRuntimeComponents())
+	{
+		SetActorTickEnabled(false);
+		return;
+	}
+
+	CameraManagerComponent->Initialize(CaptureComponent);
+	MotionComponent->Initialize(PetMeshComponent, ComputerMeshComponent);
 
 	// 320x320 BGRA8 RT，清屏为全透明
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
@@ -57,7 +148,7 @@ void APetCapturePawn::BeginPlay()
 	RenderTarget->ClearColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	RenderTarget->InitCustomFormat(RTSize, RTSize, PF_B8G8R8A8, false);
 	RenderTarget->UpdateResourceImmediate(true);
-	Capture->TextureTarget = RenderTarget;
+	CaptureComponent->TextureTarget = RenderTarget;
 
 	// 游戏线程创建窗口（UE 主消息循环会顺带泵它的消息）
 	PetWindow = new PetLayeredWindow();
@@ -79,22 +170,12 @@ void APetCapturePawn::BeginPlay()
 			Readback = new FRHIGPUTextureReadback(TEXT("KimiPetReadback"));
 		});
 
-	// 控制管道客户端：接入守护进程（§4.1 / §4.5-5），回调全部在游戏线程触发
-	ControlClient = new FPetControlClient();
-	ControlClient->OnPetState = [this](const FString& State, const FString& Reason)
-	{
-		HandlePetState(State, Reason);
-	};
-	ControlClient->OnShutdown = [this](const FString& Reason)
-	{
-		if (GIsEditor)
-		{
-			UE_LOG(LogPet, Warning, TEXT("PIE 调试中忽略 shutdown，避免退出编辑器（reason=%s）"), *Reason);
-			return;
-		}
-		UE_LOG(LogPet, Log, TEXT("shutdown 请求退出游戏（reason=%s）"), *Reason);
-		FPlatformMisc::RequestExit(false);
-	};
+	MessageChannelComponent->OnPetState.AddUObject(this, &APetCapturePawn::HandlePetState);
+	MessageChannelComponent->OnSessionsSnapshot.AddUObject(this, &APetCapturePawn::HandleSessionsSnapshot);
+	MessageChannelComponent->OnSessionStart.AddUObject(this, &APetCapturePawn::HandleSessionStart);
+	MessageChannelComponent->OnSessionEnd.AddUObject(this, &APetCapturePawn::HandleSessionEnd);
+	MessageChannelComponent->OnSessionState.AddUObject(this, &APetCapturePawn::HandleSessionState);
+	MessageChannelComponent->OnShutdown.AddUObject(this, &APetCapturePawn::HandleShutdown);
 	if (PetWindow)
 	{
 		PetWindow->OnClick = [this]()
@@ -110,9 +191,9 @@ void APetCapturePawn::BeginPlay()
 		PetWindow->OnDragEnd = [this](int32 X, int32 Y)
 		{
 			UE_LOG(LogPet, Log, TEXT("拖拽结束 (%d,%d) -> 发送 pet_moved"), X, Y);
-			if (ControlClient)
+			if (MessageChannelComponent)
 			{
-				ControlClient->SendPetMoved(X, Y);
+				MessageChannelComponent->SendPetMoved(X, Y);
 			}
 		};
 		PetWindow->OnCameraRotate = [this](float DeltaX, float DeltaY)
@@ -124,38 +205,70 @@ void APetCapturePawn::BeginPlay()
 			AdjustCameraZoom(WheelDelta);
 		};
 	}
-	ControlClient->OnSessionsSnapshot = [this](const TArray<FPetSessionInfo>& Sessions)
-	{
-		if (!SessionPanelWidget)
-		{
-			return;
-		}
-		SessionPanelWidget->ApplySnapshot(Sessions);
-	};
-	ControlClient->OnSessionStart = [this](const FString& SessionId, const FString& Cwd, bool bResume)
-	{
-		if (SessionPanelWidget)
-		{
-			SessionPanelWidget->AddOrUpdateSession(SessionId, FString(), Cwd, true);
-		}
-	};
-	ControlClient->OnSessionEnd = [this](const FString& SessionId, const FString& Reason)
-	{
-		if (SessionPanelWidget)
-		{
-			SessionPanelWidget->SetSessionActive(SessionId, false);
-		}
-	};
-	ControlClient->OnSessionState = [this](const FString& SessionId, bool bWorking, bool bUnread)
-	{
-		if (SessionPanelWidget)
-		{
-			SessionPanelWidget->UpdateSessionState(SessionId, bWorking, bUnread);
-		}
-	};
-	ControlClient->Start();
+	MessageChannelComponent->Start();
 
 	UE_LOG(LogPet, Log, TEXT("PetCapturePawn BeginPlay done"));
+}
+
+bool APetCapturePawn::ResolveRuntimeComponents()
+{
+	bool bRecoveredSerializedReference = false;
+	auto RecoverReference = [&bRecoveredSerializedReference]<typename TComponent>(
+		TObjectPtr<TComponent>& Reference,
+		const FName ComponentName,
+		const APetCapturePawn& Owner)
+	{
+		if (!Reference)
+		{
+			Reference = FindOwnedComponentByName<TComponent>(Owner, ComponentName);
+			bRecoveredSerializedReference |= Reference != nullptr;
+		}
+	};
+
+	if (!RootComp)
+	{
+		RootComp = GetRootComponent();
+		bRecoveredSerializedReference |= RootComp != nullptr;
+	}
+	RecoverReference(PetMeshComponent, TEXT("PetMesh"), *this);
+	RecoverReference(ComputerMeshComponent, TEXT("ComputerMesh"), *this);
+	RecoverReference(CaptureComponent, TEXT("Capture"), *this);
+	RecoverReference(MessageChannelComponent, TEXT("MessageChannel"), *this);
+	RecoverReference(CameraManagerComponent, TEXT("CameraManager"), *this);
+	RecoverReference(MotionComponent, TEXT("CharacterMotion"), *this);
+
+	const bool bHasAllRequiredComponents = RootComp && PetMeshComponent && ComputerMeshComponent && CaptureComponent &&
+		MessageChannelComponent && CameraManagerComponent && MotionComponent;
+	if (!bHasAllRequiredComponents)
+	{
+		UE_LOG(
+			LogPet,
+			Error,
+			TEXT("PetCapturePawn 缺少必要组件：Root=%d PetMesh=%d ComputerMesh=%d Capture=%d MessageChannel=%d CameraManager=%d CharacterMotion=%d"),
+			RootComp != nullptr,
+			PetMeshComponent != nullptr,
+			ComputerMeshComponent != nullptr,
+			CaptureComponent != nullptr,
+			MessageChannelComponent != nullptr,
+			CameraManagerComponent != nullptr,
+			MotionComponent != nullptr);
+		return false;
+	}
+
+	if (bRecoveredSerializedReference)
+	{
+		UE_LOG(LogPet, Warning, TEXT("已从实例组件恢复 BP_PetCapturePawn 中为空的原生组件引用"));
+	}
+
+	// 旧蓝图资产可能保留为空的原生组件引用；恢复引用后同步补齐运行时 Tick 顺序。
+	MotionComponent->AddTickPrerequisiteComponent(MessageChannelComponent);
+	CameraManagerComponent->AddTickPrerequisiteComponent(MessageChannelComponent);
+	PetMeshComponent->AddTickPrerequisiteComponent(MotionComponent);
+	ComputerMeshComponent->AddTickPrerequisiteComponent(MotionComponent);
+	ComputerMeshComponent->AddTickPrerequisiteComponent(PetMeshComponent);
+	CaptureComponent->AddTickPrerequisiteComponent(CameraManagerComponent);
+	CaptureComponent->AddTickPrerequisiteComponent(ComputerMeshComponent);
+	return true;
 }
 
 void APetCapturePawn::InitializeSessionPanel()
@@ -250,9 +363,9 @@ void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
 	}
 
 	UE_LOG(LogPet, Log, TEXT("选择会话 %s -> 发送 open_tui"), *SessionId);
-	if (ControlClient)
+	if (MessageChannelComponent)
 	{
-		ControlClient->SendOpenTui(SessionId);
+		MessageChannelComponent->SendOpenTui(SessionId);
 	}
 	if (SessionWindowHost)
 	{
@@ -275,7 +388,82 @@ void APetCapturePawn::HandlePetState(const FString& State, const FString& Reason
 	}
 
 	UE_LOG(LogPet, Log, TEXT("宠物工作状态改变: %s (reason=%s)"), *State, *Reason);
+	if (CameraManagerComponent)
+	{
+		CameraManagerComponent->SetPetState(CurrentPetState);
+	}
+	if (MotionComponent)
+	{
+		MotionComponent->SetPetState(CurrentPetState);
+	}
+	if (CurrentPetState == EPetWorkState::Idle && ComputerMeshComponent)
+	{
+		if (UPetComputerAnimInstance* ComputerAnim = Cast<UPetComputerAnimInstance>(ComputerMeshComponent->GetAnimInstance()))
+		{
+			ComputerAnim->StopHitReaction();
+		}
+	}
 	OnPetStateChanged(CurrentPetState);
+}
+
+void APetCapturePawn::HandleSessionsSnapshot(const TArray<FPetSessionInfo>& Sessions)
+{
+	if (SessionPanelWidget)
+	{
+		SessionPanelWidget->ApplySnapshot(Sessions);
+	}
+}
+
+void APetCapturePawn::HandleSessionStart(const FString& SessionId, const FString& Cwd, bool bResume)
+{
+	if (SessionPanelWidget)
+	{
+		SessionPanelWidget->AddOrUpdateSession(SessionId, FString(), Cwd, true);
+	}
+}
+
+void APetCapturePawn::HandleSessionEnd(const FString& SessionId, const FString& Reason)
+{
+	if (SessionPanelWidget)
+	{
+		SessionPanelWidget->SetSessionActive(SessionId, false);
+	}
+}
+
+void APetCapturePawn::HandleSessionState(const FString& SessionId, bool bWorking, bool bUnread)
+{
+	if (SessionPanelWidget)
+	{
+		SessionPanelWidget->UpdateSessionState(SessionId, bWorking, bUnread);
+	}
+}
+
+void APetCapturePawn::HandleShutdown(const FString& Reason)
+{
+	if (GIsEditor)
+	{
+		UE_LOG(LogPet, Warning, TEXT("PIE 调试中忽略 shutdown，避免退出编辑器（reason=%s）"), *Reason);
+		return;
+	}
+	UE_LOG(LogPet, Log, TEXT("shutdown 请求退出游戏（reason=%s）"), *Reason);
+	FPlatformMisc::RequestExit(false);
+}
+
+void APetCapturePawn::HandleComputerHitNotify()
+{
+	if (CurrentPetState != EPetWorkState::Working || !MotionComponent ||
+		!MotionComponent->IsWorkPresentationActive() ||
+		MotionComponent->GetPresentationPhase() != EPetPresentationPhase::WorkingStable)
+	{
+		return;
+	}
+
+	if (UPetComputerAnimInstance* ComputerAnim = ComputerMeshComponent
+		? Cast<UPetComputerAnimInstance>(ComputerMeshComponent->GetAnimInstance())
+		: nullptr)
+	{
+		ComputerAnim->PlayHitReaction();
+	}
 }
 
 void APetCapturePawn::HandleCloseRequested()
@@ -299,7 +487,7 @@ void APetCapturePawn::HandleCloseRequested()
 		PetWindow->Destroy();
 	}
 
-	const bool bSent = ControlClient && ControlClient->SendClosePet();
+	const bool bSent = MessageChannelComponent && MessageChannelComponent->SendClosePet();
 	if (bSent)
 	{
 		CloseFallbackDeadline = FPlatformTime::Seconds() + CloseFallbackSeconds;
@@ -316,10 +504,6 @@ void APetCapturePawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (ControlClient)
-	{
-		ControlClient->Tick(); // 收包转交 + 心跳
-	}
 	if (bCloseRequestPending)
 	{
 		bCloseRequestPending = false;
@@ -441,30 +625,18 @@ void APetCapturePawn::ReplaySessionPanelPresentation()
 
 void APetCapturePawn::AdjustCameraRotation(float DeltaX, float DeltaY)
 {
-	CameraYaw = FMath::Clamp(CameraYaw + DeltaX * CameraRotateSensitivity, -CameraYawLimit, CameraYawLimit);
-	CameraPitch = FMath::Clamp(CameraPitch + DeltaY * CameraRotateSensitivity, -CameraPitchLimit, CameraPitchLimit);
-	ApplyCameraTransform();
-	UE_LOG(LogPet, Verbose, TEXT("摄像机旋转调整 yaw=%.2f pitch=%.2f"), CameraYaw, CameraPitch);
+	if (CameraManagerComponent)
+	{
+		CameraManagerComponent->AddRotationInput(DeltaX, DeltaY);
+	}
 }
 
 void APetCapturePawn::AdjustCameraZoom(float WheelDelta)
 {
-	const float MinDistance = FMath::Min(CameraMinDistance, CameraMaxDistance);
-	const float MaxDistance = FMath::Max(CameraMinDistance, CameraMaxDistance);
-	CameraDistance = FMath::Clamp(CameraDistance - WheelDelta * CameraZoomStep, MinDistance, MaxDistance);
-	ApplyCameraTransform();
-	UE_LOG(LogPet, Verbose, TEXT("摄像机距离调整 distance=%.2f"), CameraDistance);
-}
-
-void APetCapturePawn::ApplyCameraTransform()
-{
-	if (!Capture)
+	if (CameraManagerComponent)
 	{
-		return;
+		CameraManagerComponent->AddZoomInput(WheelDelta);
 	}
-	const FVector Offset = FRotator(CameraPitch, CameraYaw, 0.0f).RotateVector(InitialCameraDirection * CameraDistance);
-	Capture->SetRelativeLocation(Offset);
-	Capture->SetRelativeRotation((-Offset).Rotation());
 }
 
 void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
@@ -507,17 +679,15 @@ void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// 先断开控制回调并等待工作线程退出，确保之后不会再触碰 Widget。
-	if (ControlClient)
+	if (MessageChannelComponent)
 	{
-		ControlClient->OnPetState = nullptr;
-		ControlClient->OnSessionsSnapshot = nullptr;
-		ControlClient->OnSessionStart = nullptr;
-		ControlClient->OnSessionEnd = nullptr;
-		ControlClient->OnSessionState = nullptr;
-		ControlClient->OnShutdown = nullptr;
-		ControlClient->Shutdown();
-		delete ControlClient;
-		ControlClient = nullptr;
+		MessageChannelComponent->OnPetState.RemoveAll(this);
+		MessageChannelComponent->OnSessionsSnapshot.RemoveAll(this);
+		MessageChannelComponent->OnSessionStart.RemoveAll(this);
+		MessageChannelComponent->OnSessionEnd.RemoveAll(this);
+		MessageChannelComponent->OnSessionState.RemoveAll(this);
+		MessageChannelComponent->OnShutdown.RemoveAll(this);
+		MessageChannelComponent->Stop();
 	}
 
 	bSessionPanelTogglePending = false;
