@@ -41,9 +41,9 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|状态", meta = (AllowPrivateAccess = "true", ClampMin = "-180.0", ClampMax = "180.0"))
 	float WorkingYawOffset = 45.0f;
 
-	/** 完整 45 度状态切换的时长；中途反向按剩余角度同比缩短。 */
+	/** 完整状态切换的时长；中途反向按剩余角度同比缩短。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|状态", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float StateTransitionDuration = 0.35f;
+	float StateTransitionDuration = 0.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|玩家输入", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "60.0"))
 	float CameraYawLimit = 30.0f;

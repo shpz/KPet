@@ -17,7 +17,7 @@ enum class EPetPresentationPhase : uint8
 	Exiting UMETA(DisplayName = "Exiting")
 };
 
-/** 管理小电脑世界位置、可见性、呈现门控和 BodyLean。 */
+/** 管理小电脑相对位置、可见性、呈现门控和 BodyLean。 */
 UCLASS(ClassGroup = (Pet), meta = (BlueprintSpawnableComponent))
 class PET_API UPetCharacterMotionComponent : public UActorComponent
 {
@@ -31,7 +31,7 @@ public:
 		ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** 在蓝图组件变换已经应用后记录 Working 目标位置。 */
+	/** 在蓝图组件变换已经应用后记录 Working 默认相对位置。 */
 	void Initialize(USkeletalMeshComponent* InPetMesh, USkeletalMeshComponent* InComputerMesh);
 	void SetPetState(EPetWorkState NewState);
 
@@ -55,15 +55,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> ComputerMesh = nullptr;
 
-	/** Working 目标沿世界 +X 方向到隐藏端点的距离。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|小电脑", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float ComputerTravelDistance = 160.0f;
+	/** 小电脑相对于父组件的场外位置；Idle 稳定时位于此处。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|小电脑", meta = (AllowPrivateAccess = "true", DisplayName = "场外位置"))
+	FVector ComputerOffscreenLocation = FVector(160.0f, 80.0f, 0.0f);
 
-	/** 小电脑进出场的恒定世界速度。 */
+	/** 小电脑进出场的恒定移动速度。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|小电脑", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float ComputerMoveSpeed = 480.0f;
+	float ComputerMoveSpeed = 240.0f;
 
-	/** BodyLean 达到绝对值 1 时对应的世界 X 速度；零值表示使用移动速度。 */
+	/** BodyLean 达到绝对值 1 时对应的路径移动速度；零值表示使用移动速度。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|BodyLean", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float BodyLeanReferenceSpeed = 0.0f;
 
@@ -80,7 +80,6 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "角色运动", meta = (AllowPrivateAccess = "true"))
 	EPetPresentationPhase PresentationPhase = EPetPresentationPhase::HiddenStable;
 
-	FVector WorkingWorldLocation = FVector::ZeroVector;
-	FVector HiddenWorldLocation = FVector::ZeroVector;
+	FVector WorkingRelativeLocation = FVector::ZeroVector;
 	bool bInitialized = false;
 };

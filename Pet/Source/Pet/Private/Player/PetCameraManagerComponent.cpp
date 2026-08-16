@@ -1,5 +1,6 @@
 #include "Player/PetCameraManagerComponent.h"
 
+#include "Pet.h"
 #include "Components/SceneCaptureComponent2D.h"
 
 UPetCameraManagerComponent::UPetCameraManagerComponent()
@@ -61,7 +62,16 @@ void UPetCameraManagerComponent::BeginStateTransition(float NewTargetYaw)
 		CurrentStateYaw = TransitionTargetYaw;
 		ActiveTransitionDuration = 0.0f;
 		ApplyCameraTransform();
+		return;
 	}
+
+	UE_LOG(
+		LogPet,
+		Verbose,
+		TEXT("摄像机状态过渡开始: yaw %.2f -> %.2f, duration=%.3fs"),
+		TransitionStartYaw,
+		TransitionTargetYaw,
+		ActiveTransitionDuration);
 }
 
 void UPetCameraManagerComponent::TickComponent(
@@ -82,6 +92,7 @@ void UPetCameraManagerComponent::TickComponent(
 	{
 		CurrentStateYaw = TransitionTargetYaw;
 		ActiveTransitionDuration = 0.0f;
+		UE_LOG(LogPet, Verbose, TEXT("摄像机状态过渡完成: yaw=%.2f"), CurrentStateYaw);
 	}
 	ApplyCameraTransform();
 }

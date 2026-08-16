@@ -1,5 +1,6 @@
 #include "Player/PetCharacterMotionComponent.h"
 
+#include "Pet.h"
 #include "Components/SkeletalMeshComponent.h"
 
 UPetCharacterMotionComponent::UPetCharacterMotionComponent()
@@ -24,11 +25,10 @@ void UPetCharacterMotionComponent::Initialize(
 		return;
 	}
 
-	WorkingWorldLocation = ComputerMesh->GetComponentLocation();
-	HiddenWorldLocation = WorkingWorldLocation + FVector(ComputerTravelDistance, 0.0f, 0.0f);
+	WorkingRelativeLocation = ComputerMesh->GetRelativeLocation();
 
 	// 必须先放到画外位置，再改变可见性，避免短暂显示蓝图中的旧位置。
-	ComputerMesh->SetWorldLocation(HiddenWorldLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	ComputerMesh->SetRelativeLocation(ComputerOffscreenLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	ComputerMesh->SetVisibility(false, true);
 }
 
@@ -47,23 +47,27 @@ void UPetCharacterMotionComponent::SetPetState(EPetWorkState NewState)
 			return;
 		}
 
-		bWorkPresentationActive = false;
+		BodyLean = 0.0f;
 		if (PresentationPhase == EPetPresentationPhase::HiddenStable)
 		{
-			ComputerMesh->SetWorldLocation(HiddenWorldLocation, false, nullptr, ETeleportType::TeleportPhysics);
+			bWorkPresentationActive = false;
+			ComputerMesh->SetRelativeLocation(ComputerOffscreenLocation, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 		ComputerMesh->SetVisibility(true, true);
 		PresentationPhase = EPetPresentationPhase::Entering;
+		UE_LOG(LogPet, Verbose, TEXT("小电脑过渡开始: Entering"));
 		return;
 	}
 
-	bWorkPresentationActive = false;
 	if (PresentationPhase == EPetPresentationPhase::HiddenStable ||
 		PresentationPhase == EPetPresentationPhase::Exiting)
 	{
 		return;
 	}
+	// Working 姿态保持到电脑完全离场，避免主角色在退出第一帧先硬切为 Idle。
+	BodyLean = 0.0f;
 	PresentationPhase = EPetPresentationPhase::Exiting;
+	UE_LOG(LogPet, Verbose, TEXT("小电脑过渡开始: Exiting"));
 }
 
 void UPetCharacterMotionComponent::TickComponent(
@@ -95,11 +99,11 @@ void UPetCharacterMotionComponent::UpdateMovingPhase(float DeltaTime, bool bEnte
 		return;
 	}
 
-	const FVector CurrentLocation = ComputerMesh->GetComponentLocation();
-	const FVector& TargetLocation = bEntering ? WorkingWorldLocation : HiddenWorldLocation;
+	const FVector CurrentLocation = ComputerMesh->GetRelativeLocation();
+	const FVector& TargetLocation = bEntering ? WorkingRelativeLocation : ComputerOffscreenLocation;
 	if (ComputerMoveSpeed <= UE_KINDA_SMALL_NUMBER)
 	{
-		ComputerMesh->SetWorldLocation(TargetLocation, false, nullptr, ETeleportType::None);
+		ComputerMesh->SetRelativeLocation(TargetLocation, false, nullptr, ETeleportType::None);
 		if (bEntering)
 		{
 			CompleteEntering();
@@ -111,23 +115,32 @@ void UPetCharacterMotionComponent::UpdateMovingPhase(float DeltaTime, bool bEnte
 		return;
 	}
 
-	const float MaxStep = ComputerMoveSpeed * DeltaTime;
-	const float RemainingX = TargetLocation.X - CurrentLocation.X;
-	const float DeltaX = FMath::Clamp(RemainingX, -MaxStep, MaxStep);
-
-	FVector NewLocation = CurrentLocation;
-	NewLocation.X += DeltaX;
-	ComputerMesh->SetWorldLocation(NewLocation, false, nullptr, ETeleportType::None);
+	const FVector NewLocation = FMath::VInterpConstantTo(
+		CurrentLocation,
+		TargetLocation,
+		DeltaTime,
+		ComputerMoveSpeed);
+	ComputerMesh->SetRelativeLocation(NewLocation, false, nullptr, ETeleportType::None);
 
 	const float ReferenceSpeed = BodyLeanReferenceSpeed > UE_KINDA_SMALL_NUMBER
 		? BodyLeanReferenceSpeed
 		: FMath::Max(ComputerMoveSpeed, UE_KINDA_SMALL_NUMBER);
 	const float DirectionMultiplier = bInvertBodyLean ? -1.0f : 1.0f;
-	BodyLean = FMath::Clamp((DeltaX / DeltaTime) / ReferenceSpeed, -1.0f, 1.0f) * DirectionMultiplier;
+	const FVector OutwardDirection = (ComputerOffscreenLocation - WorkingRelativeLocation).GetSafeNormal();
+	const float MovementAlongPath = FVector::DotProduct(NewLocation - CurrentLocation, OutwardDirection);
+	const float TravelDistance = FMath::Max(
+		FVector::Distance(ComputerOffscreenLocation, WorkingRelativeLocation),
+		UE_KINDA_SMALL_NUMBER);
+	const float TravelProgress = bEntering
+		? FMath::Clamp(FVector::Distance(ComputerOffscreenLocation, NewLocation) / TravelDistance, 0.0f, 1.0f)
+		: FMath::Clamp(FVector::Distance(WorkingRelativeLocation, NewLocation) / TravelDistance, 0.0f, 1.0f);
+	const float EaseEnvelope = FMath::Sin(TravelProgress * UE_PI);
+	BodyLean = FMath::Clamp((MovementAlongPath / DeltaTime) / ReferenceSpeed, -1.0f, 1.0f) *
+		DirectionMultiplier * EaseEnvelope;
 
-	if (FMath::IsNearlyEqual(NewLocation.X, TargetLocation.X, UE_KINDA_SMALL_NUMBER))
+	if (NewLocation.Equals(TargetLocation, UE_KINDA_SMALL_NUMBER))
 	{
-		ComputerMesh->SetWorldLocation(TargetLocation, false, nullptr, ETeleportType::None);
+		ComputerMesh->SetRelativeLocation(TargetLocation, false, nullptr, ETeleportType::None);
 		if (bEntering)
 		{
 			CompleteEntering();
@@ -144,6 +157,7 @@ void UPetCharacterMotionComponent::CompleteEntering()
 	BodyLean = 0.0f;
 	PresentationPhase = EPetPresentationPhase::WorkingStable;
 	bWorkPresentationActive = true;
+	UE_LOG(LogPet, Verbose, TEXT("小电脑过渡完成: WorkingStable"));
 }
 
 void UPetCharacterMotionComponent::CompleteExiting()
@@ -152,4 +166,5 @@ void UPetCharacterMotionComponent::CompleteExiting()
 	bWorkPresentationActive = false;
 	PresentationPhase = EPetPresentationPhase::HiddenStable;
 	ComputerMesh->SetVisibility(false, true);
+	UE_LOG(LogPet, Verbose, TEXT("小电脑过渡完成: HiddenStable"));
 }
