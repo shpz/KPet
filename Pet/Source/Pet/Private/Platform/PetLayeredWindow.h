@@ -33,6 +33,9 @@ public:
 	/** 驱动宠物窗口的摄像机输入状态与光标清理。 */
 	void Tick(float DeltaTime);
 
+	/** 用 BGRA8 图片替换 R 键摄像机光标，热点取图片中心；传空指针回退为内置绘制光标。 */
+	void SetCameraCursorImage(const uint8* BgraPixels, int32 Width, int32 Height);
+
 	/** 单击宠物（§6.5，消息处理线程 = 游戏线程，直接调用）。 */
 	TFunction<void()> OnClick;
 
@@ -75,6 +78,9 @@ private:
 	bool bWheelCameraCursorActive = false;
 	POINT LastCameraCursor{ 0, 0 };
 	HCURSOR CameraCursor = nullptr;
+	TArray<uint8> CameraCursorImage; // 自定义光标的 BGRA8 源图，空则使用内置绘制样式
+	int32 CameraCursorImageWidth = 0;
+	int32 CameraCursorImageHeight = 0;
 	HHOOK MouseHook = nullptr;
 	uint64 WheelCameraCursorExpireTick = 0;
 	static PetLayeredWindow* MouseHookOwner;

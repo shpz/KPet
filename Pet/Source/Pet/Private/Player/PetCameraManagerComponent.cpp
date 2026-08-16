@@ -207,8 +207,21 @@ void UPetCameraManagerComponent::ApplyCameraTransform()
 	const FVector StateDirection = CurrentStateLocation.GetSafeNormal(UE_SMALL_NUMBER, DefaultDirection);
 	const float StateDistance = CurrentStateLocation.Size();
 	const float EffectiveDistance = FMath::Max(StateDistance + PlayerDistanceOffset, 0.0f);
-	const FRotator OrbitRotation(PlayerPitchOffset, PlayerYawOffset, 0.0f);
-	const FVector Offset = OrbitRotation.RotateVector(StateDirection * EffectiveDistance);
+	// 偏航绕父空间 Z 轴（转台方向与摄像机方位无关）；俯仰必须绕当前视线的水平右轴，
+	// 绕固定的父空间 Y 轴会让另一侧（Working）的摄像机纵向拖拽方向相反。
+	const FVector YawedOffset = FRotator(0.0f, PlayerYawOffset, 0.0f)
+		.RotateVector(StateDirection * EffectiveDistance);
+	FVector RightAxis = FVector::CrossProduct(FVector::UpVector, YawedOffset.GetSafeNormal());
+	if (RightAxis.IsNearlyZero(UE_SMALL_NUMBER))
+	{
+		RightAxis = FVector::RightVector;
+	}
+	else
+	{
+		RightAxis.Normalize();
+	}
+	const FVector Offset = FQuat(RightAxis, FMath::DegreesToRadians(PlayerPitchOffset))
+		.RotateVector(YawedOffset);
 	CurrentStateYaw = FRotator::NormalizeAxis(
 		StateDirection.Rotation().Yaw - DefaultDirection.Rotation().Yaw);
 	Capture->SetRelativeLocation(Offset);

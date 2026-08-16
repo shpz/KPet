@@ -64,6 +64,7 @@ private:
 	void OnFrameReady(TSharedRef<TArray<uint8>> Pixels);
 	void AdjustCameraRotation(float DeltaX, float DeltaY);
 	void AdjustCameraZoom(float WheelDelta);
+	void ApplyCameraCursorImage();
 	void InitializeSessionPanel();
 	void ShutdownSessionPanel();
 	void UpdateSessionPanelAnchor();

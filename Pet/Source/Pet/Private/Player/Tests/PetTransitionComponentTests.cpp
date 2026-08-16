@@ -173,7 +173,7 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 
 	Motion->TickComponent(1.0f / 60.0f, LEVELTICK_All, nullptr);
 	TestTrue(TEXT("进入首个运动帧立即给出足量反方向惯性目标"),
-		Motion->GetBodyLean() < -0.99f);
+		Motion->GetBodyLean() > 0.99f);
 
 	Motion->TickComponent(0.2f, LEVELTICK_All, nullptr);
 	const FVector EnteringRelativeLocation = ComputerMesh->GetRelativeLocation();
@@ -204,7 +204,7 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 
 	Motion->TickComponent(1.0f / 60.0f, LEVELTICK_All, nullptr);
 	TestTrue(TEXT("退出首个运动帧立即给出与进入相反的惯性目标"),
-		Motion->GetBodyLean() > 0.99f);
+		Motion->GetBodyLean() < -0.99f);
 
 	Motion->TickComponent(0.2f, LEVELTICK_All, nullptr);
 	const FVector ExitingRelativeLocation = ComputerMesh->GetRelativeLocation();
@@ -231,6 +231,44 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 	PetMesh->UnregisterComponent();
 	World->DestroyWorld(false);
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPetCameraPitchAxisTest,
+	"Pet.Player.Transition.PitchAxisConsistent",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPetCameraPitchAxisTest::RunTest(const FString& Parameters)
+{
+	// 上拖（DeltaY 为负）时相机的纵向移动方向必须与摄像机所在方位无关：
+	// 俯仰绕当前视线水平右轴旋转，对侧（Working）不会反向。
+	const auto DragUpDeltaZ = [](const FVector& CameraLocation)
+	{
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		USceneComponent* SceneRoot = NewObject<USceneComponent>(World);
+		USceneCaptureComponent2D* Capture = NewObject<USceneCaptureComponent2D>(World);
+		UPetCameraManagerComponent* Camera = NewObject<UPetCameraManagerComponent>(World);
+		Capture->SetupAttachment(SceneRoot);
+		SceneRoot->RegisterComponentWithWorld(World);
+		Capture->RegisterComponentWithWorld(World);
+		Camera->RegisterComponentWithWorld(World);
+
+		Capture->SetRelativeLocation(CameraLocation);
+		Camera->Initialize(Capture);
+		const float BeforeZ = Capture->GetRelativeLocation().Z;
+		Camera->AddRotationInput(0.0f, -50.0f);
+		const float DeltaZ = Capture->GetRelativeLocation().Z - BeforeZ;
+
+		Camera->UnregisterComponent();
+		Capture->UnregisterComponent();
+		SceneRoot->UnregisterComponent();
+		World->DestroyWorld(false);
+		return DeltaZ;
+	};
+
+	TestTrue(TEXT("正面方位上拖保持既有手感"), DragUpDeltaZ(FVector(-350.0f, 0.0f, 45.0f)) < 0.0f);
+	TestTrue(TEXT("对侧方位上拖方向不反向"), DragUpDeltaZ(FVector(350.0f, 0.0f, 45.0f)) < 0.0f);
 	return true;
 }
 

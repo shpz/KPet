@@ -508,6 +508,29 @@ void PetLayeredWindow::HandleCameraWheel(float WheelDelta)
 	::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
 }
 
+void PetLayeredWindow::SetCameraCursorImage(const uint8* BgraPixels, int32 Width, int32 Height)
+{
+	if (BgraPixels && Width > 0 && Height > 0)
+	{
+		CameraCursorImage.SetNumUninitialized(Width * Height * 4);
+		FMemory::Memcpy(CameraCursorImage.GetData(), BgraPixels, CameraCursorImage.Num());
+		CameraCursorImageWidth = Width;
+		CameraCursorImageHeight = Height;
+	}
+	else
+	{
+		CameraCursorImage.Reset();
+		CameraCursorImageWidth = 0;
+		CameraCursorImageHeight = 0;
+	}
+	if (CameraCursor)
+	{
+		DestroyCursor(CameraCursor);
+		CameraCursor = nullptr;
+	}
+	CameraCursor = CreateCameraCursor();
+}
+
 HCURSOR PetLayeredWindow::CreateCameraCursor()
 {
 	constexpr int32 CursorSize = 32;
@@ -538,54 +561,76 @@ HCURSOR PetLayeredWindow::CreateCameraCursor()
 
 	uint32* Pixels = static_cast<uint32*>(ColorBits);
 	FMemory::Memzero(Pixels, CursorSize * CursorSize * sizeof(uint32));
-	auto PutPixel = [Pixels](int32 X, int32 Y, uint32 Color)
+	FIntPoint Hotspot(5, 9);
+	if (CameraCursorImageWidth > 0 && CameraCursorImageHeight > 0 &&
+		CameraCursorImage.Num() >= CameraCursorImageWidth * CameraCursorImageHeight * 4)
 	{
-		if (X >= 0 && X < CursorSize && Y >= 0 && Y < CursorSize)
+		// 最近邻采样到光标尺寸；UE 纹理的 BGRA 字节序与 DIB 像素（0xAARRGGBB）一致，直接拷贝。
+		for (int32 Y = 0; Y < CursorSize; ++Y)
 		{
-			Pixels[Y * CursorSize + X] = Color;
-		}
-	};
-	// 白色相机机身、蓝色镜头与深色描边，热点位于左上取景角。
-	for (int32 Y = 9; Y <= 23; ++Y)
-	{
-		for (int32 X = 5; X <= 25; ++X)
-		{
-			const bool bBorder = X == 5 || X == 25 || Y == 9 || Y == 23;
-			PutPixel(X, Y, bBorder ? 0xFF172033 : 0xFFF4F7FC);
-		}
-	}
-	for (int32 Y = 6; Y <= 10; ++Y)
-	{
-		for (int32 X = 9; X <= 16; ++X)
-		{
-			PutPixel(X, Y, 0xFFF4F7FC);
-		}
-	}
-	for (int32 Y = 12; Y <= 20; ++Y)
-	{
-		for (int32 X = 12; X <= 20; ++X)
-		{
-			const int32 Dx = X - 16;
-			const int32 Dy = Y - 16;
-			if (Dx * Dx + Dy * Dy <= 16)
+			const int32 SrcY = Y * CameraCursorImageHeight / CursorSize;
+			for (int32 X = 0; X < CursorSize; ++X)
 			{
-				PutPixel(X, Y, 0xFF4BB0FF);
+				const int32 SrcX = X * CameraCursorImageWidth / CursorSize;
+				FMemory::Memcpy(
+					&Pixels[Y * CursorSize + X],
+					&CameraCursorImage[(SrcY * CameraCursorImageWidth + SrcX) * 4],
+					sizeof(uint32));
 			}
 		}
+		Hotspot = FIntPoint(CursorSize / 2, CursorSize / 2);
 	}
-	for (int32 Y = 12; Y <= 20; ++Y)
+	else
 	{
-		const int32 HalfWidth = (Y <= 16) ? Y - 11 : 21 - Y;
-		for (int32 X = 26; X <= 26 + HalfWidth; ++X)
+		auto PutPixel = [Pixels](int32 X, int32 Y, uint32 Color)
 		{
-			PutPixel(X, Y, 0xFFF4F7FC);
+			if (X >= 0 && X < CursorSize && Y >= 0 && Y < CursorSize)
+			{
+				Pixels[Y * CursorSize + X] = Color;
+			}
+		};
+		// 白色相机机身、蓝色镜头与深色描边，热点位于左上取景角。
+		for (int32 Y = 9; Y <= 23; ++Y)
+		{
+			for (int32 X = 5; X <= 25; ++X)
+			{
+				const bool bBorder = X == 5 || X == 25 || Y == 9 || Y == 23;
+				PutPixel(X, Y, bBorder ? 0xFF172033 : 0xFFF4F7FC);
+			}
+		}
+		for (int32 Y = 6; Y <= 10; ++Y)
+		{
+			for (int32 X = 9; X <= 16; ++X)
+			{
+				PutPixel(X, Y, 0xFFF4F7FC);
+			}
+		}
+		for (int32 Y = 12; Y <= 20; ++Y)
+		{
+			for (int32 X = 12; X <= 20; ++X)
+			{
+				const int32 Dx = X - 16;
+				const int32 Dy = Y - 16;
+				if (Dx * Dx + Dy * Dy <= 16)
+				{
+					PutPixel(X, Y, 0xFF4BB0FF);
+				}
+			}
+		}
+		for (int32 Y = 12; Y <= 20; ++Y)
+		{
+			const int32 HalfWidth = (Y <= 16) ? Y - 11 : 21 - Y;
+			for (int32 X = 26; X <= 26 + HalfWidth; ++X)
+			{
+				PutPixel(X, Y, 0xFFF4F7FC);
+			}
 		}
 	}
 
 	ICONINFO Info = {};
 	Info.fIcon = 0;
-	Info.xHotspot = 5;
-	Info.yHotspot = 9;
+	Info.xHotspot = Hotspot.X;
+	Info.yHotspot = Hotspot.Y;
 	Info.hbmMask = MaskBitmap;
 	Info.hbmColor = ColorBitmap;
 	HCURSOR Result = CreateIconIndirect(&Info);
