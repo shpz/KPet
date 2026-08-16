@@ -4,6 +4,31 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Player/PetSceneSlotComponent.h"
 
+namespace
+{
+FVector InterpolateCameraLocationOnShell(
+	const FVector& StartLocation,
+	const FVector& TargetLocation,
+	const float Alpha)
+{
+	const float StartDistance = StartLocation.Size();
+	const float TargetDistance = TargetLocation.Size();
+	if (StartDistance <= UE_SMALL_NUMBER || TargetDistance <= UE_SMALL_NUMBER)
+	{
+		return FMath::Lerp(StartLocation, TargetLocation, Alpha);
+	}
+
+	const FVector StartDirection = StartLocation / StartDistance;
+	const FVector TargetDirection = TargetLocation / TargetDistance;
+	const FQuat DirectionArc = FQuat::FindBetweenNormals(StartDirection, TargetDirection);
+	const FVector Direction = FQuat::Slerp(FQuat::Identity, DirectionArc, Alpha)
+		.RotateVector(StartDirection)
+		.GetSafeNormal();
+	const float Distance = FMath::Lerp(StartDistance, TargetDistance, Alpha);
+	return Direction * Distance;
+}
+}
+
 UPetCameraManagerComponent::UPetCameraManagerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -22,6 +47,13 @@ void UPetCameraManagerComponent::Initialize(
 	}
 
 	DefaultCameraRelativeLocation = Capture->GetRelativeLocation();
+	if (!InSceneSlots || !InSceneSlots->TryGetSlotLocationRelativeTo(
+		EPetSceneSlot::DefaultCamera,
+		Capture,
+		DefaultCameraRelativeLocation))
+	{
+		UE_LOG(LogPet, Warning, TEXT("未配置默认摄像机位置插槽，使用 Capture 当前相对位置"));
+	}
 	WorkingCameraRelativeLocation = FRotator(0.0f, WorkingYawOffset, 0.0f)
 		.RotateVector(DefaultCameraRelativeLocation);
 	if (!InSceneSlots || !InSceneSlots->TryGetSlotLocationRelativeTo(
@@ -117,7 +149,10 @@ void UPetCameraManagerComponent::TickComponent(
 	TransitionElapsed += FMath::Max(DeltaTime, 0.0f);
 	const float Alpha = FMath::Clamp(TransitionElapsed / ActiveTransitionDuration, 0.0f, 1.0f);
 	const float EasedAlpha = FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
-	CurrentStateLocation = FMath::Lerp(TransitionStartLocation, TransitionTargetLocation, EasedAlpha);
+	CurrentStateLocation = InterpolateCameraLocationOnShell(
+		TransitionStartLocation,
+		TransitionTargetLocation,
+		EasedAlpha);
 	if (Alpha >= 1.0f)
 	{
 		CurrentStateLocation = TransitionTargetLocation;

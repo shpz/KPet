@@ -127,16 +127,35 @@ test('mergeSessionSnapshots：合并历史与活跃状态，保持 active/workin
   ]);
   assert.deepEqual(merged, [
     {
-      session_id: 'h1', title: '历史一', cwd: 'D:\\history1', active: false,
-      working: false, unread: false, updated_at: 200,
-    },
-    {
       session_id: 'active', title: '活跃标题', cwd: 'D:\\current', active: true,
       working: true, unread: true, updated_at: 100,
     },
     {
-      session_id: 'new-active', title: 'new-active', cwd: 'D:\\new', active: true,
+      session_id: 'new-active', title: '', cwd: 'D:\\new', active: true,
       working: false, unread: false, updated_at: 0,
     },
+    {
+      session_id: 'h1', title: '历史一', cwd: 'D:\\history1', active: false,
+      working: false, unread: false, updated_at: 200,
+    },
   ]);
+});
+
+test('mergeSessionSnapshots：活跃会话优先且合并后仍严格限制为 50 条', () => {
+  const history: SessionCatalogEntry[] = Array.from({ length: MAX_SESSION_CATALOG_ENTRIES }, (_, index) => ({
+    sessionId: `history-${index}`,
+    title: `历史 ${index}`,
+    cwd: `D:\\history-${index}`,
+    updatedAt: MAX_SESSION_CATALOG_ENTRIES - index,
+  }));
+  const merged = mergeSessionSnapshots(history, [
+    { sessionId: 'active-only', cwd: 'D:\\active', busy: true, unread: false },
+  ]);
+
+  assert.equal(merged.length, MAX_SESSION_CATALOG_ENTRIES);
+  assert.deepEqual(merged[0], {
+    session_id: 'active-only', title: '', cwd: 'D:\\active', active: true,
+    working: true, unread: false, updated_at: 0,
+  });
+  assert.equal(merged.some((item) => item.session_id === 'history-49'), false, '最旧历史项被淘汰');
 });

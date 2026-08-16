@@ -71,10 +71,6 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|BodyLean", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float BodyLeanReferenceSpeed = 0.0f;
 
-	/** 与当前 Control Rig 方向相反时启用。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|BodyLean", meta = (AllowPrivateAccess = "true"))
-	bool bInvertBodyLean = false;
-
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "角色运动|BodyLean", meta = (AllowPrivateAccess = "true"))
 	float BodyLean = 0.0f;
 

@@ -22,7 +22,7 @@ public:
 		ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** 在蓝图默认值已经应用后记录 Idle 默认位置，并读取 Working 摄像机插槽。 */
+	/** 读取默认与 Working 摄像机插槽，并把 Capture 放到默认位置。 */
 	void Initialize(
 		USceneCaptureComponent2D* InCapture,
 		const UPetSceneSlotComponent* InSceneSlots = nullptr);

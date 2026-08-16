@@ -38,6 +38,8 @@ public:
 	FPetSessionRowClickedDynamic OnSessionClickedBlueprint;
 
 	UPetSessionItem* GetBoundSessionItem() const { return BoundItem.Get(); }
+	/** 行内存在 Button 时由行自身处理点击，ListView 不应再重复广播同一次选择。 */
+	bool HasDedicatedClickHandler() const { return Button_Row != nullptr; }
 
 	/** 供测试或外部原生按钮转发调用；正常情况下由 Button_Row 触发。 */
 	UFUNCTION(BlueprintCallable, Category = "会话行")

@@ -12,7 +12,8 @@ UENUM(BlueprintType)
 enum class EPetSceneSlot : uint8
 {
 	ComputerOffscreen UMETA(DisplayName = "小电脑场外位置"),
-	WorkingCamera UMETA(DisplayName = "Working 摄像机位置")
+	WorkingCamera UMETA(DisplayName = "Working 摄像机位置"),
+	DefaultCamera UMETA(DisplayName = "默认摄像机位置")
 };
 
 /** 集中声明并缓存蓝图场景组件提供的位置插槽。 */
@@ -53,12 +54,17 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "场景插槽", meta = (AllowPrivateAccess = "true", UseComponentPicker, AllowedClasses = "/Script/Engine.SceneComponent", DisplayName = "Working 摄像机位置"))
 	FComponentReference WorkingCameraSlot;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "场景插槽", meta = (AllowPrivateAccess = "true", UseComponentPicker, AllowedClasses = "/Script/Engine.SceneComponent", DisplayName = "默认摄像机位置"))
+	FComponentReference DefaultCameraSlot;
+
 	UPROPERTY(Transient)
 	TObjectPtr<USceneComponent> ReferenceRoot = nullptr;
 
 	FVector ComputerOffscreenRootLocation = FVector::ZeroVector;
 	FVector WorkingCameraRootLocation = FVector::ZeroVector;
+	FVector DefaultCameraRootLocation = FVector::ZeroVector;
 	bool bHasComputerOffscreenSlot = false;
 	bool bHasWorkingCameraSlot = false;
+	bool bHasDefaultCameraSlot = false;
 	bool bInitialized = false;
 };

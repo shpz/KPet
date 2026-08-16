@@ -135,12 +135,59 @@ bool FPetSessionPanelIncrementalUpdateTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("历史会话变为非激活"), StableItem->bActive);
 	TestFalse(TEXT("非激活会话停止 working"), StableItem->bWorking);
 	StableItem->SetWorking(true);
+	TestFalse(TEXT("非激活 Item 拒绝矛盾的 working 状态"), StableItem->bWorking);
 	Panel->SetSessionActive(TEXT("session-a"), false);
-	TestFalse(TEXT("重复 inactive 事件也修正乱序 working"), StableItem->bWorking);
+	TestFalse(TEXT("重复 inactive 事件保持状态稳定"), StableItem->bWorking);
 
 	Panel->RemoveSession(TEXT("session-a"));
 	TestEqual(TEXT("移除后会话数量为零"), Panel->GetSessionCount(), 0);
 	TestNull(TEXT("移除后映射为空"), Panel->FindSessionItem(TEXT("session-a")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPetSessionPanelRecencyAndInvariantTest,
+	"Pet.UI.SessionPanel.RecencyAndInvariant",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPetSessionPanelRecencyAndInvariantTest::RunTest(const FString& Parameters)
+{
+	UPetSessionPanelWidget* Panel = NewObject<UPetSessionPanelWidget>();
+	TestNotNull(TEXT("会话 Panel 创建成功"), Panel);
+	if (!Panel)
+	{
+		return false;
+	}
+
+	FPetSessionInfo RecentHistory;
+	RecentHistory.SessionId = TEXT("history-recent");
+	RecentHistory.Title = TEXT("最近历史");
+
+	FPetSessionInfo ResumedHistory;
+	ResumedHistory.SessionId = TEXT("history-resumed");
+	ResumedHistory.Title = TEXT("恢复目标");
+	ResumedHistory.bActive = false;
+	ResumedHistory.bWorking = true; // 非法快照组合，Item 必须归一化。
+
+	Panel->ApplySnapshot({RecentHistory, ResumedHistory});
+	UPetSessionItem* ResumedItem = Panel->FindSessionItem(TEXT("history-resumed"));
+	TestTrue(TEXT("非活跃快照不会保留 working"), ResumedItem && !ResumedItem->bWorking);
+
+	Panel->UpdateSessionState(TEXT("history-resumed"), true, false);
+	TestTrue(TEXT("历史项收到 session_state 后恢复为活跃会话"), ResumedItem && ResumedItem->bActive);
+	TestTrue(TEXT("恢复后的会话显示 working"), ResumedItem && ResumedItem->bWorking);
+	TestEqual(TEXT("产生新活动的会话移动到列表首项"),
+		Panel->GetSessionItems()[0]->SessionId,
+		FString(TEXT("history-resumed")));
+
+	Panel->AddOrUpdateSession(TEXT("session-new"), TEXT("新会话"), TEXT("D:/workspace/new"), true);
+	TestEqual(TEXT("session_start 新会话插入列表首项"),
+		Panel->GetSessionItems()[0]->SessionId,
+		FString(TEXT("session-new")));
+
+	Panel->SetSessionActive(TEXT("unknown-ended"), false);
+	TestNull(TEXT("未知 session_end 不创建幽灵历史行"), Panel->FindSessionItem(TEXT("unknown-ended")));
 
 	return true;
 }
@@ -204,6 +251,32 @@ bool FPetSessionPanelCatalogCapacityTest::RunTest(const FString& Parameters)
 		StableMiddleItem->Title,
 		FString(TEXT("会话 25 已更新")));
 	TestTrue(TEXT("50 条快照中的未读状态可原位更新"), StableMiddleItem->bUnread);
+
+	FPetSessionInfo NewSession;
+	NewSession.SessionId = TEXT("session-new");
+	NewSession.Title = TEXT("新会话");
+	NewSession.bActive = true;
+	Panel->AddOrUpdateSession(NewSession);
+	TestEqual(TEXT("增量新增后仍严格限制为 50 条"),
+		Panel->GetSessionCount(),
+		UPetSessionPanelWidget::MaxSessionCount);
+	TestEqual(TEXT("增量新增会话位于列表首项"),
+		Panel->GetSessionItems()[0]->SessionId,
+		FString(TEXT("session-new")));
+	TestNull(TEXT("超出上限时淘汰列表末尾的最旧会话"), Panel->FindSessionItem(TEXT("session-49")));
+
+	TArray<FPetSessionInfo> OversizedSnapshot = Sessions;
+	for (int32 Index = 50; Index < 55; ++Index)
+	{
+		FPetSessionInfo& Session = OversizedSnapshot.AddDefaulted_GetRef();
+		Session.SessionId = FString::Printf(TEXT("session-%02d"), Index);
+		Session.Title = FString::Printf(TEXT("会话 %02d"), Index);
+	}
+	Panel->ApplySnapshot(OversizedSnapshot);
+	TestEqual(TEXT("超大快照也严格限制为 50 条"),
+		Panel->GetSessionCount(),
+		UPetSessionPanelWidget::MaxSessionCount);
+	TestNull(TEXT("超大快照末尾超限项不进入目录"), Panel->FindSessionItem(TEXT("session-54")));
 
 	return true;
 }

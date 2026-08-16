@@ -122,6 +122,8 @@ export class DaemonApp {
   private readonly sessionCatalogFn: SessionCatalogReader;
   private sessionCatalogEntries: SessionCatalogEntry[] = [];
   private sessionCatalogLoaded = false;
+  /** 守护进程本轮见过的会话工作目录，供刚结束且目录尚未落盘的 open_tui 使用。 */
+  private readonly runtimeSessionCwds = new Map<string, string>();
 
   private eventServer: net.Server | null = null;
   private controlServer: net.Server | null = null;
@@ -309,10 +311,17 @@ export class DaemonApp {
       return;
     }
     this.cancelCountdown(); // 倒计时内新宿主事件取消退出（§4.5-6）
+    // SessionEnd 会在状态机处理时删除会话；先保存已知 cwd，避免用户随后立刻
+    // 从面板打开该会话时因 CLI 目录尚未落盘而退回用户主目录。
+    const previousCwd = env.session_id ? this.state.getSessionCwd(env.session_id) : null;
     const result = this.state.processHostEvent((env.payload as HostEventPayload)._raw);
     if (!result.ok) {
       this.countError(`host_event 处理失败: ${result.error}`);
       return;
+    }
+    if (result.sessionId) {
+      const runtimeCwd = this.state.getSessionCwd(result.sessionId) ?? previousCwd;
+      if (runtimeCwd) this.runtimeSessionCwds.set(result.sessionId, runtimeCwd);
     }
     // 启动回放只恢复状态，renderer 在全部回放完成后统一拉起；
     // 实时宿主事件仍可在停手/缺失时触发新一轮尝试（§4.5-4）。
@@ -412,7 +421,11 @@ export class DaemonApp {
     const catalogEntry = sessionId
       ? this.sessionCatalogEntries.find((entry) => entry.sessionId === sessionId)
       : undefined;
-    const cwd = (sessionId ? this.state.getSessionCwd(sessionId) : null) ?? catalogEntry?.cwd ?? recentActive?.cwd ?? os.homedir();
+    const cwd = (sessionId ? this.state.getSessionCwd(sessionId) : null)
+      ?? (sessionId ? this.runtimeSessionCwds.get(sessionId) : null)
+      ?? catalogEntry?.cwd
+      ?? recentActive?.cwd
+      ?? os.homedir();
     if (sessionId) {
       const readUpdate = this.state.markSessionRead(sessionId);
       if (readUpdate) this.sendToRenderer(readUpdate);

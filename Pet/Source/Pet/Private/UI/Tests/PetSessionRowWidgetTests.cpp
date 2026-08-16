@@ -2,6 +2,7 @@
 
 #include "UI/PetSessionItem.h"
 
+#include "Components/Button.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_AUTOMATION_TESTS
@@ -125,6 +126,29 @@ bool FPetSessionRowEntryReleasedCleanupTest::RunTest(const FString& Parameters)
 	Row->TestSetListItem(Item);
 	TestTrue(TEXT("重新绑定后行重新持有条目"), Row->GetBoundSessionItem() == Item);
 	TestTrue(TEXT("重新绑定后条目变更委托重新订阅"), Item->OnChanged.IsBound());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPetSessionRowClickRoutingTest,
+	"Pet.UI.SessionRow.ClickRouting",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPetSessionRowClickRoutingTest::RunTest(const FString& Parameters)
+{
+	UPetSessionRowWidgetTestable* Row = NewObject<UPetSessionRowWidgetTestable>();
+	TestNotNull(TEXT("会话行创建成功"), Row);
+	if (!Row)
+	{
+		return false;
+	}
+
+	TestFalse(TEXT("缺少 Button_Row 时由 ListView 提供点击降级"), Row->HasDedicatedClickHandler());
+	UButton* Button = NewObject<UButton>(Row);
+	TestNotNull(TEXT("测试按钮创建成功"), Button);
+	Row->TestSetDedicatedButton(Button);
+	TestTrue(TEXT("存在 Button_Row 时行独占点击，ListView 不应重复广播"), Row->HasDedicatedClickHandler());
 
 	return true;
 }

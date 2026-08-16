@@ -24,12 +24,15 @@ void UPetSessionItem::SetSessionData(
 	bool bInWorking,
 	bool bInUnread)
 {
+	// working 是 active 会话的子状态。快照字段异常或消息乱序时也不能让
+	// 历史会话呈现为“灰色但仍在工作”的矛盾状态。
+	const bool bNextWorking = bInActive && bInWorking;
 	const bool bChanged =
 		SessionId != InSessionId ||
 		Title != InTitle ||
 		Cwd != InCwd ||
 		bActive != bInActive ||
-		bWorking != bInWorking ||
+		bWorking != bNextWorking ||
 		bUnread != bInUnread;
 
 	if (!bChanged)
@@ -41,7 +44,7 @@ void UPetSessionItem::SetSessionData(
 	Title = InTitle;
 	Cwd = InCwd;
 	bActive = bInActive;
-	bWorking = bInWorking;
+	bWorking = bNextWorking;
 	bUnread = bInUnread;
 
 	OnChanged.Broadcast(this);
@@ -65,12 +68,13 @@ void UPetSessionItem::SetActive(bool bInActive)
 
 void UPetSessionItem::SetWorking(bool bInWorking)
 {
-	if (bWorking == bInWorking)
+	const bool bNextWorking = bActive && bInWorking;
+	if (bWorking == bNextWorking)
 	{
 		return;
 	}
 
-	bWorking = bInWorking;
+	bWorking = bNextWorking;
 	OnChanged.Broadcast(this);
 }
 

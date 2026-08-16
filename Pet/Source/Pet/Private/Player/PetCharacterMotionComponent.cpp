@@ -78,7 +78,9 @@ void UPetCharacterMotionComponent::SetPetState(EPetWorkState NewState)
 	{
 		return;
 	}
-	// Working 姿态保持到电脑完全离场，避免主角色在退出第一帧先硬切为 Idle。
+	// 退出一开始就关闭 Working 姿态：主角色按 ABP 混合时间平滑切回 Idle，
+	// 小电脑滑出期间不应继续播放 Working（敲键盘）动画。
+	bWorkPresentationActive = false;
 	BodyLean = 0.0f;
 	PresentationPhase = EPetPresentationPhase::Exiting;
 	UE_LOG(LogPet, Verbose, TEXT("小电脑过渡开始: Exiting"));
@@ -139,18 +141,11 @@ void UPetCharacterMotionComponent::UpdateMovingPhase(float DeltaTime, bool bEnte
 	const float ReferenceSpeed = BodyLeanReferenceSpeed > UE_KINDA_SMALL_NUMBER
 		? BodyLeanReferenceSpeed
 		: FMath::Max(ComputerMoveSpeed, UE_KINDA_SMALL_NUMBER);
-	const float DirectionMultiplier = bInvertBodyLean ? -1.0f : 1.0f;
 	const FVector OutwardDirection = (ComputerOffscreenRelativeLocation - WorkingRelativeLocation).GetSafeNormal();
 	const float MovementAlongPath = FVector::DotProduct(NewLocation - CurrentLocation, OutwardDirection);
-	const float TravelDistance = FMath::Max(
-		FVector::Distance(ComputerOffscreenRelativeLocation, WorkingRelativeLocation),
-		UE_KINDA_SMALL_NUMBER);
-	const float TravelProgress = bEntering
-		? FMath::Clamp(FVector::Distance(ComputerOffscreenRelativeLocation, NewLocation) / TravelDistance, 0.0f, 1.0f)
-		: FMath::Clamp(FVector::Distance(WorkingRelativeLocation, NewLocation) / TravelDistance, 0.0f, 1.0f);
-	const float EaseEnvelope = FMath::Sin(TravelProgress * UE_PI);
-	BodyLean = FMath::Clamp((MovementAlongPath / DeltaTime) / ReferenceSpeed, -1.0f, 1.0f) *
-		DirectionMultiplier * EaseEnvelope;
+	// Control Rig 已经用弹簧跟随 BodyLean。这里必须立即提交实际速度目标，才能在起步时
+	// 形成与移动方向相反的惯性滞后；再次套正弦缓入会滤掉首帧冲量，使 Q 弹不可见。
+	BodyLean = FMath::Clamp((MovementAlongPath / DeltaTime) / ReferenceSpeed, -1.0f, 1.0f) * -1;
 
 	if (NewLocation.Equals(TargetLocation, UE_KINDA_SMALL_NUMBER))
 	{
@@ -177,7 +172,6 @@ void UPetCharacterMotionComponent::CompleteEntering()
 void UPetCharacterMotionComponent::CompleteExiting()
 {
 	BodyLean = 0.0f;
-	bWorkPresentationActive = false;
 	PresentationPhase = EPetPresentationPhase::HiddenStable;
 	ComputerMesh->SetVisibility(false, true);
 	UE_LOG(LogPet, Verbose, TEXT("小电脑过渡完成: HiddenStable"));

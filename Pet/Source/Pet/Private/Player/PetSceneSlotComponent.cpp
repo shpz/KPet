@@ -24,6 +24,7 @@ void UPetSceneSlotComponent::Initialize(USceneComponent* InReferenceRoot)
 	ReferenceRoot = InReferenceRoot;
 	bHasComputerOffscreenSlot = false;
 	bHasWorkingCameraSlot = false;
+	bHasDefaultCameraSlot = false;
 	bInitialized = ReferenceRoot != nullptr;
 	if (!bInitialized)
 	{
@@ -40,6 +41,11 @@ void UPetSceneSlotComponent::Initialize(USceneComponent* InReferenceRoot)
 	{
 		WorkingCameraRootLocation = RootTransform.InverseTransformPosition(SlotComponent->GetComponentLocation());
 		bHasWorkingCameraSlot = true;
+	}
+	if (const USceneComponent* SlotComponent = GetSlotComponent(EPetSceneSlot::DefaultCamera))
+	{
+		DefaultCameraRootLocation = RootTransform.InverseTransformPosition(SlotComponent->GetComponentLocation());
+		bHasDefaultCameraSlot = true;
 	}
 }
 
@@ -90,6 +96,12 @@ bool UPetSceneSlotComponent::TryGetSlotLocationRelativeTo(
 			RootLocation = &WorkingCameraRootLocation;
 		}
 		break;
+	case EPetSceneSlot::DefaultCamera:
+		if (bHasDefaultCameraSlot)
+		{
+			RootLocation = &DefaultCameraRootLocation;
+		}
+		break;
 	default:
 		break;
 	}
@@ -128,6 +140,8 @@ const FComponentReference* UPetSceneSlotComponent::GetSlotReference(EPetSceneSlo
 		return &ComputerOffscreenSlot;
 	case EPetSceneSlot::WorkingCamera:
 		return &WorkingCameraSlot;
+	case EPetSceneSlot::DefaultCamera:
+		return &DefaultCameraSlot;
 	default:
 		return nullptr;
 	}

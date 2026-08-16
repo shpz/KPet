@@ -21,4 +21,7 @@ public:
 
 	/** 模拟 UListView 把条目移出可视区后释放该行。 */
 	void TestReleaseEntry() { NativeOnEntryReleased(); }
+
+	/** 模拟 Blueprint 中存在覆盖整行的 Button_Row。 */
+	void TestSetDedicatedButton(UButton* Button) { Button_Row = Button; }
 };

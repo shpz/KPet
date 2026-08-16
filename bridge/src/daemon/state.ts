@@ -221,13 +221,15 @@ export class PetStateMachine {
       }
     }
     return {
-      sessions: [...this.sessions.values()].map((s) => ({
-        sessionId: s.sessionId,
-        cwd: s.cwd,
-        resume: s.resume,
-        busy: s.busy,
-        unread: s.unread,
-      })),
+      sessions: [...this.sessions.values()]
+        .sort((a, b) => b.lastEventAt - a.lastEventAt)
+        .map((s) => ({
+          sessionId: s.sessionId,
+          cwd: s.cwd,
+          resume: s.resume,
+          busy: s.busy,
+          unread: s.unread,
+        })),
       state: this.currentState,
       reason: this.stateReason,
       tasks,

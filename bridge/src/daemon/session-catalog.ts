@@ -139,40 +139,41 @@ export function mergeSessionSnapshots(
   history: readonly SessionCatalogEntry[],
   active: readonly ActiveSessionEntry[],
 ): SessionSnapshotItem[] {
-  const activeById = new Map(active.map((entry) => [entry.sessionId, entry]));
+  const historyById = new Map(history.map((entry) => [entry.sessionId, entry]));
   const result: SessionSnapshotItem[] = [];
   const emitted = new Set<string>();
 
-  // 先保持 CLI 目录的时间顺序；活跃状态覆盖同 id 的展示状态，但保留
-  // CLI 提供的标题、更新时间，保证历史点击仍然使用目录 cwd。
-  for (const item of history) {
-    const current = activeById.get(item.sessionId);
-    result.push({
-      session_id: item.sessionId,
-      title: truncateUtf8(item.title, MAX_SESSION_TITLE_BYTES),
-      cwd: truncateUtf8(current?.cwd ?? item.cwd, MAX_SESSION_CWD_BYTES),
-      active: current !== undefined,
-      working: current?.busy ?? false,
-      unread: current?.unread ?? false,
-      updated_at: item.updatedAt,
-    });
-    emitted.add(item.sessionId);
-  }
-
-  // 活跃事件可能先于 CLI 索引落盘，不能因目录暂无记录而丢失活跃会话。
+  // 活跃会话优先显示。状态机传入顺序为最近活动优先；若 CLI 目录已经
+  // 落盘则复用标题和更新时间，否则标题留空，让 UE 使用 cwd 目录名降级，
+  // 避免把长 UUID 当作正常会话标题。
   for (const current of active) {
-    if (emitted.has(current.sessionId)) continue;
+    const item = historyById.get(current.sessionId);
     result.push({
       session_id: current.sessionId,
-      title: truncateUtf8(current.sessionId, MAX_SESSION_TITLE_BYTES),
-      cwd: truncateUtf8(current.cwd ?? '', MAX_SESSION_CWD_BYTES),
+      title: truncateUtf8(item?.title ?? '', MAX_SESSION_TITLE_BYTES),
+      cwd: truncateUtf8(current.cwd ?? item?.cwd ?? '', MAX_SESSION_CWD_BYTES),
       active: true,
       working: current.busy,
       unread: current.unread,
-      updated_at: 0,
+      updated_at: item?.updatedAt ?? 0,
+    });
+    emitted.add(current.sessionId);
+  }
+
+  // 再补 CLI 历史，保持目录本身的更新时间倒序。
+  for (const item of history) {
+    if (emitted.has(item.sessionId)) continue;
+    result.push({
+      session_id: item.sessionId,
+      title: truncateUtf8(item.title, MAX_SESSION_TITLE_BYTES),
+      cwd: truncateUtf8(item.cwd, MAX_SESSION_CWD_BYTES),
+      active: false,
+      working: false,
+      unread: false,
+      updated_at: item.updatedAt,
     });
   }
-  return result;
+  return result.slice(0, MAX_SESSION_CATALOG_ENTRIES);
 }
 
 function parseIndexRecord(line: string): SessionIndexRecord | null {

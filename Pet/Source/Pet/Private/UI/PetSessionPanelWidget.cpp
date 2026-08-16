@@ -65,7 +65,8 @@ void UPetSessionPanelWidget::ApplySnapshot(const TArray<FPetSessionInfo>& Sessio
 	IncomingIds.Reserve(Sessions.Num());
 
 	TArray<TObjectPtr<UPetSessionItem>> NewOrder;
-	NewOrder.Reserve(Sessions.Num());
+	NewOrder.Reserve(FMath::Min(Sessions.Num(), MaxSessionCount));
+	bool bCapacityWarningLogged = false;
 
 	for (const FPetSessionInfo& Session : Sessions)
 	{
@@ -78,6 +79,15 @@ void UPetSessionPanelWidget::ApplySnapshot(const TArray<FPetSessionInfo>& Sessio
 		if (IncomingIds.Contains(Session.SessionId))
 		{
 			UE_LOG(LogPet, Warning, TEXT("会话快照包含重复 SessionId=%s，忽略后续重复项"), *Session.SessionId);
+			continue;
+		}
+		if (NewOrder.Num() >= MaxSessionCount)
+		{
+			if (!bCapacityWarningLogged)
+			{
+				UE_LOG(LogPet, Warning, TEXT("会话快照超过 %d 条，只保留最前面的最近会话"), MaxSessionCount);
+				bCapacityWarningLogged = true;
+			}
 			continue;
 		}
 		IncomingIds.Add(Session.SessionId);
@@ -133,12 +143,9 @@ void UPetSessionPanelWidget::AddOrUpdateSession(const FPetSessionInfo& Session)
 		return;
 	}
 
-	if (bCreated)
-	{
-		SessionItemOrder.Add(Item);
-	}
-
-	if (bCreated)
+	const bool bOrderChanged = MoveSessionToFront(Item);
+	const bool bTrimmed = TrimToSessionLimit();
+	if (bOrderChanged || bTrimmed)
 	{
 		RefreshList();
 	}
@@ -166,6 +173,10 @@ void UPetSessionPanelWidget::AddOrUpdateSession(
 			bActive,
 			ExistingItem->bWorking,
 			ExistingItem->bUnread);
+		if (MoveSessionToFront(ExistingItem))
+		{
+			RefreshList();
+		}
 		return;
 	}
 
@@ -180,7 +191,8 @@ void UPetSessionPanelWidget::AddOrUpdateSession(
 		bCreated);
 	if (Item && bCreated)
 	{
-		SessionItemOrder.Add(Item);
+		MoveSessionToFront(Item);
+		TrimToSessionLimit();
 		RefreshList();
 		UpdateEmptyState();
 	}
@@ -241,11 +253,19 @@ void UPetSessionPanelWidget::SetSessionActive(const FString& SessionId, bool bAc
 	UPetSessionItem* Item = FindSessionItem(SessionId);
 	if (!Item)
 	{
+		// session_end 可能是守护进程接管后的首个事件。未知的结束事件不应
+		// 制造只有原始 SessionId 的“幽灵历史行”。
+		if (!bActive)
+		{
+			return;
+		}
+
 		bool bCreated = false;
 		Item = FindOrCreateSession(SessionId, FString(), FString(), bActive, false, false, bCreated);
 		if (Item && bCreated)
 		{
-			SessionItemOrder.Add(Item);
+			MoveSessionToFront(Item);
+			TrimToSessionLimit();
 			RefreshList();
 			UpdateEmptyState();
 		}
@@ -253,6 +273,10 @@ void UPetSessionPanelWidget::SetSessionActive(const FString& SessionId, bool bAc
 	}
 
 	Item->SetActive(bActive);
+	if (MoveSessionToFront(Item))
+	{
+		RefreshList();
+	}
 }
 
 void UPetSessionPanelWidget::UpdateSessionState(const FString& SessionId, bool bWorking, bool bUnread)
@@ -269,15 +293,27 @@ void UPetSessionPanelWidget::UpdateSessionState(const FString& SessionId, bool b
 		Item = FindOrCreateSession(SessionId, FString(), FString(), true, bWorking, bUnread, bCreated);
 		if (Item && bCreated)
 		{
-			SessionItemOrder.Add(Item);
+			MoveSessionToFront(Item);
+			TrimToSessionLimit();
 			RefreshList();
 			UpdateEmptyState();
 		}
 		return;
 	}
 
-	Item->SetWorking(bWorking);
-	Item->SetUnread(bUnread);
+	// session_state 只由守护进程的活跃会话产生。若该会话此前只存在于
+	// 历史目录中，这条消息同时意味着它已恢复活跃。
+	Item->SetSessionData(
+		Item->SessionId,
+		Item->Title,
+		Item->Cwd,
+		true,
+		bWorking,
+		bUnread);
+	if (MoveSessionToFront(Item))
+	{
+		RefreshList();
+	}
 }
 
 void UPetSessionPanelWidget::PlayPanelContentAnimation()
@@ -431,6 +467,17 @@ void UPetSessionPanelWidget::HandleListItemClicked(UObject* ItemObject)
 	{
 		return;
 	}
+	if (ListView_Sessions)
+	{
+		// 生成的会话行以覆盖整行的 Button_Row 处理点击。Button 与
+		// UListView 的点击冒泡可能在同一输入中都触发，必须只保留一条选择链路。
+		if (const UPetSessionRowWidget* EntryWidget =
+			ListView_Sessions->GetEntryWidgetFromItem<UPetSessionRowWidget>(Item);
+			EntryWidget && EntryWidget->HasDedicatedClickHandler())
+		{
+			return;
+		}
+	}
 
 	// 没有覆盖完整行的 Button 时，使用 UListView 自身点击作为安全降级路径。
 	Item->SetUnread(false);
@@ -469,4 +516,40 @@ void UPetSessionPanelWidget::UpdateEmptyState()
 	}
 
 	EmptyState->SetVisibility(SessionItemOrder.IsEmpty() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+}
+
+bool UPetSessionPanelWidget::MoveSessionToFront(UPetSessionItem* Item)
+{
+	if (!Item)
+	{
+		return false;
+	}
+
+	const int32 ExistingIndex = SessionItemOrder.IndexOfByKey(Item);
+	if (ExistingIndex == 0)
+	{
+		return false;
+	}
+	if (ExistingIndex != INDEX_NONE)
+	{
+		SessionItemOrder.RemoveAt(ExistingIndex);
+	}
+	SessionItemOrder.Insert(Item, 0);
+	return true;
+}
+
+bool UPetSessionPanelWidget::TrimToSessionLimit()
+{
+	bool bTrimmed = false;
+	while (SessionItemOrder.Num() > MaxSessionCount)
+	{
+		UPetSessionItem* RemovedItem = SessionItemOrder.Pop().Get();
+		if (RemovedItem)
+		{
+			UnbindItem(RemovedItem);
+			SessionItemsById.Remove(RemovedItem->SessionId);
+		}
+		bTrimmed = true;
+	}
+	return bTrimmed;
 }

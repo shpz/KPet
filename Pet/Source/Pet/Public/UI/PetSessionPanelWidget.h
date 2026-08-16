@@ -60,6 +60,7 @@ public:
 	UPetSessionItem* FindSessionItem(const FString& SessionId) const;
 	int32 GetSessionCount() const { return SessionItemOrder.Num(); }
 	const TArray<TObjectPtr<UPetSessionItem>>& GetSessionItems() const { return SessionItemOrder; }
+	static constexpr int32 MaxSessionCount = 50;
 
 	/** Panel 直接把当前会话标识交给 Pawn，不经过 Window Host。 */
 	FPetSessionSelectedNative OnSessionSelected;
@@ -98,6 +99,8 @@ private:
 	void HandleListItemClicked(UObject* ItemObject);
 	void RefreshList();
 	void UpdateEmptyState();
+	bool MoveSessionToFront(UPetSessionItem* Item);
+	bool TrimToSessionLimit();
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UPetSessionItem>> SessionItemsById;

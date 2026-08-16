@@ -546,28 +546,33 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 	{
 		const TArray<TSharedPtr<FJsonValue>>* SessionValues = nullptr;
 		TArray<FPetSessionInfo> Sessions;
-		if (Payload->TryGetArrayField(TEXT("sessions"), SessionValues) && SessionValues)
+		if (!Payload->TryGetArrayField(TEXT("sessions"), SessionValues) || !SessionValues)
 		{
-			Sessions.Reserve(SessionValues->Num());
-			for (const TSharedPtr<FJsonValue>& Value : *SessionValues)
+			// 缺少必需数组不是“权威空快照”。若继续广播空数组会把当前面板
+			// 全部清空，并让一次坏包看起来像所有会话突然消失。
+			RecordProtocolError(TEXT("sessions_snapshot 缺少 sessions 数组"), Line);
+			return;
+		}
+
+		Sessions.Reserve(SessionValues->Num());
+		for (const TSharedPtr<FJsonValue>& Value : *SessionValues)
+		{
+			if (!Value.IsValid() || Value->Type != EJson::Object)
 			{
-				if (!Value.IsValid() || Value->Type != EJson::Object)
-				{
-					continue;
-				}
-				const TSharedPtr<FJsonObject> Item = Value->AsObject();
-				FPetSessionInfo Session;
-				if (!Item.IsValid() || !Item->TryGetStringField(TEXT("session_id"), Session.SessionId) || Session.SessionId.IsEmpty())
-				{
-					continue;
-				}
-				Item->TryGetStringField(TEXT("title"), Session.Title);
-				Item->TryGetStringField(TEXT("cwd"), Session.Cwd);
-				Item->TryGetBoolField(TEXT("active"), Session.bActive);
-				Item->TryGetBoolField(TEXT("working"), Session.bWorking);
-				Item->TryGetBoolField(TEXT("unread"), Session.bUnread);
-				Sessions.Add(MoveTemp(Session));
+				continue;
 			}
+			const TSharedPtr<FJsonObject> Item = Value->AsObject();
+			FPetSessionInfo Session;
+			if (!Item.IsValid() || !Item->TryGetStringField(TEXT("session_id"), Session.SessionId) || Session.SessionId.IsEmpty())
+			{
+				continue;
+			}
+			Item->TryGetStringField(TEXT("title"), Session.Title);
+			Item->TryGetStringField(TEXT("cwd"), Session.Cwd);
+			Item->TryGetBoolField(TEXT("active"), Session.bActive);
+			Item->TryGetBoolField(TEXT("working"), Session.bWorking);
+			Item->TryGetBoolField(TEXT("unread"), Session.bUnread);
+			Sessions.Add(MoveTemp(Session));
 		}
 		UE_LOG(LogPet, Log, TEXT("收到 sessions_snapshot: %d 个 Kimi Code 会话"), Sessions.Num());
 		if (OnSessionsSnapshot)

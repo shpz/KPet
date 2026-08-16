@@ -425,6 +425,17 @@ test('快照内容（§4.5-4）：活跃会话 + 当前 pet_state + 未完成任
   assert.ok(!Number.isNaN(Date.parse(t.started_at)), 'started_at 为 ISO 时间串');
 });
 
+test('会话快照按最近事件倒序，当前活动会话排在面板前面', () => {
+  const { machine, advance } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  advance(10);
+  machine.processHostEvent(ev('SessionStart', 's2'));
+  advance(10);
+  machine.processHostEvent(ev('UserPromptSubmit', 's1'));
+
+  assert.deepEqual(machine.getSnapshot().sessions.map((session) => session.sessionId), ['s1', 's2']);
+});
+
 test('SessionEnd 丢弃该会话节流缓冲（已死会话的任务消息不再下发）', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));

@@ -328,12 +328,12 @@ test('会话目录握手合并与历史 open_tui：目录项下发并使用目�
     assert.deepEqual(sessions.payload, {
       sessions: [
         {
-          session_id: 'history-1', title: '历史会话', cwd: 'D:\\history', active: false,
-          working: false, unread: false, updated_at: 1234,
+          session_id: 'active-1', title: '', cwd: 'D:\\active', active: true,
+          working: false, unread: false, updated_at: 0,
         },
         {
-          session_id: 'active-1', title: 'active-1', cwd: 'D:\\active', active: true,
-          working: false, unread: false, updated_at: 0,
+          session_id: 'history-1', title: '历史会话', cwd: 'D:\\history', active: false,
+          working: false, unread: false, updated_at: 1234,
         },
       ],
     });
@@ -341,6 +341,33 @@ test('会话目录握手合并与历史 open_tui：目录项下发并使用目�
     r.send(createEnvelope('open_tui', { session_id: 'history-1', source: 'bubble' }));
     await waitUntil(() => opened.length === 1, 1000);
     assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\history', sessionId: 'history-1' });
+    r.close();
+  } finally {
+    await stopApp(t);
+  }
+});
+
+test('刚结束且目录尚未落盘的会话仍使用本轮记录的 cwd 打开', { skip: !isWindows }, async () => {
+  const opened: Array<{ terminal: string; cwd: string; sessionId: string | null }> = [];
+  const t = await startApp({ host_grace_seconds: 30 }, {
+    sessionCatalog: () => [],
+    openTuiFn: async (opts) => {
+      opened.push(opts);
+      return { terminal: opts.terminal, ok: true };
+    },
+  });
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"just-ended","cwd":"D:\\\\fresh"}');
+    await r.waitFor('session_start');
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionEnd","session_id":"just-ended","cwd":"D:\\\\fresh","reason":"exit"}');
+    await r.waitFor('session_end');
+
+    r.send(createEnvelope('open_tui', { session_id: 'just-ended', source: 'pet' }));
+    await waitUntil(() => opened.length === 1, 1000);
+    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\fresh', sessionId: 'just-ended' });
     r.close();
   } finally {
     await stopApp(t);
