@@ -12,6 +12,7 @@ class PetLayeredWindow;
 class UPetCameraManagerComponent;
 class UPetCharacterMotionComponent;
 class UPetMessageChannelComponent;
+class UPetSceneSlotComponent;
 class UPetSessionPanelWidget;
 class UAnimInstance;
 class USceneCaptureComponent2D;
@@ -47,6 +48,7 @@ public:
 	USkeletalMeshComponent* GetPetMesh() const { return PetMeshComponent; }
 	USkeletalMeshComponent* GetComputerMesh() const { return ComputerMeshComponent; }
 	UPetCharacterMotionComponent* GetPetMotionComponent() const { return MotionComponent; }
+	UPetSceneSlotComponent* GetSceneSlotComponent() const { return SceneSlotComponent; }
 
 	/** 由主角色 Working 动画中的原生 AnimNotify 调用。 */
 	void HandleComputerHitNotify();
@@ -86,6 +88,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneCaptureComponent2D> CaptureComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPetSceneSlotComponent> SceneSlotComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPetMessageChannelComponent> MessageChannelComponent = nullptr;

@@ -6,6 +6,7 @@
 #include "PetCharacterMotionComponent.generated.h"
 
 class USkeletalMeshComponent;
+class UPetSceneSlotComponent;
 
 /** 小电脑相对业务状态的内部呈现阶段。 */
 UENUM(BlueprintType)
@@ -31,8 +32,11 @@ public:
 		ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** 在蓝图组件变换已经应用后记录 Working 默认相对位置。 */
-	void Initialize(USkeletalMeshComponent* InPetMesh, USkeletalMeshComponent* InComputerMesh);
+	/** 在蓝图组件变换已经应用后记录 Working 默认相对位置，并读取场外插槽。 */
+	void Initialize(
+		USkeletalMeshComponent* InPetMesh,
+		USkeletalMeshComponent* InComputerMesh,
+		const UPetSceneSlotComponent* InSceneSlots = nullptr);
 	void SetPetState(EPetWorkState NewState);
 
 	UFUNCTION(BlueprintPure, Category = "角色运动")
@@ -55,8 +59,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> ComputerMesh = nullptr;
 
-	/** 小电脑相对于父组件的场外位置；Idle 稳定时位于此处。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "角色运动|小电脑", meta = (AllowPrivateAccess = "true", DisplayName = "场外位置"))
+	/** 兼容旧蓝图；未配置场外插槽时使用。新配置统一放在 SceneSlots 组件。 */
+	UPROPERTY()
 	FVector ComputerOffscreenLocation = FVector(160.0f, 80.0f, 0.0f);
 
 	/** 小电脑进出场的恒定移动速度。 */
@@ -81,5 +85,6 @@ private:
 	EPetPresentationPhase PresentationPhase = EPetPresentationPhase::HiddenStable;
 
 	FVector WorkingRelativeLocation = FVector::ZeroVector;
+	FVector ComputerOffscreenRelativeLocation = FVector::ZeroVector;
 	bool bInitialized = false;
 };

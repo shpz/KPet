@@ -6,8 +6,9 @@
 #include "PetCameraManagerComponent.generated.h"
 
 class USceneCaptureComponent2D;
+class UPetSceneSlotComponent;
 
-/** 管理状态基准视角、玩家旋转偏移和缩放。 */
+/** 管理状态基准位置、玩家旋转偏移和缩放。 */
 UCLASS(ClassGroup = (Pet), meta = (BlueprintSpawnableComponent))
 class PET_API UPetCameraManagerComponent : public UActorComponent
 {
@@ -21,8 +22,10 @@ public:
 		ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** 在蓝图默认值已经应用后记录捕获组件的初始方向和距离。 */
-	void Initialize(USceneCaptureComponent2D* InCapture);
+	/** 在蓝图默认值已经应用后记录 Idle 默认位置，并读取 Working 摄像机插槽。 */
+	void Initialize(
+		USceneCaptureComponent2D* InCapture,
+		const UPetSceneSlotComponent* InSceneSlots = nullptr);
 	void SetPetState(EPetWorkState NewState);
 	void AddRotationInput(float DeltaX, float DeltaY);
 	void AddZoomInput(float WheelDelta);
@@ -30,18 +33,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "摄像机")
 	float GetCurrentStateYaw() const { return CurrentStateYaw; }
 
+	UFUNCTION(BlueprintPure, Category = "摄像机")
+	FVector GetCurrentStateLocation() const { return CurrentStateLocation; }
+
 private:
 	void ApplyCameraTransform();
-	void BeginStateTransition(float NewTargetYaw);
+	void BeginStateTransition(const FVector& NewTargetLocation);
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> Capture = nullptr;
 
-	/** Working 相对 Idle 基准视角的有符号水平角度；正负方向由蓝图最终调节。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|状态", meta = (AllowPrivateAccess = "true", ClampMin = "-180.0", ClampMax = "180.0"))
+	/** 兼容旧蓝图；未配置 Working 摄像机插槽时生成后备位置。 */
+	UPROPERTY()
 	float WorkingYawOffset = 45.0f;
 
-	/** 完整状态切换的时长；中途反向按剩余角度同比缩短。 */
+	/** 完整状态切换的时长；中途反向按剩余距离同比缩短。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|状态", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float StateTransitionDuration = 0.8f;
 
@@ -63,13 +69,15 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "摄像机|玩家输入", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
 	float CameraZoomStep = 24.0f;
 
-	FVector InitialCameraDirection = FVector(-1.0f, 0.0f, 0.0f);
-	float CameraDistance = 350.0f;
+	FVector DefaultCameraRelativeLocation = FVector(-350.0f, 0.0f, 0.0f);
+	FVector WorkingCameraRelativeLocation = FVector(-350.0f, 0.0f, 0.0f);
+	FVector CurrentStateLocation = FVector(-350.0f, 0.0f, 0.0f);
+	FVector TransitionStartLocation = FVector(-350.0f, 0.0f, 0.0f);
+	FVector TransitionTargetLocation = FVector(-350.0f, 0.0f, 0.0f);
 	float PlayerYawOffset = 0.0f;
 	float PlayerPitchOffset = 0.0f;
+	float PlayerDistanceOffset = 0.0f;
 	float CurrentStateYaw = 0.0f;
-	float TransitionStartYaw = 0.0f;
-	float TransitionTargetYaw = 0.0f;
 	float TransitionElapsed = 0.0f;
 	float ActiveTransitionDuration = 0.0f;
 	bool bInitialized = false;

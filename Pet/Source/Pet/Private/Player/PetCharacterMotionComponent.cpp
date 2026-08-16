@@ -2,6 +2,7 @@
 
 #include "Pet.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Player/PetSceneSlotComponent.h"
 
 UPetCharacterMotionComponent::UPetCharacterMotionComponent()
 {
@@ -11,7 +12,8 @@ UPetCharacterMotionComponent::UPetCharacterMotionComponent()
 
 void UPetCharacterMotionComponent::Initialize(
 	USkeletalMeshComponent* InPetMesh,
-	USkeletalMeshComponent* InComputerMesh)
+	USkeletalMeshComponent* InComputerMesh,
+	const UPetSceneSlotComponent* InSceneSlots)
 {
 	PetMesh = InPetMesh;
 	ComputerMesh = InComputerMesh;
@@ -26,9 +28,21 @@ void UPetCharacterMotionComponent::Initialize(
 	}
 
 	WorkingRelativeLocation = ComputerMesh->GetRelativeLocation();
+	ComputerOffscreenRelativeLocation = ComputerOffscreenLocation;
+	if (!InSceneSlots || !InSceneSlots->TryGetSlotLocationRelativeTo(
+		EPetSceneSlot::ComputerOffscreen,
+		ComputerMesh,
+		ComputerOffscreenRelativeLocation))
+	{
+		UE_LOG(
+			LogPet,
+			Warning,
+			TEXT("未配置小电脑场外位置插槽，使用旧版后备位置 %s"),
+			*ComputerOffscreenLocation.ToString());
+	}
 
 	// 必须先放到画外位置，再改变可见性，避免短暂显示蓝图中的旧位置。
-	ComputerMesh->SetRelativeLocation(ComputerOffscreenLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	ComputerMesh->SetRelativeLocation(ComputerOffscreenRelativeLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	ComputerMesh->SetVisibility(false, true);
 }
 
@@ -51,7 +65,7 @@ void UPetCharacterMotionComponent::SetPetState(EPetWorkState NewState)
 		if (PresentationPhase == EPetPresentationPhase::HiddenStable)
 		{
 			bWorkPresentationActive = false;
-			ComputerMesh->SetRelativeLocation(ComputerOffscreenLocation, false, nullptr, ETeleportType::TeleportPhysics);
+			ComputerMesh->SetRelativeLocation(ComputerOffscreenRelativeLocation, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 		ComputerMesh->SetVisibility(true, true);
 		PresentationPhase = EPetPresentationPhase::Entering;
@@ -100,7 +114,7 @@ void UPetCharacterMotionComponent::UpdateMovingPhase(float DeltaTime, bool bEnte
 	}
 
 	const FVector CurrentLocation = ComputerMesh->GetRelativeLocation();
-	const FVector& TargetLocation = bEntering ? WorkingRelativeLocation : ComputerOffscreenLocation;
+	const FVector& TargetLocation = bEntering ? WorkingRelativeLocation : ComputerOffscreenRelativeLocation;
 	if (ComputerMoveSpeed <= UE_KINDA_SMALL_NUMBER)
 	{
 		ComputerMesh->SetRelativeLocation(TargetLocation, false, nullptr, ETeleportType::None);
@@ -126,13 +140,13 @@ void UPetCharacterMotionComponent::UpdateMovingPhase(float DeltaTime, bool bEnte
 		? BodyLeanReferenceSpeed
 		: FMath::Max(ComputerMoveSpeed, UE_KINDA_SMALL_NUMBER);
 	const float DirectionMultiplier = bInvertBodyLean ? -1.0f : 1.0f;
-	const FVector OutwardDirection = (ComputerOffscreenLocation - WorkingRelativeLocation).GetSafeNormal();
+	const FVector OutwardDirection = (ComputerOffscreenRelativeLocation - WorkingRelativeLocation).GetSafeNormal();
 	const float MovementAlongPath = FVector::DotProduct(NewLocation - CurrentLocation, OutwardDirection);
 	const float TravelDistance = FMath::Max(
-		FVector::Distance(ComputerOffscreenLocation, WorkingRelativeLocation),
+		FVector::Distance(ComputerOffscreenRelativeLocation, WorkingRelativeLocation),
 		UE_KINDA_SMALL_NUMBER);
 	const float TravelProgress = bEntering
-		? FMath::Clamp(FVector::Distance(ComputerOffscreenLocation, NewLocation) / TravelDistance, 0.0f, 1.0f)
+		? FMath::Clamp(FVector::Distance(ComputerOffscreenRelativeLocation, NewLocation) / TravelDistance, 0.0f, 1.0f)
 		: FMath::Clamp(FVector::Distance(WorkingRelativeLocation, NewLocation) / TravelDistance, 0.0f, 1.0f);
 	const float EaseEnvelope = FMath::Sin(TravelProgress * UE_PI);
 	BodyLean = FMath::Clamp((MovementAlongPath / DeltaTime) / ReferenceSpeed, -1.0f, 1.0f) *

@@ -1,5 +1,6 @@
 #include "Player/PetCameraManagerComponent.h"
 #include "Player/PetCharacterMotionComponent.h"
+#include "Player/PetSceneSlotComponent.h"
 
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SceneComponent.h"
@@ -17,33 +18,67 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FPetCameraStateTransitionTest::RunTest(const FString& Parameters)
 {
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	USceneComponent* SceneRoot = NewObject<USceneComponent>(World);
 	USceneCaptureComponent2D* Capture = NewObject<USceneCaptureComponent2D>(World);
+	USceneComponent* WorkingCameraSlot = NewObject<USceneComponent>(World);
+	UPetSceneSlotComponent* SceneSlots = NewObject<UPetSceneSlotComponent>(World);
 	UPetCameraManagerComponent* Camera = NewObject<UPetCameraManagerComponent>(World);
+	Capture->SetupAttachment(SceneRoot);
+	WorkingCameraSlot->SetupAttachment(SceneRoot);
+	SceneRoot->RegisterComponentWithWorld(World);
+	SceneRoot->SetWorldLocationAndRotation(
+		FVector(120.0f, -45.0f, 30.0f),
+		FRotator(0.0f, 70.0f, 0.0f));
 	Capture->RegisterComponentWithWorld(World);
+	WorkingCameraSlot->RegisterComponentWithWorld(World);
+	SceneSlots->RegisterComponentWithWorld(World);
 	Camera->RegisterComponentWithWorld(World);
-	Capture->SetRelativeLocation(FVector(-350.0f, 0.0f, 45.0f));
-	Camera->Initialize(Capture);
 
-	TestTrue(TEXT("初始化为 Idle 视角"), FMath::IsNearlyZero(Camera->GetCurrentStateYaw()));
+	const FVector IdleCameraLocation(-350.0f, -20.0f, 45.0f);
+	const FVector WorkingCameraLocation(-260.0f, 150.0f, 70.0f);
+	Capture->SetRelativeLocation(IdleCameraLocation);
+	WorkingCameraSlot->SetRelativeLocation(WorkingCameraLocation);
+	TestNull(TEXT("未配置的插槽不会错误解析为根组件"),
+		SceneSlots->GetSlotComponent(EPetSceneSlot::WorkingCamera));
+	SceneSlots->SetSlotComponent(EPetSceneSlot::WorkingCamera, WorkingCameraSlot);
+	SceneSlots->Initialize(SceneRoot);
+	Camera->Initialize(Capture, SceneSlots);
+	WorkingCameraSlot->SetRelativeLocation(FVector(900.0f, 900.0f, 900.0f));
+
+	TestTrue(TEXT("初始化保存蓝图中的 Idle 摄像机默认位置"),
+		Camera->GetCurrentStateLocation().Equals(IdleCameraLocation, 0.01f));
+	TestTrue(TEXT("初始化不会改写 Capture 的默认位置"),
+		Capture->GetRelativeLocation().Equals(IdleCameraLocation, 0.01f));
 	Camera->SetPetState(EPetWorkState::Working);
-	TestTrue(TEXT("Working 第一帧不允许硬切到目标视角"), FMath::IsNearlyZero(Camera->GetCurrentStateYaw()));
+	TestTrue(TEXT("Working 第一帧不允许硬切到目标位置"),
+		Capture->GetRelativeLocation().Equals(IdleCameraLocation, 0.01f));
 
 	Camera->TickComponent(0.2f, LEVELTICK_All, nullptr);
-	const float EnteringYaw = Camera->GetCurrentStateYaw();
-	TestTrue(TEXT("进入 Working 的中间帧必须位于两个视角之间"), EnteringYaw > 0.0f && EnteringYaw < 45.0f);
+	const FVector EnteringLocation = Camera->GetCurrentStateLocation();
+	TestTrue(TEXT("进入 Working 的中间帧必须位于两个位置之间"),
+		!EnteringLocation.Equals(IdleCameraLocation, 0.01f) &&
+		!EnteringLocation.Equals(WorkingCameraLocation, 0.01f));
 	Camera->TickComponent(0.6f, LEVELTICK_All, nullptr);
-	TestTrue(TEXT("Working 视角最终到达 45 度"), FMath::IsNearlyEqual(Camera->GetCurrentStateYaw(), 45.0f, 0.01f));
+	TestTrue(TEXT("Working 摄像机最终到达初始化时缓存的插槽位置"),
+		Capture->GetRelativeLocation().Equals(WorkingCameraLocation, 0.01f));
 
 	Camera->SetPetState(EPetWorkState::Idle);
-	TestTrue(TEXT("Idle 第一帧保留 Working 视角"), FMath::IsNearlyEqual(Camera->GetCurrentStateYaw(), 45.0f, 0.01f));
+	TestTrue(TEXT("Idle 第一帧保留 Working 摄像机位置"),
+		Capture->GetRelativeLocation().Equals(WorkingCameraLocation, 0.01f));
 	Camera->TickComponent(0.2f, LEVELTICK_All, nullptr);
-	const float ExitingYaw = Camera->GetCurrentStateYaw();
-	TestTrue(TEXT("返回 Idle 的中间帧必须位于两个视角之间"), ExitingYaw > 0.0f && ExitingYaw < 45.0f);
+	const FVector ExitingLocation = Camera->GetCurrentStateLocation();
+	TestTrue(TEXT("返回 Idle 的中间帧必须位于两个位置之间"),
+		!ExitingLocation.Equals(IdleCameraLocation, 0.01f) &&
+		!ExitingLocation.Equals(WorkingCameraLocation, 0.01f));
 	Camera->TickComponent(0.6f, LEVELTICK_All, nullptr);
-	TestTrue(TEXT("Idle 视角最终回到零度"), FMath::IsNearlyZero(Camera->GetCurrentStateYaw(), 0.01f));
+	TestTrue(TEXT("Idle 摄像机最终回到蓝图默认位置"),
+		Capture->GetRelativeLocation().Equals(IdleCameraLocation, 0.01f));
 
 	Camera->UnregisterComponent();
+	SceneSlots->UnregisterComponent();
+	WorkingCameraSlot->UnregisterComponent();
 	Capture->UnregisterComponent();
+	SceneRoot->UnregisterComponent();
 	World->DestroyWorld(false);
 
 	return true;
@@ -58,19 +93,52 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 {
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
 	USkeletalMeshComponent* PetMesh = NewObject<USkeletalMeshComponent>(World);
+	USceneComponent* SceneRoot = NewObject<USceneComponent>(World);
 	USceneComponent* ComputerParent = NewObject<USceneComponent>(World);
+	USceneComponent* SlotParent = NewObject<USceneComponent>(World);
 	USkeletalMeshComponent* ComputerMesh = NewObject<USkeletalMeshComponent>(World);
+	USceneComponent* ComputerOffscreenSlot = NewObject<USceneComponent>(World);
+	UPetSceneSlotComponent* SceneSlots = NewObject<UPetSceneSlotComponent>(World);
 	UPetCharacterMotionComponent* Motion = NewObject<UPetCharacterMotionComponent>(World);
+	ComputerParent->SetupAttachment(SceneRoot);
+	SlotParent->SetupAttachment(SceneRoot);
 	ComputerMesh->SetupAttachment(ComputerParent);
+	ComputerOffscreenSlot->SetupAttachment(SlotParent);
 	PetMesh->RegisterComponentWithWorld(World);
+	SceneRoot->RegisterComponentWithWorld(World);
+	SceneRoot->SetWorldLocationAndRotation(
+		FVector(80.0f, 35.0f, 15.0f),
+		FRotator(0.0f, 20.0f, 0.0f));
 	ComputerParent->RegisterComponentWithWorld(World);
-	ComputerParent->SetWorldRotation(FRotator(0.0f, 90.0f, 0.0f));
+	ComputerParent->SetRelativeLocationAndRotation(
+		FVector(10.0f, -5.0f, 0.0f),
+		FRotator(0.0f, 70.0f, 0.0f));
+	SlotParent->RegisterComponentWithWorld(World);
+	SlotParent->SetRelativeLocationAndRotation(
+		FVector(-20.0f, 15.0f, 5.0f),
+		FRotator(0.0f, -35.0f, 0.0f));
 	ComputerMesh->RegisterComponentWithWorld(World);
+	ComputerOffscreenSlot->RegisterComponentWithWorld(World);
+	SceneSlots->RegisterComponentWithWorld(World);
 	Motion->RegisterComponentWithWorld(World);
 	const FVector WorkingRelativeLocation(0.0f, 40.0f, 20.0f);
-	const FVector OffscreenRelativeLocation(160.0f, 80.0f, 0.0f);
 	ComputerMesh->SetRelativeLocation(WorkingRelativeLocation);
-	Motion->Initialize(PetMesh, ComputerMesh);
+	ComputerOffscreenSlot->SetRelativeLocation(FVector(140.0f, -35.0f, 10.0f));
+	const FVector OffscreenRelativeLocation = ComputerParent->GetComponentTransform()
+		.InverseTransformPosition(ComputerOffscreenSlot->GetComponentLocation());
+	SceneSlots->SetSlotComponent(EPetSceneSlot::ComputerOffscreen, ComputerOffscreenSlot);
+	SceneSlots->Initialize(SceneRoot);
+	ComputerOffscreenSlot->SetRelativeLocation(FVector(-800.0f, -800.0f, -800.0f));
+	Motion->Initialize(PetMesh, ComputerMesh, SceneSlots);
+
+	const auto IsStrictlyBetween = [](const FVector& Location, const FVector& Start, const FVector& End)
+	{
+		const float TotalDistance = FVector::Distance(Start, End);
+		const float StartDistance = FVector::Distance(Start, Location);
+		const float EndDistance = FVector::Distance(Location, End);
+		return StartDistance > 0.01f && EndDistance > 0.01f &&
+			FMath::IsNearlyEqual(StartDistance + EndDistance, TotalDistance, 0.1f);
+	};
 
 	TestEqual(TEXT("初始化阶段为隐藏稳定"), Motion->GetPresentationPhase(), EPetPresentationPhase::HiddenStable);
 	TestFalse(TEXT("初始化时小电脑不可见"), ComputerMesh->IsVisible());
@@ -91,17 +159,11 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 	Motion->TickComponent(0.2f, LEVELTICK_All, nullptr);
 	const FVector EnteringRelativeLocation = ComputerMesh->GetRelativeLocation();
 	TestEqual(TEXT("进入中途仍处于 Entering"), Motion->GetPresentationPhase(), EPetPresentationPhase::Entering);
-	TestTrue(TEXT("进入中途位置不能是任一端点"),
-		EnteringRelativeLocation.X > WorkingRelativeLocation.X &&
-		EnteringRelativeLocation.X < HiddenRelativeLocation.X);
-	TestTrue(TEXT("进入路径会插值完整相对向量"),
-		EnteringRelativeLocation.Y > WorkingRelativeLocation.Y &&
-		EnteringRelativeLocation.Y < HiddenRelativeLocation.Y &&
-		EnteringRelativeLocation.Z > HiddenRelativeLocation.Z &&
-		EnteringRelativeLocation.Z < WorkingRelativeLocation.Z);
+	TestTrue(TEXT("进入路径在跨父级转换后的两个相对端点之间"),
+		IsStrictlyBetween(EnteringRelativeLocation, HiddenRelativeLocation, WorkingRelativeLocation));
 	TestTrue(TEXT("进入中途必须产生过渡控制参数"), !FMath::IsNearlyZero(Motion->GetBodyLean()));
 
-	Motion->TickComponent(0.5f, LEVELTICK_All, nullptr);
+	Motion->TickComponent(2.0f, LEVELTICK_All, nullptr);
 	TestEqual(TEXT("进入完成后为 WorkingStable"), Motion->GetPresentationPhase(), EPetPresentationPhase::WorkingStable);
 	TestTrue(TEXT("电脑到位后激活 Working 姿态"), Motion->IsWorkPresentationActive());
 	TestTrue(TEXT("电脑到达蓝图默认相对位置"),
@@ -124,18 +186,12 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 	Motion->TickComponent(0.2f, LEVELTICK_All, nullptr);
 	const FVector ExitingRelativeLocation = ComputerMesh->GetRelativeLocation();
 	TestEqual(TEXT("退出中途仍处于 Exiting"), Motion->GetPresentationPhase(), EPetPresentationPhase::Exiting);
-	TestTrue(TEXT("退出中途位置不能是任一端点"),
-		ExitingRelativeLocation.X > WorkingRelativeLocation.X &&
-		ExitingRelativeLocation.X < HiddenRelativeLocation.X);
-	TestTrue(TEXT("退出路径会插值完整相对向量"),
-		ExitingRelativeLocation.Y > WorkingRelativeLocation.Y &&
-		ExitingRelativeLocation.Y < HiddenRelativeLocation.Y &&
-		ExitingRelativeLocation.Z > HiddenRelativeLocation.Z &&
-		ExitingRelativeLocation.Z < WorkingRelativeLocation.Z);
+	TestTrue(TEXT("退出路径在跨父级转换后的两个相对端点之间"),
+		IsStrictlyBetween(ExitingRelativeLocation, WorkingRelativeLocation, HiddenRelativeLocation));
 	TestTrue(TEXT("退出中途仍保留 Working 姿态"), Motion->IsWorkPresentationActive());
 	TestTrue(TEXT("退出中途必须产生过渡控制参数"), !FMath::IsNearlyZero(Motion->GetBodyLean()));
 
-	Motion->TickComponent(0.5f, LEVELTICK_All, nullptr);
+	Motion->TickComponent(2.0f, LEVELTICK_All, nullptr);
 	TestEqual(TEXT("退出完成后为 HiddenStable"), Motion->GetPresentationPhase(), EPetPresentationPhase::HiddenStable);
 	TestFalse(TEXT("退出完成后才关闭 Working 姿态"), Motion->IsWorkPresentationActive());
 	TestFalse(TEXT("退出完成后才隐藏小电脑"), ComputerMesh->IsVisible());
@@ -143,8 +199,12 @@ bool FPetComputerStateTransitionTest::RunTest(const FString& Parameters)
 		ComputerMesh->GetRelativeLocation().Equals(OffscreenRelativeLocation, 0.01f));
 
 	Motion->UnregisterComponent();
+	SceneSlots->UnregisterComponent();
+	ComputerOffscreenSlot->UnregisterComponent();
 	ComputerMesh->UnregisterComponent();
+	SlotParent->UnregisterComponent();
 	ComputerParent->UnregisterComponent();
+	SceneRoot->UnregisterComponent();
 	PetMesh->UnregisterComponent();
 	World->DestroyWorld(false);
 

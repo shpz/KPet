@@ -6,6 +6,7 @@
 #include "Platform/PetLayeredWindow.h"
 #include "Player/PetCameraManagerComponent.h"
 #include "Player/PetCharacterMotionComponent.h"
+#include "Player/PetSceneSlotComponent.h"
 #include "UI/PetSessionPanelWidget.h"
 #include "UI/PetSessionWindowHost.h"
 
@@ -76,6 +77,7 @@ APetCapturePawn::APetCapturePawn()
 	CaptureComponent->ShowFlags.Bloom = false; // bloom 辉光会写进 alpha=0 的背景像素 RGB，ULW 预乘语义下变成加性虚影
 
 	MessageChannelComponent = CreateDefaultSubobject<UPetMessageChannelComponent>(TEXT("MessageChannel"));
+	SceneSlotComponent = CreateDefaultSubobject<UPetSceneSlotComponent>(TEXT("SceneSlots"));
 	CameraManagerComponent = CreateDefaultSubobject<UPetCameraManagerComponent>(TEXT("CameraManager"));
 	MotionComponent = CreateDefaultSubobject<UPetCharacterMotionComponent>(TEXT("CharacterMotion"));
 
@@ -138,8 +140,12 @@ void APetCapturePawn::BeginPlay()
 		return;
 	}
 
-	CameraManagerComponent->Initialize(CaptureComponent);
-	MotionComponent->Initialize(PetMeshComponent, ComputerMeshComponent);
+	if (SceneSlotComponent)
+	{
+		SceneSlotComponent->Initialize(RootComp);
+	}
+	CameraManagerComponent->Initialize(CaptureComponent, SceneSlotComponent);
+	MotionComponent->Initialize(PetMeshComponent, ComputerMeshComponent, SceneSlotComponent);
 
 	// 320x320 BGRA8 RT，清屏为全透明
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
@@ -233,6 +239,7 @@ bool APetCapturePawn::ResolveRuntimeComponents()
 	RecoverReference(PetMeshComponent, TEXT("PetMesh"), *this);
 	RecoverReference(ComputerMeshComponent, TEXT("ComputerMesh"), *this);
 	RecoverReference(CaptureComponent, TEXT("Capture"), *this);
+	RecoverReference(SceneSlotComponent, TEXT("SceneSlots"), *this);
 	RecoverReference(MessageChannelComponent, TEXT("MessageChannel"), *this);
 	RecoverReference(CameraManagerComponent, TEXT("CameraManager"), *this);
 	RecoverReference(MotionComponent, TEXT("CharacterMotion"), *this);
@@ -258,6 +265,10 @@ bool APetCapturePawn::ResolveRuntimeComponents()
 	if (bRecoveredSerializedReference)
 	{
 		UE_LOG(LogPet, Warning, TEXT("已从实例组件恢复 BP_PetCapturePawn 中为空的原生组件引用"));
+	}
+	if (!SceneSlotComponent)
+	{
+		UE_LOG(LogPet, Warning, TEXT("PetCapturePawn 缺少 SceneSlots 组件，将使用旧版位置后备值"));
 	}
 
 	// 旧蓝图资产可能保留为空的原生组件引用；恢复引用后同步补齐运行时 Tick 顺序。
