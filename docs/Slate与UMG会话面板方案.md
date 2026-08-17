@@ -759,7 +759,7 @@ Pet/Source/Pet/Private/UI/Tests/（新增）
 
 Pet/Content/Blueprints/BP_PetCapturePawn.uasset
 tools/verify-pet-operations.ps1
-tools/mock-daemon.mjs
+tools/mock-daemon.ts
   新增 --verification-mode 验证模式
 tools/create-session-widget-assets.py（新增）
 docs/MVP设计.md

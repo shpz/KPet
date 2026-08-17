@@ -45,7 +45,7 @@ npm run build:exe  # bun 编译单 exe：bin/kimi-petd.exe（转发器/守护进
 
 ## 打包（生成可安装的插件目录）
 
-打包是整个产品的事（转发器 + 守护进程 + UE5 渲染进程），打包脚本已上移到仓库根 `scripts/package.ts`（用法见其头注释，支持 `--skip-renderer` / `--renderer` / `--ue-config` / `--out` / `--zip`）：
+打包是整个产品的事（转发器 + 守护进程 + UE5 渲染进程），打包脚本已上移到仓库根 `tools/package.ts`（用法见其头注释，支持 `--skip-renderer` / `--renderer` / `--ue-config` / `--out` / `--zip`）：
 
 ```bash
 # 在仓库根执行

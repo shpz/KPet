@@ -658,7 +658,7 @@ void APetCapturePawn::ApplyCameraCursorImage()
 	{
 		return;
 	}
-	// 光标图是编译期内嵌常量（tools/extract-camera-cursor-image.py 由源图生成），不走运行时
+	// 光标图是编译期内嵌常量（tools/extract-camera-cursor-image.ts 由源图生成），不走运行时
 	// 纹理加载——UE 5.8 PIE 下纹理 BulkData 受异步编译/惰性加载影响可能读不到。
 	PetWindow->SetCameraCursorImage(CameraCursorImageData::Bgra, CameraCursorImageData::Width, CameraCursorImageData::Height);
 }

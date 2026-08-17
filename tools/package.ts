@@ -9,7 +9,7 @@
  *     或后续接入 SymStore（本脚本不实现归档）。
  *
  * 用法（Node >= 22.6，仅 node: 标准库，无任何依赖）：
- *   node --experimental-strip-types scripts/package.ts
+ *   node --experimental-strip-types tools/package.ts
  *       [--skip-renderer]     # 完全跳过 UE 渲染进程（插件不含 renderer/）
  *       [--renderer <目录>]   # 用现成的 UE 打包产物，跳过 UE 构建（与 --skip-renderer 互斥）
  *       [--out <目录>]        # 输出父目录，默认 <仓库根>/dist-plugin
@@ -116,7 +116,7 @@ function findGameExeDir(searchRoot: string): string | null {
   const hits: string[] = [];
   const walk = (dir: string, depth: number): void => {
     if (depth > 8) return;
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
@@ -209,7 +209,7 @@ function buildRenderer(opts: Options): string | null {
 function pruneRenderer(rendererDir: string): void {
   const removed: { path: string; size: number }[] = [];
   const walk = (dir: string): void => {
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {

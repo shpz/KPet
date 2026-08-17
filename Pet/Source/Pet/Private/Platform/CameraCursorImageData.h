@@ -1,4 +1,4 @@
-// 本文件由 tools/extract-camera-cursor-image.py 生成，请勿手改。
+// 本文件由 tools/extract-camera-cursor-image.ts 生成，请勿手改。
 // 源图 T_CameraPoint.png（256×256），已最近邻采样到 32×32 并转成 BGRA。
 // 改图后重跑该脚本并重新编译即可。
 #pragma once

@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$EditorPath = "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe",
     [string]$ProjectPath = "D:\Workspace\UnrealProject\KimiPet\Pet\Pet.uproject",
     [int]$StartupTimeoutSeconds = 45,
@@ -514,7 +514,7 @@ function Get-MaxRegionPixelDifference(
 }
 
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path $ProjectPath -Parent) ".."))
-$mockPath = Join-Path $workspaceRoot "tools\mock-daemon.mjs"
+$mockPath = Join-Path $workspaceRoot "tools\mock-daemon.ts"
 $artifactRoot = Join-Path (Split-Path $ProjectPath -Parent) "Saved\OperationVerification"
 $runDirectory = Join-Path $artifactRoot ([DateTime]::Now.ToString("yyyyMMdd-HHmmss"))
 [System.IO.Directory]::CreateDirectory($runDirectory) | Out-Null
@@ -533,7 +533,7 @@ try {
     if (-not (Test-Path -LiteralPath $mockPath -PathType Leaf)) { throw "找不到模拟守护进程: $mockPath" }
 
     [PetVerifyWin32]::SetProcessDPIAware() | Out-Null
-    $mockProcess = Start-Process -FilePath "node.exe" -ArgumentList @($mockPath, "--verification-mode") -WorkingDirectory $workspaceRoot `
+    $mockProcess = Start-Process -FilePath "node.exe" -ArgumentList @("--experimental-strip-types", $mockPath, "--verification-mode") -WorkingDirectory $workspaceRoot `
         -RedirectStandardOutput $mockOut -RedirectStandardError $mockErr -WindowStyle Hidden -PassThru
     Start-Sleep -Milliseconds 800
     if ($mockProcess.HasExited) {

@@ -1,9 +1,8 @@
-#!/usr/bin/env node
 /**
  * 直连 Blender 5.2 官方 MCP 扩展的 socket 服务（端口 9876）。
  *
  * 用法:
- *   node tools/blender-direct.mjs "<python code>"
+ *   node --experimental-strip-types tools/blender-direct.ts "<python code>"
  *
  * 协议（null 字节分隔的 JSON）:
  *   请求: {"type": "execute", "code": "...", "strict_json": true}\0
@@ -13,9 +12,18 @@
  */
 import net from "node:net";
 
+/** Blender MCP 响应（null 字节分隔的 JSON）。 */
+interface BlenderResponse {
+  status: string;
+  result?: unknown;
+  message?: string;
+  stdout?: string;
+  stderr?: string;
+}
+
 const code = process.argv[2];
 if (!code) {
-  console.error("usage: node blender-direct.mjs '<python code>'");
+  console.error("usage: node --experimental-strip-types tools/blender-direct.ts '<python code>'");
   process.exit(2);
 }
 
@@ -28,7 +36,7 @@ const sock = net.connect(PORT, HOST);
 let buf = Buffer.alloc(0);
 let settled = false;
 
-const finish = (codeOut) => {
+const finish = (codeOut: number): void => {
   if (settled) return;
   settled = true;
   sock.destroy();
@@ -36,30 +44,30 @@ const finish = (codeOut) => {
 };
 
 sock.on("connect", () => sock.write(request + "\0"));
-sock.on("data", (chunk) => {
+sock.on("data", (chunk: Buffer) => {
   buf = Buffer.concat([buf, chunk]);
   const idx = buf.indexOf(0);
   if (idx === -1) return;
   const payload = buf.subarray(0, idx).toString("utf8");
+  let resp: BlenderResponse;
   try {
-    const resp = JSON.parse(payload);
-    if (resp.status === "ok") {
-      if (resp.stdout) process.stderr.write(resp.stdout);
-      if (resp.stderr) process.stderr.write(resp.stderr);
-      console.log(JSON.stringify(resp.result, null, 2));
-      finish(0);
-    } else {
-      if (resp.stdout) process.stderr.write(resp.stdout);
-      if (resp.stderr) process.stderr.write(resp.stderr);
-      console.error(resp.message);
-      finish(1);
-    }
-  } catch (e) {
+    resp = JSON.parse(payload) as BlenderResponse;
+  } catch {
     console.error("bad JSON from blender:", payload.slice(0, 500));
+    finish(1);
+    return;
+  }
+  if (resp.stdout) process.stderr.write(resp.stdout);
+  if (resp.stderr) process.stderr.write(resp.stderr);
+  if (resp.status === "ok") {
+    console.log(JSON.stringify(resp.result, null, 2));
+    finish(0);
+  } else {
+    console.error(resp.message);
     finish(1);
   }
 });
-sock.on("error", (e) => {
+sock.on("error", (e: Error) => {
   console.error("socket error:", e.message);
   finish(1);
 });
