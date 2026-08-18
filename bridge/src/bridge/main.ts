@@ -66,13 +66,13 @@ export interface RelayOptions {
   pipeName?: string;
   /** 连接 + 写入总超时（毫秒），缺省 200ms（§3.3）。 */
   timeoutMs?: number;
-  /** 暂存目录，缺省 %TEMP%/kimi-pet-events/（§3.3）。 */
+  /** 暂存目录，缺省系统临时目录下的 kimi-pet-events/（§3.3）。 */
   stagingDir?: string;
-  /** 用户关闭抑制标记路径，缺省 %TEMP%/kimi-pet/pet.disabled。 */
+  /** 用户关闭抑制标记路径，缺省系统临时目录下的 kimi-pet/pet.disabled。 */
   suppressionPath?: string;
-  /** 拉起锁路径，缺省 %TEMP%/kimi-pet/daemon.lock。 */
+  /** 拉起锁路径，缺省系统临时目录下的 kimi-pet/daemon.lock。 */
   daemonLockPath?: string;
-  /** 恢复中标记路径，缺省 %TEMP%/kimi-pet/pet.recovering。 */
+  /** 恢复中标记路径，缺省系统临时目录下的 kimi-pet/pet.recovering。 */
   recoveryPath?: string;
   /** 恢复时等待旧事件管道释放的时长，测试可注入 0；默认 3 秒。 */
   recoveryWaitMs?: number;

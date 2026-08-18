@@ -1,7 +1,7 @@
 /**
  * 守护进程配置（docs/MVP设计.md §7）。
  *
- * 读取 %KIMI_CODE_HOME%\kimipet\config.json（KIMI_CODE_HOME 未设时回退 ~/.kimi-code）；
+ * 读取 KIMI_CODE_HOME/kimipet/config.json（KIMI_CODE_HOME 未设时回退 ~/.kimi-code）；
  * 文件不存在或字段缺失/类型非法时逐项回退默认值并给出告警（§4.4 字段级只增不改的配置侧同义）。
  *
  * 注意 §7 表格把 `session.staleMinutes` 写作带点键，读取时兼容「扁平带点键」与「嵌套对象」两种写法。
@@ -24,7 +24,7 @@ export type OpenTarget = 'cli' | 'web';
 export const DEFAULT_OPEN_WEB_URL = 'http://127.0.0.1:58627/';
 
 export interface DaemonConfig {
-  /** 渲染进程路径（§7，缺省 %KIMI_PLUGIN_ROOT%\renderer\Pet.exe）。 */
+  /** 渲染进程路径（§7；缺省按平台取 renderer/Pet.exe 或 renderer/Pet.app/...，见 resolveRendererPath）。 */
   renderer_path: string;
   /** 心跳间隔（毫秒），渲染进程每 heartbeat_interval_ms 发一次 heartbeat。 */
   heartbeat_interval_ms: number;
@@ -38,8 +38,10 @@ export interface DaemonConfig {
   host_grace_seconds: number;
   /** 倒计时结束是否自动退出（false 时守护进程常驻，等下一个宿主事件）。 */
   auto_quit_with_host: boolean;
-  /** 终端唤起方式：wt（Windows 终端）或 cmd（传统控制台，§4.5-3）。 */
-  terminal: 'wt' | 'cmd';
+  /** 终端唤起方式：wt（Windows 终端）、cmd（传统控制台）或 wsl（WSL 终端，§P1 形态一）。 */
+  terminal: 'wt' | 'cmd' | 'wsl';
+  /** WSL 发行版名（§P1 形态一：WSL 路径转换与终端唤起用），缺省空串。 */
+  wsl_distro: string;
   /** 点击会话后的打开目标：cli（唤起 kimi 终端）或 web（打开浏览器，§7）。 */
   open_target: OpenTarget;
   /** web 目标下的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；会话 id 为空时替换为空串。 */
@@ -56,42 +58,49 @@ export interface DaemonConfig {
 /** KIMI_CODE_HOME 未设时回退的用户配置目录名（§3.1：Windows 默认 C:\Users\<用户名>\.kimi-code）。 */
 const KIMI_CODE_DIR = '.kimi-code';
 
-/** 展开字符串中的 %VAR% 环境变量引用（§7 默认 renderer_path 含 %KIMI_PLUGIN_ROOT%）。未定义的变量替换为空串。 */
+/** 展开字符串中的 %VAR%、$VAR 与 ${VAR} 环境变量引用（§7 默认 renderer_path 依赖环境变量）。未定义的变量替换为空串。 */
 export function expandEnvVars(raw: string, env: NodeJS.ProcessEnv = process.env): string {
-  return raw.replace(/%([^%]+)%/g, (_, name: string) => env[name] ?? '');
+  return raw
+    .replace(/%([^%]+)%/g, (_, name: string) => env[name] ?? '')
+    .replace(/\$\{([^}]+)\}/g, (_, name: string) => env[name] ?? '')
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => env[name] ?? '');
 }
 
-/** 守护进程配置目录：%KIMI_CODE_HOME%\kimipet（KIMI_CODE_HOME 未设回退 ~/.kimi-code）。 */
+/** 守护进程配置目录：KIMI_CODE_HOME/kimipet（KIMI_CODE_HOME 未设回退 ~/.kimi-code）。 */
 export function getKimipetHome(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.KIMI_CODE_HOME;
   if (home && home.length > 0) return path.join(home, 'kimipet');
   return path.join(os.homedir(), KIMI_CODE_DIR, 'kimipet');
 }
 
-/** 配置文件路径：%KIMI_CODE_HOME%\kimipet\config.json。 */
+/** 配置文件路径：KIMI_CODE_HOME/kimipet/config.json。 */
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(getKimipetHome(env), 'config.json');
 }
 
-/** 日志目录：%KIMI_CODE_HOME%\kimipet\logs。 */
+/** 日志目录：KIMI_CODE_HOME/kimipet/logs。 */
 export function getLogDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(getKimipetHome(env), 'logs');
 }
 
-/** 日志文件路径：%KIMI_CODE_HOME%\kimipet\logs\kimi-petd.log。 */
+/** 日志文件路径：KIMI_CODE_HOME/kimipet/logs/kimi-petd.log。 */
 export function getLogFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(getLogDir(env), 'kimi-petd.log');
 }
 
-/** 解析渲染进程路径：显式配置 > %KIMI_PLUGIN_ROOT%\renderer\Pet.exe > cwd()/renderer/Pet.exe（开发兜底）。 */
+/** 解析渲染进程路径：显式配置 > 默认（KIMI_PLUGIN_ROOT 优先，其次 cwd() 开发兜底）；默认产物名按平台选择。 */
 export function resolveRendererPath(raw: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
   if (raw) {
     const expanded = expandEnvVars(raw, env);
     if (expanded.length > 0) return expanded;
   }
   const root = env.KIMI_PLUGIN_ROOT;
-  if (root && root.length > 0) return path.join(root, 'renderer', 'Pet.exe');
-  return path.join(process.cwd(), 'renderer', 'Pet.exe');
+  const exeName =
+    process.platform === 'win32' ? 'Pet.exe'
+    : process.platform === 'darwin' ? path.join('Pet.app', 'Contents', 'MacOS', 'Pet')
+    : 'Pet';
+  if (root && root.length > 0) return path.join(root, 'renderer', exeName);
+  return path.join(process.cwd(), 'renderer', exeName);
 }
 
 /** 配置加载结果：config 为最终生效值；warnings 为逐项回退告警（由调用方记日志）。 */
@@ -130,11 +139,20 @@ function readBoolean(obj: Record<string, unknown>, key: string, fallback: boolea
 }
 
 /** 读取终端方式（§7 terminal）。 */
-function readTerminal(obj: Record<string, unknown>, warnings: string[]): 'wt' | 'cmd' {
+function readTerminal(obj: Record<string, unknown>, warnings: string[]): 'wt' | 'cmd' | 'wsl' {
   const v = obj['terminal'];
-  if (v === 'wt' || v === 'cmd') return v;
-  if (v !== undefined) warnings.push('配置项 terminal 非法（需要 "wt" 或 "cmd"），使用默认值 "wt"');
+  if (v === 'wt' || v === 'cmd' || v === 'wsl') return v;
+  if (v !== undefined) warnings.push('配置项 terminal 非法（需要 "wt"、"cmd" 或 "wsl"），使用默认值 "wt"');
   return 'wt';
+}
+
+/** 读取 WSL 发行版名（§P1 形态一：WSL 路径转换与终端唤起用）。 */
+function readWslDistro(obj: Record<string, unknown>, warnings: string[]): string {
+  const v = obj['wsl_distro'];
+  if (v === undefined) return '';
+  if (typeof v === 'string') return v;
+  warnings.push('配置项 wsl_distro 非法（需要字符串），使用默认值 ""');
+  return '';
 }
 
 /** 读取打开目标（§7 open_target）。 */
@@ -164,7 +182,7 @@ function readLogLevel(obj: Record<string, unknown>, warnings: string[]): LogLeve
   return 'info';
 }
 
-/** §7 全部键 + 默认值。renderer_path 的默认值依赖环境（%KIMI_PLUGIN_ROOT%）。 */
+/** §7 全部键 + 默认值。renderer_path 的默认值依赖环境与平台（KIMI_PLUGIN_ROOT）。 */
 export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfig {
   return {
     renderer_path: resolveRendererPath(undefined, env),
@@ -175,6 +193,7 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
     host_grace_seconds: 120,
     auto_quit_with_host: true,
     terminal: 'wt',
+    wsl_distro: '',
     open_target: 'cli',
     open_web_url: DEFAULT_OPEN_WEB_URL,
     session: { staleMinutes: 10, cleanupMinutes: 60 },
@@ -252,6 +271,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
     host_grace_seconds: readPositiveNumber(obj, 'host_grace_seconds', defaults.host_grace_seconds, warnings),
     auto_quit_with_host: readBoolean(obj, 'auto_quit_with_host', defaults.auto_quit_with_host, warnings),
     terminal: readTerminal(obj, warnings),
+    wsl_distro: readWslDistro(obj, warnings),
     open_target: readOpenTarget(obj, warnings),
     open_web_url: readOpenWebUrl(obj, warnings),
     session: { staleMinutes, cleanupMinutes },

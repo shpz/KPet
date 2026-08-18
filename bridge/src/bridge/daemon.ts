@@ -1,12 +1,12 @@
 /**
  * 守护进程拉起（§3.3：管道不存在时以分离方式拉起守护进程，不等待就绪）。
  *
- * 单 exe 合并（阶段五 P1）：kimi-petd.exe 同时承载转发器与守护进程，按首参数分发
+ * 单 exe 合并（阶段五 P1）：kimi-petd（Windows 为 kimi-petd.exe）同时承载转发器与守护进程，按首参数分发
  * （src/launcher/main.ts）；拉起守护进程时以 --daemon 分发，恢复 worker 以 --kimi-pet-recover 分发。
  *
  * 防并发风暴：多个转发器同时发现管道不存在时，用独占锁文件保证只拉一次。
  * 锁文件不主动删除，靠 mtime 超过 TTL 视为陈旧 —— 持有锁的转发器（或守护进程）崩溃后，
- * 下一个转发器可接管重拉；spawn 同步失败（exe 缺失）则立即释放锁允许重试。
+ * 下一个转发器可接管重拉；spawn 同步失败（可执行文件缺失）则立即释放锁允许重试。
  * 残留的陈旧锁最多让拉起延迟一个 TTL，可接受。
  */
 import { spawn } from 'node:child_process';
@@ -14,8 +14,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-/** 守护进程可执行文件名（单 exe 合并后仅用于开发模式兜底路径，见 resolveDaemonPath）。 */
-export const DAEMON_EXE = 'kimi-petd.exe';
+/**
+ * 守护进程可执行文件名（单 exe 合并后仅用于开发模式兜底路径，见 resolveDaemonPath）。
+ * win32 为 kimi-petd.exe，其余平台为 kimi-petd；platform 参数仅供测试注入，生产环境默认取 process.platform。
+ */
+export function getDaemonExeName(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? 'kimi-petd.exe' : 'kimi-petd';
+}
 
 /** 锁文件 TTL（毫秒）：超过该时长视为陈旧锁，下一个转发器可接管。 */
 export const DAEMON_LOCK_TTL_MS = 15_000;
@@ -37,22 +42,45 @@ export const DAEMON_RECOVERY_ARG = '--kimi-pet-recover';
  * 解析守护进程可执行文件路径。
  *
  * 单 exe 合并后，守护进程与转发器同体：bun build --compile 产物下当前进程自身即守护进程，
- * 直接返回 argv[0]（跳过 bun.exe/node.exe 等开发运行时的宿主可执行文件）。
+ * 直接返回 argv[0]（跳过 bun/node 等开发运行时的宿主可执行文件）。
  * 开发模式（node/bun 直跑）保留原解析逻辑：
- * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/kimi-petd.exe（宿主注入，§3.1）；
- * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录（§3.1），故取 cwd()/bin/kimi-petd.exe。
+ * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/ 下的守护进程产物（Windows 为 kimi-petd.exe，其余平台 kimi-petd；宿主注入，§3.1）；
+ * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录（§3.1），故取 cwd()/bin/ 下的守护进程产物（同上按平台取文件名）。
+ *
+ * platform 参数仅供测试注入；生产环境默认取 process.platform。
  */
-export function resolveDaemonPath(env: NodeJS.ProcessEnv = process.env): string {
+export function resolveDaemonPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const self = process.argv[0];
-  if (self && /\.exe$/i.test(self) && !/(?:bun|node)\.exe$/i.test(self)) {
+  if (self && isStandaloneExecutable(self, platform)) {
     return self;
   }
   const root = env.KIMI_PLUGIN_ROOT;
-  if (root && root.length > 0) return path.join(root, 'bin', DAEMON_EXE);
-  return path.join(process.cwd(), 'bin', DAEMON_EXE);
+  if (root && root.length > 0) return path.join(root, 'bin', getDaemonExeName(platform));
+  return path.join(process.cwd(), 'bin', getDaemonExeName(platform));
 }
 
-/** 锁文件路径：%TEMP%/kimi-pet/daemon.lock（独立于事件暂存目录 %TEMP%/kimi-pet-events/，避免被暂存回收误删）。 */
+/**
+ * 判断 argv[0] 是否指向单 exe 合并产物自身（而非 bun/node 开发宿主）。
+ * win32：以 .exe 结尾且 basename 不是 bun.exe/node.exe；
+ * 其余平台：basename 不是 bun/node（开发宿主即 bun 或 node，可带 .exe 后缀一并排除）。
+ *
+ * platform 参数仅供测试注入；生产环境默认取 process.platform。
+ */
+export function isStandaloneExecutable(
+  self: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const base = path.basename(self);
+  if (platform === 'win32') {
+    return /\.exe$/i.test(base) && !/^(?:bun|node)\.exe$/i.test(base);
+  }
+  return !/^(?:bun|node)(?:\.exe)?$/i.test(base);
+}
+
+/** 锁文件路径：系统临时目录/kimi-pet/daemon.lock（Windows 为 %TEMP%/kimi-pet/daemon.lock；独立于事件暂存目录，避免被暂存回收误删）。 */
 export function getDaemonLockPath(tmpDir: string = os.tmpdir()): string {
   return path.join(tmpDir, 'kimi-pet', 'daemon.lock');
 }
@@ -253,7 +281,7 @@ export interface ScheduleDaemonRecoveryOptions {
  * 安排 detached recovery worker。
  *
  * 转发器本身会在当前 hook 结束时退出，因此恢复等待不能依赖当前进程的定时器。
- * worker 复用同一个 kimi-petd.exe 的 --kimi-pet-recover 隐藏命令行入口（launcher 分发），
+ * worker 复用同一个 kimi-petd 产物（Windows 为 kimi-petd.exe）的 --kimi-pet-recover 隐藏命令行入口（launcher 分发），
  * 独立等待事件管道释放。
  */
 export async function scheduleDaemonRecovery(opts: ScheduleDaemonRecoveryOptions): Promise<boolean> {
@@ -309,16 +337,16 @@ export async function scheduleDaemonRecovery(opts: ScheduleDaemonRecoveryOptions
   return false;
 }
 
-/** Node 开发运行时需要把入口脚本作为参数；bun build --compile 后直接执行当前 exe。 */
+/** Node 开发运行时需要把入口脚本作为参数；bun build --compile 后直接执行当前可执行文件。 */
 function resolveBridgeLauncher(): { command: string; args: string[] } {
   const entry = process.argv[1];
   if (entry && /\.(?:mjs|cjs|js|ts)$/i.test(entry)) {
     return { command: process.execPath, args: [entry] };
   }
-  // bun build --compile 通常把自身 exe 放在 argv[0]；优先复用当前 bridge exe，
-  // 避免把恢复参数误传给全局 bun.exe/node.exe。
+  // bun build --compile 通常把自身可执行文件放在 argv[0]；优先复用当前编译产物，
+  // 避免把恢复参数误传给全局 bun/node 宿主。
   const self = process.argv[0];
-  if (self && /\.exe$/i.test(self) && !/(?:bun|node)\.exe$/i.test(self)) {
+  if (self && isStandaloneExecutable(self)) {
     return { command: self, args: [] };
   }
   return { command: process.execPath, args: [] };
@@ -381,7 +409,7 @@ export function acquireOwnedDaemonLock(
         if (Date.now() - st.mtimeMs > staleAfterMs) {
           const quarantined = `${lockPath}.stale-${process.pid}-${randomLockOwner()}`;
           try {
-            // 同目录 rename 在 Windows 上是原子的；若另一进程已接管，rename 会失败，
+            // 同目录 rename 在当前平台文件系统上是原子的；若另一进程已接管，rename 会失败，
             // 下一轮排他创建或新锁 mtime 检查会选出唯一 winner。
             fs.renameSync(lockPath, quarantined);
             try {
@@ -425,7 +453,7 @@ function randomLockOwner(): string {
 /**
  * 伪代码 §3.3 的 spawn_detached：管道不存在时分离拉起守护进程，立即返回。
  * - detached + stdio ignore + unref：守护进程不随转发器退出，无控制台窗口（§3.1 闪窗规避）
- * - 带独占锁，防并发风暴；spawn 失败（exe 缺失）释放锁允许下个转发器重试
+ * - 带独占锁，防并发风暴；spawn 失败（可执行文件缺失）释放锁允许下个转发器重试
  * - 不等待守护进程就绪（启动期间的事件走暂存兜底，§3.4）
  */
 export interface SpawnDaemonOptions {

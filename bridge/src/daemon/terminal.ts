@@ -4,6 +4,10 @@
  * - open_target=cli 且 terminal=wt：`wt.exe -d <cwd> cmd /k kimi --session <会话id>`；wt.exe 不可用（spawn ENOENT）时
  *   回退 `cmd /c start`（§4.5-3 备选）；
  * - open_target=cli 且 terminal=cmd：`cmd /c start "" cmd /k kimi --session <会话id>`；
+ * - open_target=cli 且 terminal=wsl（跨平台方案 §3.1 形态一）：`wt.exe -d <Windows cwd> wsl.exe [-d <发行版>]
+ *   --cd <Linux cwd> -- kimi --session <会话id>`；cwd 为 Linux 路径时先经 wslToWindowsPath 转成 Windows 路径
+ *   给 wt -d（wsl.exe 的 --cd 保留 Linux 原路径）；wt.exe 不可用（spawn ENOENT）时回退
+ *   `cmd /c start "" wsl.exe [-d <发行版>] --cd <Linux cwd> --exec bash -lc "kimi --session <会话id>"`；
  * - open_target=web：用系统默认浏览器打开 open_web_url 模板（§7，支持 {session_id} 占位符；
  *   能否在 web 侧直接按会话恢复属未验证假设，见 config.ts 的 DEFAULT_OPEN_WEB_URL 注释）；
  * - open_target=web 且 URL 为回环地址（127.0.0.1 / localhost / ::1）时，开浏览器前先探测端口，
@@ -20,8 +24,8 @@
  * - 会话 id 为空 → `kimi --continue` 恢复最近会话（§4.5-3）；
  * - 分离拉起（detached + unref）：cli 终端/浏览器不随守护进程生命周期退出；web 服务随可见
  *   终端窗口生命周期（关窗即停）；
- * - wt 路径禁止 windowsHide：libuv 会将其译为 STARTF_USESHOWWINDOW + SW_HIDE（并附加
- *   CREATE_NO_WINDOW），Windows Terminal 会按启动信息隐藏主窗口，表现为「spawn 成功但窗口
+ * - wt/wsl 分支均经 wt.exe 直拉，禁止 windowsHide：libuv 会将其译为 STARTF_USESHOWWINDOW + SW_HIDE
+ *   （并附加 CREATE_NO_WINDOW），Windows Terminal 会按启动信息隐藏主窗口，表现为「spawn 成功但窗口
  *   不显示」（实测复现）。cmd 路径经 `cmd /c start` 中转，窗口由 start 新开，不受影响
  *   （web 拉起与开浏览器同理）。
  */
@@ -31,12 +35,15 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DEFAULT_OPEN_WEB_URL, type OpenTarget } from './config.js';
+import { wslToWindowsPath } from './wsl-path.js';
 
 export interface OpenTuiOptions {
   /** 打开目标：cli=终端，web=浏览器。缺省 cli（向后兼容）。 */
   target?: OpenTarget;
-  /** cli 时的终端方式（§4.5-3）。 */
-  terminal: 'wt' | 'cmd';
+  /** cli 时的终端方式（§4.5-3）：wt=Windows Terminal，cmd=传统控制台，wsl=WSL 发行版终端（§3.1 形态一）。 */
+  terminal: 'wt' | 'cmd' | 'wsl';
+  /** terminal=wsl 时使用的 WSL 发行版（wsl.exe -d <发行版>）；缺省/空串 = wsl.exe 默认发行版。 */
+  wslDistro?: string;
   /** web 时使用的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；缺省本地 kimi web 首页。 */
   webUrl?: string;
   /** kimi 终端的工作目录（§4.5-3：-d <cwd>）。 */
@@ -61,10 +68,39 @@ export function buildOpenTuiCommand(opts: OpenTuiOptions): OpenTuiCommand {
       cwd: opts.cwd,
     };
   }
+  if (opts.terminal === 'wsl') {
+    // 守护进程在 Windows：cwd 为 Linux 路径时先经 wslToWindowsPath 转成 Windows 路径给 wt -d
+    // （wt 要求的启动目录是 Windows 侧路径）；wsl.exe 的 --cd 保留 Linux 原路径以便在 WSL 内
+    // 切换目录。发行版缺省（wslDistro 空）时不带 -d，wsl.exe 用默认发行版。
+    const winCwd = wslToWindowsPath(opts.cwd, opts.wslDistro);
+    const distroArgs = opts.wslDistro ? ['-d', opts.wslDistro] : [];
+    return {
+      file: 'wt.exe',
+      args: ['-d', winCwd, 'wsl.exe', ...distroArgs, '--cd', opts.cwd, '--', 'kimi', ...sessionArgs],
+      cwd: winCwd,
+    };
+  }
   return {
     file: 'cmd.exe',
     args: ['/c', 'start', '', 'cmd', '/k', 'kimi', ...sessionArgs],
     cwd: opts.cwd,
+  };
+}
+
+/**
+ * wsl 首选 wt.exe 缺失（ENOENT）时的回退命令（纯函数，可单测）：经 `cmd /c start` 中转新开
+ * WSL 发行版窗口，`--exec bash -lc` 在 WSL 内执行 kimi。整条会话命令（含参数）打包为
+ * bash -lc 的单个 argv，避免 wsl.exe 把参数拆分后只执行 kimi 本身。启动目录与首选分支一致
+ * 转为 Windows 路径（wsl 分支的 cwd 可能是 Linux 路径，Windows 侧 spawn 无法作为工作目录）。
+ */
+export function buildWslFallbackCommand(opts: OpenTuiOptions): OpenTuiCommand {
+  const sessionArgs = opts.sessionId ? ['--session', opts.sessionId] : ['--continue'];
+  const winCwd = wslToWindowsPath(opts.cwd, opts.wslDistro);
+  const distroArgs = opts.wslDistro ? ['-d', opts.wslDistro] : [];
+  return {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', ...distroArgs, '--cd', opts.cwd, '--exec', 'bash', '-lc', `kimi ${sessionArgs.join(' ')}`],
+    cwd: winCwd,
   };
 }
 
@@ -146,8 +182,8 @@ const WEB_POLL_MS = 250;
 const WEB_WAIT_MS = 10_000;
 
 export interface OpenTuiResult {
-  /** 实际执行方式：'wt' | 'cmd'（cli 目标）或 'web'（浏览器目标）。 */
-  terminal: 'wt' | 'cmd' | 'web';
+  /** 实际执行方式：'wt' | 'wsl'（cli 目标经 wt.exe 直拉）| 'cmd'（回退）| 'web'（浏览器目标）。 */
+  terminal: 'wt' | 'cmd' | 'wsl' | 'web';
   ok: boolean;
   error?: string;
 }
@@ -176,26 +212,28 @@ export function openTui(
   return openTerminal(opts, spawnFn);
 }
 
-/** cli 目标：wt 失败（ENOENT）回退 cmd（§4.5-3 备选）。 */
+/** cli 目标：wt 首拉（wt 或 wsl 分支都经 wt.exe），失败（ENOENT）回退 cmd（§4.5-3 备选）。 */
 function openTerminal(opts: OpenTuiOptions, spawnFn: SpawnFn): Promise<OpenTuiResult> {
   return new Promise((resolve) => {
-    const attempt = (terminal: 'wt' | 'cmd', cmd: OpenTuiCommand): void => {
+    const attempt = (terminal: 'wt' | 'cmd' | 'wsl', cmd: OpenTuiCommand): void => {
       let child: ChildProcess;
       try {
-        // wt 必须 windowsHide=false：libuv 把 windowsHide 译为 STARTF_USESHOWWINDOW + SW_HIDE
-        // （并附加 CREATE_NO_WINDOW），GUI 程序会按启动信息隐藏主窗口，表现为「spawn 成功但
-        // 窗口不显示」。cmd 路径经 `cmd /c start` 中转，真正的窗口由 start 新开，外层 cmd
-        // 存根保持隐藏以免闪窗。
-        child = spawnFn(cmd.file, cmd.args, { detached: true, stdio: 'ignore', windowsHide: terminal !== 'wt' });
+        // wt/wsl 分支都经 wt.exe 直拉，必须 windowsHide=false：libuv 把 windowsHide 译为
+        // STARTF_USESHOWWINDOW + SW_HIDE（并附加 CREATE_NO_WINDOW），GUI 程序会按启动信息隐藏
+        // 主窗口，表现为「spawn 成功但窗口不显示」。cmd 路径经 `cmd /c start` 中转，真正的窗口
+        // 由 start 新开，外层 cmd 存根保持隐藏以免闪窗。
+        child = spawnFn(cmd.file, cmd.args, { detached: true, stdio: 'ignore', windowsHide: terminal === 'cmd' });
       } catch (err) {
         resolve({ terminal, ok: false, error: (err as Error).message });
         return;
       }
       child.once('error', (err) => {
         const code = (err as NodeJS.ErrnoException).code;
-        if (terminal === 'wt' && code === 'ENOENT') {
-          // wt.exe 不可用：回退 cmd /c start（§4.5-3）
-          attempt('cmd', buildOpenTuiCommand({ ...opts, terminal: 'cmd' }));
+        if ((terminal === 'wt' || terminal === 'wsl') && code === 'ENOENT') {
+          // wt.exe 不可用：回退 cmd /c start（§4.5-3 备选）。wsl 模式回退为
+          // `cmd /c start "" wsl.exe ... --exec bash -lc "kimi ..."`（保留 wsl 语义，不再经
+          // cmd /k 在 Windows 侧执行）；wt 模式维持原回退命令。启动目录由回退命令构造函数处理。
+          attempt('cmd', terminal === 'wsl' ? buildWslFallbackCommand(opts) : buildOpenTuiCommand({ ...opts, terminal: 'cmd' }));
         } else {
           resolve({ terminal, ok: false, error: `${code ?? err.message}` });
         }
@@ -338,7 +376,7 @@ function startWebService(
         // （并附加 CREATE_NO_WINDOW），GUI 程序会按启动信息隐藏主窗口，表现为「spawn 成功但
         // 窗口不显示」。cmd 路径经 `cmd /c start` 中转，真正的窗口由 start 新开，外层 cmd
         // 存根保持隐藏以免闪窗。
-        child = spawnFn(cmd.file, cmd.args, { detached: true, stdio: 'ignore', windowsHide: terminal !== 'wt' });
+        child = spawnFn(cmd.file, cmd.args, { detached: true, stdio: 'ignore', windowsHide: terminal === 'cmd' });
       } catch (err) {
         resolve({ terminal: 'web', ok: false, error: `拉起 kimi web 失败：${(err as Error).message}` });
         return;
@@ -363,7 +401,10 @@ function startWebService(
       });
     };
 
-    attempt(opts.terminal, buildStartWebServiceCommand(opts, port));
+    // terminal=wsl 配置下 web 目标与 cmd 同构（外层 cmd /c start 中转拉起 kimi web），
+    // 归一化回 'wt' | 'cmd' 供 attempt 判定 windowsHide 与 ENOENT 回退。
+    const startCmd = buildStartWebServiceCommand(opts, port);
+    attempt(startCmd.file === 'wt.exe' ? 'wt' : 'cmd', startCmd);
   });
 }
 

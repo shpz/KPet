@@ -268,6 +268,8 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 
 ## 5. 分阶段落地建议（按「改动小 / 收益大」优先级）
 
+> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 206/206 通过；但仅在 Windows 宿主编译与单测验证，WSL 真机（插件安装、relay 脚本 interop 拉起、wt/wsl 终端唤起、路径转换端到端）尚未实测。P2 起尚未动工。
+
 **P0 —— 平台无关的清理（立即可做，风险极低，且是后续所有工作的地基）**
 
 1. `bridge/src/daemon/config.ts:46-49`：`expandEnvVars` 同时支持 `%VAR%` 与 `$VAR`/`${VAR}`。
@@ -298,6 +300,8 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 ---
 
 ## 6. 风险与开放问题（未验证项，需后续确认）
+
+- **WSL 端到端未实测（P0/P1 已实现的全部内容）**：WSL 清单 `kimi.plugin.wsl.json` 的安装方式（覆盖为 `kimi.plugin.json`）、`bin/kimi-pet-relay.sh` 经 interop 拉起 exe、`terminal: 'wsl'` 的 wt 直拉与 cmd 回退（含 `wsl.exe --cd` / `bash -lc` 参数打包行为）、`wsl-path.ts` 的双向转换，均只经过纯函数与注入式单测，未在真实 WSL 环境验证。
 
 - **WSL 命名管道可达性**：本文基于「Linux 进程不能直连 `\\.\pipe\...`」的常识判断，未在 WSL 环境实测；形态一建议用 interop 直启 Windows 转发器绕开此问题，但「interop 直启 exe 时 cwd 如何被翻译」仍需实测确认（影响 `relay` 读 stdin 与 `resolveDaemonPath` 的 `process.cwd()`，见 `bridge/src/bridge/daemon.ts:52`）。
 - **UE5 Mac 透明窗口 + 点击穿透**：`EWindowTransparency::PerWindow`（`PetSessionWindowHost.cpp:156`）在 Slate 侧支持透明，但「透明区点击穿透」与「无边框置顶」在 Mac 上的具体能力边界、以及 `NSWindow` 与 UE 游戏主窗口的关系，需要 PoC 验证。

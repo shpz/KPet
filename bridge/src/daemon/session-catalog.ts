@@ -233,10 +233,23 @@ function parseUpdatedAt(value: unknown): number {
 }
 
 function resolveSessionDir(sessionDir: string, indexDir: string): string {
-  if (path.isAbsolute(sessionDir) || /^[A-Za-z]:[\\/]/.test(sessionDir) || sessionDir.startsWith('\\\\')) {
+  if (isAbsoluteSessionDir(sessionDir)) {
     return sessionDir;
   }
   return path.resolve(indexDir, sessionDir);
+}
+
+/**
+ * 判断会话目录是否为绝对路径（平台中立）。
+ *
+ * path.isAbsolute 只识别当前平台的绝对路径：Windows 下 `/` 或 `\` 开头即绝对，
+ * POSIX 下只有 `/` 开头。盘符（C:\foo）与 UNC（\\server\share）是 Windows 会话
+ * 可能留在索引里的写法，POSIX 平台不会命中 path.isAbsolute，这里显式补判；
+ * POSIX 路径（/home/...、/mnt/c/...）两端都由 path.isAbsolute 覆盖。
+ */
+export function isAbsoluteSessionDir(sessionDir: string): boolean {
+  if (path.isAbsolute(sessionDir)) return true;
+  return /^[A-Za-z]:[\\/]/.test(sessionDir) || sessionDir.startsWith('\\\\');
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -24,7 +24,7 @@
  *   B. renderer：默认 RunUAT.bat BuildCookRun 打包 UE（Win64、Shipping；打包前 taskkill UnrealEditor.exe），
  *      完成后在 StagedBuilds 里定位游戏 exe 所在的整个目录（即 docs/MVP设计.md §3.2 的 renderer/ 本体）；
  *      --skip-renderer / --renderer 可跳过 UE 构建
- *   C. 组装 <out>/kimi-pet/{kimi.plugin.json, bin/, renderer/}；renderer 拷贝后兜底删除
+ *   C. 组装 <out>/kimi-pet/{kimi.plugin.json, kimi.plugin.wsl.json, bin/, renderer/}；renderer 拷贝后兜底删除
  *      *.pdb、D3D12 两个 DLL、NVaftermath DLL（逐项打印日志）
  *   D. 可选 --zip
  *
@@ -42,6 +42,10 @@ const UE_PROJECT = join(ROOT, "Pet", "Pet.uproject");
 const UE_ENGINE = "C:\\Program Files\\Epic Games\\UE_5.8";
 const RUN_UAT = join(UE_ENGINE, "Engine", "Build", "BatchFiles", "RunUAT.bat");
 const MANIFEST = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.json");
+/** WSL 宿主清单：command 走 bin/kimi-pet-relay.sh（跨平台兼容方案 §5 P1-7，随包分发供 WSL 宿主改名使用）。 */
+const MANIFEST_WSL = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.wsl.json");
+/** WSL relay 脚本：POSIX sh，WSL 内经 interop 直启 Windows 侧 kimi-petd.exe。 */
+const RELAY_SCRIPT = join(BRIDGE, "packaging", "kimi-pet", "bin", "kimi-pet-relay.sh");
 const STAGE_ROOT = join(ROOT, "Pet", "Saved", "StagedBuilds");
 /** UE 渲染进程可执行名：工程目标名是 Pet（产物 Pet.exe）；设计文档 §3.2 写作 KimiPet.exe，两种都认。 */
 const GAME_EXE_NAMES = new Set(["pet.exe", "kimipet.exe"]);
@@ -253,7 +257,13 @@ function assemble(opts: Options, rendererDir: string | null): string {
   copyFileSync(MANIFEST, join(pluginDir, "kimi.plugin.json"));
   console.log(`[package] 组装: ${MANIFEST} -> ${join(pluginDir, "kimi.plugin.json")}`);
 
+  copyFileSync(MANIFEST_WSL, join(pluginDir, "kimi.plugin.wsl.json"));
+  console.log(`[package] 组装: ${MANIFEST_WSL} -> ${join(pluginDir, "kimi.plugin.wsl.json")}`);
+
   compileExe(join(BRIDGE, "dist", "launcher", "main.js"), join(pluginDir, "bin", "kimi-petd.exe"));
+
+  copyFileSync(RELAY_SCRIPT, join(pluginDir, "bin", "kimi-pet-relay.sh"));
+  console.log(`[package] 组装: ${RELAY_SCRIPT} -> ${join(pluginDir, "bin", "kimi-pet-relay.sh")}`);
 
   if (rendererDir) {
     cpSync(rendererDir, join(pluginDir, "renderer"), { recursive: true });
@@ -279,6 +289,7 @@ function summarize(pluginDir: string, opts: Options, rendererDir: string | null)
   console.log("\n[package] 完成，产物清单:");
   console.log(`  ${pluginDir}/  （共 ${mb(dirSize(pluginDir))}）`);
   console.log(`    kimi.plugin.json  ${mb(statSync(join(pluginDir, "kimi.plugin.json")).size)}`);
+  console.log(`    kimi.plugin.wsl.json  ${mb(statSync(join(pluginDir, "kimi.plugin.wsl.json")).size)}`);
   for (const f of readdirSync(join(pluginDir, "bin"))) {
     const p = join(pluginDir, "bin", f);
     console.log(`    bin/${f}  ${mb(statSync(p).size)}`);
@@ -299,6 +310,8 @@ function summarize(pluginDir: string, opts: Options, rendererDir: string | null)
 function main(): void {
   const opts = parseArgs(process.argv.slice(2));
   if (!existsSync(MANIFEST)) throw new Error(`插件清单缺失: ${MANIFEST}`);
+  if (!existsSync(MANIFEST_WSL)) throw new Error(`WSL 插件清单缺失: ${MANIFEST_WSL}`);
+  if (!existsSync(RELAY_SCRIPT)) throw new Error(`WSL relay 脚本缺失: ${RELAY_SCRIPT}`);
   const launcherEntry = join(BRIDGE, "dist", "launcher", "main.js");
 
   console.log("[package] ===== A. bridge 单 exe（launcher）=====\n");

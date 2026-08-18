@@ -13,6 +13,7 @@ import {
   buildOpenWebCommand,
   buildOpenWebUrl,
   buildStartWebServiceCommand,
+  buildWslFallbackCommand,
   openTui,
   type ConnectFn,
   type SpawnFn,
@@ -62,6 +63,53 @@ test('buildOpenTuiCommand：cmd 模式 → cmd /c start（§4.5-3 备选）', ()
   });
 });
 
+test('buildOpenTuiCommand：wsl 模式（wt 直拉）→ wt -d 用转换后的 Windows cwd、--cd 保留 Linux cwd', () => {
+  const cmd = buildOpenTuiCommand({ terminal: 'wsl', cwd: '/mnt/c/Users/me/proj', sessionId: 's1' });
+  assert.deepEqual(cmd, {
+    file: 'wt.exe',
+    args: ['-d', 'C:\\Users\\me\\proj', 'wsl.exe', '--cd', '/mnt/c/Users/me/proj', '--', 'kimi', '--session', 's1'],
+    cwd: 'C:\\Users\\me\\proj',
+  });
+});
+
+test('buildOpenTuiCommand：wsl 模式 + 指定发行版 → wsl.exe -d <发行版>', () => {
+  const cmd = buildOpenTuiCommand({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: 's1' });
+  assert.deepEqual(cmd, {
+    file: 'wt.exe',
+    args: ['-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--', 'kimi', '--session', 's1'],
+    cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj',
+  });
+});
+
+test('buildOpenTuiCommand：wsl 模式 + cwd 已是 Windows 路径 → wt -d 原样透传', () => {
+  const cmd = buildOpenTuiCommand({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: 'D:\\ws', sessionId: 's1' });
+  assert.deepEqual(cmd, {
+    file: 'wt.exe',
+    args: ['-d', 'D:\\ws', 'wsl.exe', '-d', 'Ubuntu', '--cd', 'D:\\ws', '--', 'kimi', '--session', 's1'],
+    cwd: 'D:\\ws',
+  });
+});
+
+test('buildOpenTuiCommand：wsl 模式 + 会话 id 为空 → kimi --continue', () => {
+  const cmd = buildOpenTuiCommand({ terminal: 'wsl', cwd: '/mnt/c/Users/me/proj', sessionId: null });
+  assert.deepEqual(cmd.args.slice(2), ['wsl.exe', '--cd', '/mnt/c/Users/me/proj', '--', 'kimi', '--continue']);
+});
+
+test('buildWslFallbackCommand：wsl 回退 → cmd /c start wsl.exe --exec bash -lc 单 argv 打包，cwd 转 Windows', () => {
+  const cmd = buildWslFallbackCommand({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: 's1' });
+  assert.deepEqual(cmd, {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--exec', 'bash', '-lc', 'kimi --session s1'],
+    cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj',
+  });
+});
+
+test('buildWslFallbackCommand：发行版缺省 → 不带 -d；会话 id 为空 → kimi --continue', () => {
+  const cmd = buildWslFallbackCommand({ terminal: 'wsl', cwd: '/mnt/c/Users/me/proj', sessionId: null });
+  assert.deepEqual(cmd.args, ['/c', 'start', '', 'wsl.exe', '--cd', '/mnt/c/Users/me/proj', '--exec', 'bash', '-lc', 'kimi --continue']);
+  assert.equal(cmd.cwd, 'C:\\Users\\me\\proj');
+});
+
 test('openTui：wt 成功 → ok + terminal=wt，且 windowsHide=false（SW_HIDE 回归）', async () => {
   let calls = 0;
   const captured: { opts?: { windowsHide: boolean } } = {};
@@ -91,6 +139,50 @@ test('openTui：wt.exe 不存在（ENOENT）→ 回退 cmd /c start（§4.5-3 �
   assert.equal(seen.length, 2);
   assert.equal(seen[0]?.windowsHide, false, 'wt 不隐藏窗口');
   assert.equal(seen[1]?.windowsHide, true, 'cmd 存根隐藏（start 新开可见窗口）');
+});
+
+test('openTui：wsl 首选经 wt.exe 直拉成功 → ok + terminal=wsl，且 windowsHide=false（SW_HIDE 回归）', async () => {
+  let calls = 0;
+  const captured: { file: string; args: string[]; opts?: { windowsHide: boolean } } = { file: '', args: [] };
+  const spawnFn: SpawnFn = (file, args, opts) => {
+    calls++;
+    captured.file = file;
+    captured.args = args;
+    captured.opts = opts;
+    return fakeChild('ok') as never;
+  };
+  const res = await openTui({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: 's1' }, spawnFn);
+  assert.equal(res.ok, true);
+  assert.equal(res.terminal, 'wsl');
+  assert.equal(calls, 1);
+  // 回归：wsl 分支同样经 wt.exe 直拉，不能以 windowsHide=true 拉起，否则 libuv 的 SW_HIDE 会隐藏窗口
+  assert.equal(captured.opts?.windowsHide, false);
+  assert.deepEqual(captured.args, ['-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--', 'kimi', '--session', 's1']);
+});
+
+test('openTui：wsl 首选 wt.exe 不存在（ENOENT）→ 回退 cmd /c start wsl.exe --exec bash -lc', async () => {
+  const behaviors: Array<'enoent' | 'ok'> = ['enoent', 'ok'];
+  const seen: Array<{ file: string; args: string[]; windowsHide: boolean }> = [];
+  const spawnFn: SpawnFn = (file, args, opts) => {
+    seen.push({ file, args, windowsHide: opts.windowsHide });
+    return fakeChild(behaviors.shift()!) as never;
+  };
+  const res = await openTui({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: 's1' }, spawnFn);
+  assert.equal(res.ok, true);
+  assert.equal(res.terminal, 'cmd', '回退到 cmd');
+  assert.equal(seen.length, 2);
+  // wsl 首选经 wt.exe 直拉，不隐藏窗口
+  assert.deepEqual(seen[0], {
+    file: 'wt.exe',
+    args: ['-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--', 'kimi', '--session', 's1'],
+    windowsHide: false,
+  });
+  // cmd 回退：bash -lc 的整条命令打包为单个 argv；回退启动目录同样转为 Windows 路径（避免 spawn 目录无效）
+  assert.deepEqual(seen[1], {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--exec', 'bash', '-lc', 'kimi --session s1'],
+    windowsHide: true,
+  });
 });
 
 test('openTui：wt 失败且非 ENOENT（如 EACCES）→ 不回退，返回失败', async () => {

@@ -4,11 +4,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import {
+  isAbsoluteSessionDir,
   MAX_SESSION_CATALOG_ENTRIES,
   mergeSessionSnapshots,
   readSessionCatalog,
   resolveSessionIndexPath,
+  SESSION_STATE_FILE,
   type SessionCatalogEntry,
+  type SessionCatalogReadFile,
 } from '../src/daemon/session-catalog.js';
 
 function writeFixture(records: Array<{ sessionId: string; title: string; cwd: string; updatedAt: number; archived?: boolean }>): string {
@@ -158,4 +161,47 @@ test('mergeSessionSnapshots：活跃会话优先且合并后仍严格限制为 5
     working: true, unread: false, updated_at: 0,
   });
   assert.equal(merged.some((item) => item.session_id === 'history-49'), false, '最旧历史项被淘汰');
+});
+
+test('isAbsoluteSessionDir：识别 POSIX、盘符与 UNC 绝对路径，相对路径不误判', () => {
+  // POSIX 绝对路径（WSL 与 macOS 的会话目录）
+  assert.equal(isAbsoluteSessionDir('/home/user/.kimi-code/sessions/x'), true);
+  assert.equal(isAbsoluteSessionDir('/mnt/c/Users/user/proj'), true);
+  // Windows 盘符路径（正反斜杠均可）与 UNC
+  assert.equal(isAbsoluteSessionDir('D:\\projects\\pet'), true);
+  assert.equal(isAbsoluteSessionDir('D:/projects/pet'), true);
+  assert.equal(isAbsoluteSessionDir('\\\\wsl.localhost\\Ubuntu\\home\\user\\proj'), true);
+  // 相对路径保持相对，交由 indexDir 解析
+  assert.equal(isAbsoluteSessionDir('sessions/x'), false);
+  assert.equal(isAbsoluteSessionDir('.kimi-code/sessions/x'), false);
+});
+
+test('readSessionCatalog：POSIX 绝对路径 sessionDir 按原样拼接 state.json 读取', () => {
+  const indexPath = path.join('catalog-index', 'session_index.jsonl');
+  const records = [
+    { sessionId: 'posix-home', sessionDir: '/home/user/.kimi-code/sessions/posix-home', workDir: '/home/user/proj' },
+    { sessionId: 'posix-mnt', sessionDir: '/mnt/c/Users/user/.kimi-code/sessions/posix-mnt', workDir: '/mnt/c/Users/user/proj' },
+  ];
+  const requestedPaths: string[] = [];
+  const readFile: SessionCatalogReadFile = (filePath) => {
+    requestedPaths.push(filePath);
+    if (filePath === indexPath) return `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+    const record = records.find((candidate) => filePath === path.join(candidate.sessionDir, SESSION_STATE_FILE));
+    if (record) return JSON.stringify({ title: record.sessionId, cwd: record.workDir, updatedAt: 1, archived: false });
+    throw new Error(`读取了预期外的路径: ${filePath}`);
+  };
+  const entries = readSessionCatalog({ indexPath, readFile });
+  // 两条记录 updatedAt 相同，按排序规则（updatedAtMs 倒序、同值按 ordinal 倒序）
+  // 后写入索引的 posix-mnt 应排在 posix-home 之前。
+  assert.deepEqual(entries, records.map((record) => ({
+    sessionId: record.sessionId,
+    title: record.sessionId,
+    cwd: record.workDir,
+    updatedAt: 1,
+  })).reverse());
+  // state.json 应按 POSIX 绝对路径原样请求，而不是被归并到 indexDir 下。
+  assert.deepEqual(
+    requestedPaths.filter((filePath) => filePath.endsWith(SESSION_STATE_FILE)),
+    records.map((record) => path.join(record.sessionDir, SESSION_STATE_FILE)),
+  );
 });

@@ -15,9 +15,11 @@ import {
   acquireDaemonLock,
   acquireOwnedDaemonLock,
   clearDaemonLockIfOwner,
+  getDaemonExeName,
   getDaemonLockPath,
   getDeliveryLeaseDir,
   hasActiveDeliveryLeases,
+  isStandaloneExecutable,
   refreshDaemonLock,
   resolveDaemonPath,
   scheduleDaemonRecovery,
@@ -195,12 +197,40 @@ test('acquireDaemonLock：父目录不存在时自动创建', () => {
   }
 });
 
-test('resolveDaemonPath：优先 KIMI_PLUGIN_ROOT，缺省相对 cwd() 推导（§3.1）', () => {
+test('resolveDaemonPath：优先 KIMI_PLUGIN_ROOT，缺省相对 cwd() 推导（§3.1，win32）', () => {
   const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' } as NodeJS.ProcessEnv;
-  assert.equal(resolveDaemonPath(env), path.join('C:\\plugins\\kimi-pet', 'bin', 'kimi-petd.exe'));
-  assert.equal(resolveDaemonPath({}), path.join(process.cwd(), 'bin', 'kimi-petd.exe'));
+  assert.equal(resolveDaemonPath(env, 'win32'), path.join('C:\\plugins\\kimi-pet', 'bin', 'kimi-petd.exe'));
+  assert.equal(resolveDaemonPath({}, 'win32'), path.join(process.cwd(), 'bin', 'kimi-petd.exe'));
 });
 
-test('getDaemonLockPath：%TEMP%/kimi-pet/daemon.lock（独立于事件暂存目录）', () => {
+test('resolveDaemonPath：非 win32 平台产物名为 kimi-petd', () => {
+  const env = { KIMI_PLUGIN_ROOT: '/opt/kimi-pet' } as NodeJS.ProcessEnv;
+  assert.equal(resolveDaemonPath(env, 'linux'), path.join('/opt/kimi-pet', 'bin', 'kimi-petd'));
+  assert.equal(resolveDaemonPath({}, 'linux'), path.join(process.cwd(), 'bin', 'kimi-petd'));
+  assert.equal(resolveDaemonPath(env, 'darwin'), path.join('/opt/kimi-pet', 'bin', 'kimi-petd'));
+});
+
+test('getDaemonExeName：win32 返回 kimi-petd.exe，其余平台返回 kimi-petd', () => {
+  assert.equal(getDaemonExeName('win32'), 'kimi-petd.exe');
+  assert.equal(getDaemonExeName('linux'), 'kimi-petd');
+  assert.equal(getDaemonExeName('darwin'), 'kimi-petd');
+});
+
+test('isStandaloneExecutable：win32 只认非 bun/node 的 .exe 自身', () => {
+  assert.equal(isStandaloneExecutable('C:\\plugins\\kimi-pet\\bin\\kimi-petd.exe', 'win32'), true);
+  assert.equal(isStandaloneExecutable('C:\\tools\\node.exe', 'win32'), false, 'node 开发宿主不算产物自身');
+  assert.equal(isStandaloneExecutable('C:\\tools\\bun.exe', 'win32'), false, 'bun 开发宿主不算产物自身');
+  assert.equal(isStandaloneExecutable('C:\\plugins\\kimi-pet\\bin\\kimi-petd', 'win32'), false, 'win32 下无 .exe 后缀不算产物自身');
+});
+
+test('isStandaloneExecutable：非 win32 按 basename 排除 bun/node 宿主', () => {
+  assert.equal(isStandaloneExecutable('/opt/kimi-pet/bin/kimi-petd', 'linux'), true);
+  assert.equal(isStandaloneExecutable('kimi-petd', 'linux'), true, '裸文件名（argv[0] 无路径）也按 basename 判定');
+  assert.equal(isStandaloneExecutable('/usr/local/bin/node', 'linux'), false, 'node 开发宿主不算产物自身');
+  assert.equal(isStandaloneExecutable('/usr/local/bin/bun', 'darwin'), false, 'bun 开发宿主不算产物自身');
+  assert.equal(isStandaloneExecutable('/usr/bin/node.exe', 'linux'), false, '带 .exe 后缀的 node 宿主同样排除');
+});
+
+test('getDaemonLockPath 默认路径：系统临时目录（Windows 为 %TEMP%）/kimi-pet/daemon.lock（独立于事件暂存目录）', () => {
   assert.equal(getDaemonLockPath('C:\\Temp'), path.join('C:\\Temp', 'kimi-pet', 'daemon.lock'));
 });

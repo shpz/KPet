@@ -301,7 +301,7 @@ test('会话状态快照与 open_tui：握手补发状态，打开会话清除 u
     assert.equal(readState.session_id, 's1');
     assert.deepEqual(readState.payload, { working: false, unread: false });
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\w', sessionId: 's1' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\w', sessionId: 's1', wslDistro: '' });
     r.close();
   } finally {
     await stopApp(t);
@@ -340,7 +340,7 @@ test('会话目录握手合并与历史 open_tui：目录项下发并使用目�
 
     r.send(createEnvelope('open_tui', { session_id: 'history-1', source: 'bubble' }));
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\history', sessionId: 'history-1' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\history', sessionId: 'history-1', wslDistro: '' });
     r.close();
   } finally {
     await stopApp(t);
@@ -367,7 +367,7 @@ test('刚结束且目录尚未落盘的会话仍使用本轮记录的 cwd 打开
 
     r.send(createEnvelope('open_tui', { session_id: 'just-ended', source: 'pet' }));
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\fresh', sessionId: 'just-ended' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\fresh', sessionId: 'just-ended', wslDistro: '' });
     r.close();
   } finally {
     await stopApp(t);
@@ -391,7 +391,7 @@ test('open_target=web：open_tui 以 web 目标唤起并透传 URL 模板', { sk
     r.send(createEnvelope('open_tui', { session_id: 's1', source: 'pet' }));
     await waitUntil(() => opened.length === 1, 1000);
     assert.deepEqual(opened[0], {
-      target: 'web', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/?s={session_id}', cwd: 'D:\\ws', sessionId: 's1',
+      target: 'web', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/?s={session_id}', cwd: 'D:\\ws', sessionId: 's1', wslDistro: '',
     });
     r.close();
   } finally {

@@ -36,6 +36,7 @@ test('默认配置：§7 全部键与默认值', () => {
   assert.equal(cfg.host_grace_seconds, 120);
   assert.equal(cfg.auto_quit_with_host, true);
   assert.equal(cfg.terminal, 'wt');
+  assert.equal(cfg.wsl_distro, '');
   assert.equal(cfg.open_target, 'cli');
   assert.equal(cfg.open_web_url, 'http://127.0.0.1:58627/');
   assert.equal(cfg.session.staleMinutes, 10);
@@ -175,4 +176,87 @@ test('getKimipetHome / getConfigPath / getLogFilePath：KIMI_CODE_HOME 优先，
   assert.equal(getConfigPath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kimipet', 'config.json'));
   assert.equal(getLogFilePath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kimipet', 'logs', 'kimi-petd.log'));
   assert.equal(getKimipetHome({}), path.join(os.homedir(), '.kimi-code', 'kimipet'));
+});
+
+test('expandEnvVars：同时支持 %VAR%、$VAR 与 ${VAR}，未定义变量替换为空串', () => {
+  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet', HOME: '/home/kimi' };
+  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kimi-pet\\renderer\\Pet.exe');
+  assert.equal(expandEnvVars('$KIMI_PLUGIN_ROOT/renderer/Pet', env), 'C:\\plugins\\kimi-pet/renderer/Pet');
+  assert.equal(expandEnvVars('${KIMI_PLUGIN_ROOT}/renderer/Pet', env), 'C:\\plugins\\kimi-pet/renderer/Pet');
+  assert.equal(expandEnvVars('$HOME/.kimi-code', env), '/home/kimi/.kimi-code');
+  assert.equal(expandEnvVars('${HOME}/.kimi-code', env), '/home/kimi/.kimi-code');
+  assert.equal(expandEnvVars('$HOME_SUFFIX', env), '', '$VAR 按完整变量名匹配，未定义替换为空串');
+  assert.equal(expandEnvVars('$UNDEFINED_VAR/x', env), '/x', '未定义 $VAR 替换为空串');
+  assert.equal(expandEnvVars('${UNDEFINED_VAR}/x', env), '/x', '未定义 ${VAR} 替换为空串');
+  assert.equal(expandEnvVars('%UNDEFINED_VAR%\\x', env), '\\x', '未定义 %VAR% 替换为空串');
+  assert.equal(
+    expandEnvVars('$KIMI_PLUGIN_ROOT/${KIMI_PLUGIN_ROOT}/%KIMI_PLUGIN_ROOT%', env),
+    'C:\\plugins\\kimi-pet/C:\\plugins\\kimi-pet/C:\\plugins\\kimi-pet',
+    '三种语法可混用',
+  );
+});
+
+test('resolveRendererPath：默认路径按平台选择，显式配置不受影响', () => {
+  // 显式配置：任何平台下都原样走环境变量展开，不涉及平台分支
+  assert.equal(
+    resolveRendererPath('$KIMI_PLUGIN_ROOT/renderer/Pet.exe', { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
+    '/plugins/kimi-pet/renderer/Pet.exe',
+  );
+  assert.equal(
+    resolveRendererPath('${KIMI_PLUGIN_ROOT}\\renderer\\Pet', { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
+    '/plugins/kimi-pet\\renderer\\Pet',
+  );
+
+  const original = process.platform;
+  try {
+    // win32：Pet.exe
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    assert.equal(
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' }),
+      path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'),
+    );
+    assert.equal(resolveRendererPath(undefined, {}), path.join(process.cwd(), 'renderer', 'Pet.exe'));
+
+    // darwin：Pet.app/Contents/MacOS/Pet
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    assert.equal(
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
+      path.join('/plugins/kimi-pet', 'renderer', 'Pet.app', 'Contents', 'MacOS', 'Pet'),
+    );
+    assert.equal(
+      resolveRendererPath(undefined, {}),
+      path.join(process.cwd(), 'renderer', 'Pet.app', 'Contents', 'MacOS', 'Pet'),
+    );
+
+    // 其他平台：Pet
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    assert.equal(
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
+      path.join('/plugins/kimi-pet', 'renderer', 'Pet'),
+    );
+    assert.equal(resolveRendererPath(undefined, {}), path.join(process.cwd(), 'renderer', 'Pet'));
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true });
+  }
+});
+
+test('terminal：支持 wt/cmd/wsl，非法值回退默认并告警', () => {
+  const dir = tempDir();
+  assert.equal(loadConfig({}, writeConfig(dir, { terminal: 'wsl' })).config.terminal, 'wsl');
+  const r = loadConfig({}, writeConfig(dir, { terminal: 1 }));
+  assert.equal(r.config.terminal, 'wt');
+  assert.ok(r.warnings.some((w) => w.includes('terminal')));
+});
+
+test('wsl_distro：缺省空串；字符串合法；非法类型回退默认并告警', () => {
+  const dir = tempDir();
+  assert.equal(loadConfig({}, writeConfig(dir, {})).config.wsl_distro, '', '文件未配置时保持默认空串');
+  assert.equal(loadConfig({}, writeConfig(dir, { wsl_distro: '' })).config.wsl_distro, '', '空串为合法值');
+  assert.equal(
+    loadConfig({}, writeConfig(dir, { wsl_distro: 'Ubuntu-22.04' })).config.wsl_distro,
+    'Ubuntu-22.04',
+  );
+  const r = loadConfig({}, writeConfig(dir, { wsl_distro: 123 }));
+  assert.equal(r.config.wsl_distro, '', '非字符串回退默认空串');
+  assert.ok(r.warnings.some((w) => w.includes('wsl_distro')));
 });

@@ -1,12 +1,12 @@
 /**
- * pet_moved 持久化测试（docs/MVP设计.md §6.4：%APPDATA%/KimiPet/pet-state.json，防抖 500ms 写入）。
+ * pet_moved 持久化测试（docs/MVP设计.md §6.4：<基目录>/KimiPet/pet-state.json，基目录按平台解析见 docs/跨平台兼容方案-WSL与Mac.md §2.1.3，防抖 500ms 写入）。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { getPetStatePath, PetStateStore, type PetStateFile } from '../src/daemon/petstate.js';
+import { getPetStatePath, resolvePetStateBaseDir, PetStateStore, type PetStateFile } from '../src/daemon/petstate.js';
 
 function tempFile(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-petstate-test-'));
@@ -87,6 +87,35 @@ test('非法坐标/类型 → 丢弃不写入（§4.3 pet_moved 字段防御）'
   }
 });
 
-test('getPetStatePath：%APPDATA%/KimiPet/pet-state.json（§6.4）', () => {
+test('getPetStatePath：显式基目录拼接 KimiPet/pet-state.json；空基目录返回空串（§6.4）', () => {
   assert.equal(getPetStatePath('C:\\Users\\x\\AppData\\Roaming'), path.join('C:\\Users\\x\\AppData\\Roaming', 'KimiPet', 'pet-state.json'));
+  assert.equal(getPetStatePath(''), '');
+});
+
+test('resolvePetStateBaseDir：win32 用 APPDATA，未设返回空串（保持现状语义，§2.1.3）', () => {
+  assert.equal(resolvePetStateBaseDir({ platform: 'win32', env: { APPDATA: 'C:\\Users\\x\\AppData\\Roaming' } }), 'C:\\Users\\x\\AppData\\Roaming');
+  assert.equal(resolvePetStateBaseDir({ platform: 'win32', env: {} }), '');
+});
+
+test('resolvePetStateBaseDir：darwin 用 ~/Library/Application Support（§4.1 位置缓存）', () => {
+  assert.equal(
+    resolvePetStateBaseDir({ platform: 'darwin', env: {}, home: '/Users/x' }),
+    path.join('/Users/x', 'Library', 'Application Support'),
+  );
+});
+
+test('resolvePetStateBaseDir：其余平台用 XDG_DATA_HOME，未设回退 ~/.local/share（§2.1.3）', () => {
+  assert.equal(resolvePetStateBaseDir({ platform: 'linux', env: { XDG_DATA_HOME: '/data' } }), '/data');
+  assert.equal(resolvePetStateBaseDir({ platform: 'linux', env: {}, home: '/home/x' }), path.join('/home/x', '.local', 'share'));
+});
+
+test('getPetStatePath 按平台基目录组合出最终路径（§2.1.3）', () => {
+  assert.equal(
+    getPetStatePath(resolvePetStateBaseDir({ platform: 'darwin', env: {}, home: '/Users/x' })),
+    path.join('/Users/x', 'Library', 'Application Support', 'KimiPet', 'pet-state.json'),
+  );
+  assert.equal(
+    getPetStatePath(resolvePetStateBaseDir({ platform: 'linux', env: {}, home: '/home/x' })),
+    path.join('/home/x', '.local', 'share', 'KimiPet', 'pet-state.json'),
+  );
 });

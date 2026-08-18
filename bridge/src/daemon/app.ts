@@ -439,6 +439,10 @@ export class DaemonApp {
       webUrl: this.config.open_web_url,
       cwd,
       sessionId,
+      // wsl_distro 配置项（空串 = 未指定 WSL 发行版）；terminal=wsl 时 buildOpenTuiCommand 用它
+      // 把 Linux cwd 转成 \\wsl.localhost\<distro>\... 形态。此处直接透传配置，
+      // cwd 的转换在 terminal.ts 内部完成（跨平台兼容方案 §3.1）。
+      wslDistro: this.config.wsl_distro,
     }).then((res) => {
       if (res.ok) {
         this.logger.info(`open_tui 唤起成功（${res.terminal}）`);

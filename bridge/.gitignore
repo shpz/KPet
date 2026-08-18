@@ -2,3 +2,6 @@
 dist/
 dist-test/
 bin/
+# bin/ 仅忽略构建产物（bin/kimi-petd.exe）；packaging 下的源码脚本需入库（WSL relay 包装，跨平台兼容方案 §5 P1-7）
+!packaging/kimi-pet/bin/
+!packaging/kimi-pet/bin/kimi-pet-relay.sh
