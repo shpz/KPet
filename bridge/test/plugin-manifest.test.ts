@@ -11,6 +11,10 @@ import { fileURLToPath } from 'node:url';
 // 运行期位于 dist-test/test/ 下，向上两级回到 bridge/ 再进 packaging（与源码工程结构一致）
 const PACKAGE_DIR = fileURLToPath(new URL('../../packaging/kimi-pet', import.meta.url));
 const RELAY_PATH = fileURLToPath(new URL('../../packaging/kimi-pet/bin/kimi-pet-relay.sh', import.meta.url));
+const DEPLOY_SH_PATH = fileURLToPath(new URL('../../packaging/kimi-pet/deploy.sh', import.meta.url));
+const DEPLOY_PS1_PATH = fileURLToPath(new URL('../../packaging/kimi-pet/deploy.ps1', import.meta.url));
+// 仓库根 package.json：dist-test/test/ 向上三级，与 PACKAGE_DIR 同源相对定位
+const ROOT_PACKAGE_PATH = fileURLToPath(new URL('../../../package.json', import.meta.url));
 
 interface Hook {
   event: string;
@@ -19,8 +23,15 @@ interface Hook {
   timeout: number;
 }
 
-function loadManifest(name: string): { hooks: Hook[] } {
-  return JSON.parse(fs.readFileSync(`${PACKAGE_DIR}/${name}`, 'utf8')) as { hooks: Hook[] };
+interface Manifest {
+  name: string;
+  version: string;
+  description: string;
+  hooks: Hook[];
+}
+
+function loadManifest(name: string): Manifest {
+  return JSON.parse(fs.readFileSync(`${PACKAGE_DIR}/${name}`, 'utf8')) as Manifest;
 }
 
 test('kimi.plugin.wsl.json：钩子与 Windows 清单一一对应，command 指向 relay 脚本', () => {
@@ -53,11 +64,33 @@ test('kimi-pet-relay.sh：存在且为 LF 行尾，shebang 为 /bin/sh（POSIX s
   assert.equal(content.split('\n')[0], '#!/bin/sh');
 });
 
-test('kimi-pet-relay.sh：优先 KIMI_PLUGIN_ROOT_WIN、wslpath -w 兜底，exec 透传 "$@"', () => {
+test('kimi-pet-relay.sh：优先 KIMI_PLUGIN_ROOT_WIN、wslpath -u 转回 Linux 路径，exec 透传 "$@"', () => {
   const content = fs.readFileSync(RELAY_PATH, 'utf8');
   assert.match(content, /KIMI_PLUGIN_ROOT_WIN/);
-  assert.match(content, /wslpath\s+-w/);
+  assert.match(content, /wslpath\s+-u/);
   assert.match(content, /kimi-petd\.exe/);
   assert.match(content, /exec\s+["']?\$DAEMON_EXE/);
   assert.match(content, /\$@/);
+});
+
+test('kimi.plugin.json：Windows 清单每条 command 均为 .\\bin\\kimi-petd.exe --relay', () => {
+  const win = loadManifest('kimi.plugin.json');
+  for (const hook of win.hooks) {
+    assert.equal(hook.command, '.\\bin\\kimi-petd.exe --relay', `Windows 钩子 command 精确匹配: ${hook.event}`);
+  }
+});
+
+test('部署脚本：deploy.sh 存在且为 LF（#!/bin/sh 开头），deploy.ps1 存在', () => {
+  const deploySh = fs.readFileSync(DEPLOY_SH_PATH, 'utf8');
+  assert.ok(!deploySh.includes('\r'), 'deploy.sh 行尾必须为 LF，不得包含 CR（POSIX sh 会因 CR 报错）');
+  assert.equal(deploySh.split('\n')[0], '#!/bin/sh');
+  assert.equal(fs.existsSync(DEPLOY_PS1_PATH), true, 'deploy.ps1 应存在于打包目录');
+});
+
+test('两份清单 version 与仓库根 package.json 保持一致', () => {
+  const win = loadManifest('kimi.plugin.json');
+  const wsl = loadManifest('kimi.plugin.wsl.json');
+  const rootPkg = JSON.parse(fs.readFileSync(ROOT_PACKAGE_PATH, 'utf8')) as { version: string };
+  assert.equal(win.version, rootPkg.version, 'Windows 清单 version 应等于仓库根 package.json 的 version');
+  assert.equal(wsl.version, rootPkg.version, 'WSL 清单 version 应等于仓库根 package.json 的 version');
 });

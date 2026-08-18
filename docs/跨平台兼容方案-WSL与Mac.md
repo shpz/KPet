@@ -160,7 +160,7 @@ WSL 有两种截然不同的部署形态，改造点完全不同。先明确一�
 
 - hook 命令改为跨发行版的互操作写法（在 WSL 内能定位到 Windows 插件目录）。两种可行做法：
   - （推荐）插件清单增加 WSL 专用清单（或运行时探测），command 用 `/mnt/<drive>/<path>/bin/kimi-petd.exe --relay`（把 `.\bin\...` 换成 interop 绝对路径）。
-  - 或者用 `wslpath` / 环境变量 `KIMI_PLUGIN_ROOT_WIN` 在安装时写入 Windows 路径。
+  - 或者用 `wslpath` 把插件根的 Windows 路径转成 Linux 挂载路径；环境变量 `KIMI_PLUGIN_ROOT_WIN` 是 relay 脚本的可选覆盖扩展点（未设置时按脚本自身位置推导插件根，主链路不依赖它），当前部署脚本不写入该变量。
 - 事件里的 cwd 是 Linux 路径。转换点建议放在**守护进程 `resolveRendererPath`/会话读取之后、真正使用 cwd 之前**（`app.ts:424-434` 的 `open_tui` cwd 与 `state.ts` 的会话 cwd），统一过一层 `wslToWindowsPath()`：
   - `/mnt/c/Users/...` → `C:\Users\...`；
   - `/home/<user>/...`（WSL 原生 ext4）→ `\\wsl.localhost\<发行版>\home\<user>\...`（或 `\\wsl$\<发行版>\...`，取决于 WSL 版本）。
@@ -268,7 +268,7 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 
 ## 5. 分阶段落地建议（按「改动小 / 收益大」优先级）
 
-> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 206/206 通过；但仅在 Windows 宿主编译与单测验证，WSL 真机（插件安装、relay 脚本 interop 拉起、wt/wsl 终端唤起、路径转换端到端）尚未实测。P2 起尚未动工。
+> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 206/206 通过；WSL 真机已实测并修复两处问题：relay 脚本 CRLF 导致 dash 语法错误（已转 LF 并加 `.gitattributes`）、relay 脚本 exec `\\wsl.localhost` UNC 路径 ENOENT（已改为 Linux 路径直接 exec，实测 interop 可从 ext4 挂载点启动 PE）。WSL 端到端（插件安装、relay interop 拉起、守护进程拉起渲染端 Pet.exe）已在 Ubuntu-24.04 实测通过；`terminal: 'wsl'` 的 wt 直拉与 cmd 回退、`wsl-path.ts` 双向转换的真机路径仍待后续覆盖。随包新增跨平台部署脚本 `deploy.sh`/`deploy.ps1`（自动识别平台、就位对应清单，并在打印 `/plugins install` 指引前经 `kimi-petd.exe --stop`（WSL 经 relay 透传）优雅停止运行中的旧版守护进程与渲染进程，支撑「先停后装」的更新流程）。P2 起尚未动工。
 
 **P0 —— 平台无关的清理（立即可做，风险极低，且是后续所有工作的地基）**
 

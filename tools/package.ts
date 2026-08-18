@@ -32,8 +32,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, cpSync, copyFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join, resolve, dirname, basename } from "node:path";
+import { existsSync, mkdirSync, cpSync, copyFileSync, rmSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, dirname, basename, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,9 +42,13 @@ const BRIDGE = join(ROOT, "bridge");
 const UE_PROJECT = join(ROOT, "Pet", "Pet.uproject");
 const UE_ENGINE = "C:\\Program Files\\Epic Games\\UE_5.8";
 const RUN_UAT = join(UE_ENGINE, "Engine", "Build", "BatchFiles", "RunUAT.bat");
+const ROOT_PKG = join(ROOT, "package.json");
 const MANIFEST = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.json");
 /** WSL 宿主清单：command 走 bin/kimi-pet-relay.sh（跨平台兼容方案 §5 P1-7，随包分发供 WSL 宿主改名使用）。 */
 const MANIFEST_WSL = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.wsl.json");
+/** 跨平台部署脚本（随包分发，在目标平台上跑 deploy.sh / deploy.ps1 自动准备对应平台清单与安装指引）。 */
+const DEPLOY_SH = join(BRIDGE, "packaging", "kimi-pet", "deploy.sh");
+const DEPLOY_PS1 = join(BRIDGE, "packaging", "kimi-pet", "deploy.ps1");
 /** WSL relay 脚本：POSIX sh，WSL 内经 interop 直启 Windows 侧 kimi-petd.exe。 */
 const RELAY_SCRIPT = join(BRIDGE, "packaging", "kimi-pet", "bin", "kimi-pet-relay.sh");
 const STAGE_ROOT = join(ROOT, "Pet", "Saved", "StagedBuilds");
@@ -176,6 +181,9 @@ function buildRenderer(opts: Options): string | null {
     return null;
   }
   if (opts.renderer) {
+    if (opts.renderer === resolve(join(opts.out, "kimi-pet"))) {
+      throw new Error("--renderer 不能指向插件根目录本身，请指向其 renderer 子目录或外部 UE 产物目录");
+    }
     if (!existsSync(opts.renderer)) throw new Error(`--renderer 目录不存在: ${opts.renderer}`);
     const exeDir = findGameExeDir(opts.renderer);
     if (exeDir) {
@@ -251,6 +259,15 @@ function pruneRenderer(rendererDir: string): void {
 /** C. 组装 <out>/kimi-pet/。 */
 function assemble(opts: Options, rendererDir: string | null): string {
   const pluginDir = join(opts.out, "kimi-pet");
+  // 若 --renderer 源位于目标插件目录内部（复用 dist-plugin/kimi-pet/renderer 的常见场景），
+  // 先整体复制到系统临时目录暂存，避免下面 rmSync(pluginDir) 把源目录一并删掉。
+  let rendererSource = rendererDir;
+  if (rendererDir && (rendererDir === pluginDir || rendererDir.startsWith(pluginDir + sep))) {
+    const stage = join(tmpdir(), `kimi-pet-renderer-stage-${process.pid}-${Date.now()}`);
+    cpSync(rendererDir, stage, { recursive: true });
+    rendererSource = stage;
+    console.log(`[package] 组装: renderer 源位于目标插件目录内部，暂存到 ${stage}`);
+  }
   rmSync(pluginDir, { recursive: true, force: true });
   mkdirSync(join(pluginDir, "bin"), { recursive: true });
 
@@ -260,17 +277,78 @@ function assemble(opts: Options, rendererDir: string | null): string {
   copyFileSync(MANIFEST_WSL, join(pluginDir, "kimi.plugin.wsl.json"));
   console.log(`[package] 组装: ${MANIFEST_WSL} -> ${join(pluginDir, "kimi.plugin.wsl.json")}`);
 
+  copyFileSync(DEPLOY_SH, join(pluginDir, "deploy.sh"));
+  console.log(`[package] 组装: ${DEPLOY_SH} -> ${join(pluginDir, "deploy.sh")}`);
+
+  copyFileSync(DEPLOY_PS1, join(pluginDir, "deploy.ps1"));
+  console.log(`[package] 组装: ${DEPLOY_PS1} -> ${join(pluginDir, "deploy.ps1")}`);
+
   compileExe(join(BRIDGE, "dist", "launcher", "main.js"), join(pluginDir, "bin", "kimi-petd.exe"));
 
   copyFileSync(RELAY_SCRIPT, join(pluginDir, "bin", "kimi-pet-relay.sh"));
   console.log(`[package] 组装: ${RELAY_SCRIPT} -> ${join(pluginDir, "bin", "kimi-pet-relay.sh")}`);
 
-  if (rendererDir) {
-    cpSync(rendererDir, join(pluginDir, "renderer"), { recursive: true });
-    console.log(`[package] 组装: ${rendererDir} -> ${join(pluginDir, "renderer")}`);
+  if (rendererSource) {
+    cpSync(rendererSource, join(pluginDir, "renderer"), { recursive: true });
+    console.log(`[package] 组装: ${rendererSource} -> ${join(pluginDir, "renderer")}`);
     pruneRenderer(join(pluginDir, "renderer"));
+    if (rendererSource !== rendererDir) rmSync(rendererSource, { recursive: true, force: true });
   }
   return pluginDir;
+}
+
+/** C3. 产物自检：校验插件目录关键文件齐全非空、POSIX 脚本无 CRLF、renderer 含游戏 exe；任一不满足抛错。 */
+function verifyAssembled(pluginDir: string, rendererDir: string | null): void {
+  const required: string[] = [
+    join(pluginDir, "kimi.plugin.json"),
+    join(pluginDir, "kimi.plugin.wsl.json"),
+    join(pluginDir, "deploy.sh"),
+    join(pluginDir, "deploy.ps1"),
+    join(pluginDir, "bin", "kimi-pet-relay.sh"),
+    join(pluginDir, "bin", "kimi-petd.exe"),
+  ];
+  for (const p of required) {
+    const name = p.slice(pluginDir.length + 1).replace(/\\/g, "/");
+    if (!existsSync(p) || statSync(p).size === 0) {
+      throw new Error(`产物自检失败: ${name} 缺失或为空: ${p}`);
+    }
+  }
+  for (const p of [join(pluginDir, "deploy.sh"), join(pluginDir, "bin", "kimi-pet-relay.sh")]) {
+    if (readFileSync(p).includes(0x0d)) {
+      throw new Error(`产物自检失败: ${p} 含 CRLF 换行，部署/relay 脚本需以 LF 保存`);
+    }
+  }
+  if (rendererDir) {
+    const hasExe = readdirSync(join(pluginDir, "renderer")).some((n) =>
+      GAME_EXE_NAMES.has(n.toLowerCase()),
+    );
+    if (!hasExe) {
+      throw new Error(
+        `产物自检失败: renderer/ 中未找到游戏 exe（${[...GAME_EXE_NAMES].join("/")}），` +
+          "请检查 --renderer 目录或 UE 打包产物",
+      );
+    }
+  }
+  console.log(
+    rendererDir
+      ? "[package] 自检: 关键文件齐全、脚本无 CRLF、renderer 合法"
+      : "[package] 自检: 关键文件齐全、脚本无 CRLF（--skip-renderer，renderer 未检查）",
+  );
+}
+
+/** 版本同步检查：仓库根 package.json 与两份插件清单的 version 必须一致，防止打包版本漂移。 */
+function verifyVersions(): void {
+  const root = JSON.parse(readFileSync(ROOT_PKG, "utf8")) as { version?: string };
+  const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { version?: string };
+  const manifestWsl = JSON.parse(readFileSync(MANIFEST_WSL, "utf8")) as { version?: string };
+  const show = (v: string | undefined): string => v ?? "（缺失）";
+  if (!root.version || root.version !== manifest.version || root.version !== manifestWsl.version) {
+    throw new Error(
+      `版本号不同步: 根 package.json version=${show(root.version)}，` +
+        `kimi.plugin.json=${show(manifest.version)}，kimi.plugin.wsl.json=${show(manifestWsl.version)}，` +
+        "请先同步版本号再打包",
+    );
+  }
 }
 
 /** D. 可选 zip（PowerShell Compress-Archive）。 */
@@ -290,6 +368,8 @@ function summarize(pluginDir: string, opts: Options, rendererDir: string | null)
   console.log(`  ${pluginDir}/  （共 ${mb(dirSize(pluginDir))}）`);
   console.log(`    kimi.plugin.json  ${mb(statSync(join(pluginDir, "kimi.plugin.json")).size)}`);
   console.log(`    kimi.plugin.wsl.json  ${mb(statSync(join(pluginDir, "kimi.plugin.wsl.json")).size)}`);
+  console.log(`    deploy.sh  ${mb(statSync(join(pluginDir, "deploy.sh")).size)}`);
+  console.log(`    deploy.ps1  ${mb(statSync(join(pluginDir, "deploy.ps1")).size)}`);
   for (const f of readdirSync(join(pluginDir, "bin"))) {
     const p = join(pluginDir, "bin", f);
     console.log(`    bin/${f}  ${mb(statSync(p).size)}`);
@@ -312,6 +392,9 @@ function main(): void {
   if (!existsSync(MANIFEST)) throw new Error(`插件清单缺失: ${MANIFEST}`);
   if (!existsSync(MANIFEST_WSL)) throw new Error(`WSL 插件清单缺失: ${MANIFEST_WSL}`);
   if (!existsSync(RELAY_SCRIPT)) throw new Error(`WSL relay 脚本缺失: ${RELAY_SCRIPT}`);
+  if (!existsSync(DEPLOY_SH)) throw new Error(`部署脚本缺失: ${DEPLOY_SH}`);
+  if (!existsSync(DEPLOY_PS1)) throw new Error(`部署脚本缺失: ${DEPLOY_PS1}`);
+  verifyVersions();
   const launcherEntry = join(BRIDGE, "dist", "launcher", "main.js");
 
   console.log("[package] ===== A. bridge 单 exe（launcher）=====\n");
@@ -323,6 +406,7 @@ function main(): void {
 
   console.log("\n[package] ===== C. 组装插件目录 =====\n");
   const pluginDir = assemble(opts, rendererDir);
+  verifyAssembled(pluginDir, rendererDir);
 
   if (opts.zip) makeZip(pluginDir, opts.out);
 

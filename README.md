@@ -51,9 +51,33 @@ KimiPet 会读取 Kimi Code CLI 的会话与工具事件，把终端里的工作
 
 项目采用“事件转发器、守护进程、UE5 渲染进程”三进程结构。渲染管线、插件事件、守护进程、通信协议、源码构建与配置方式见 [技术文档](docs/技术文档.md)。
 
-## 平台
+## 平台与部署
 
-KimiPet 面向 Windows 11，并与 Kimi Code CLI 集成。
+KimiPet 面向 Windows 11，并与 Kimi Code CLI 集成，支持 Windows 原生与 WSL 两种部署形态。
+
+### Windows 11
+
+原生支持。解压插件包后，在插件根目录内运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
+```
+
+脚本会自检包完整性，自动停掉运行中的旧版宠物进程后完成更新；随后按提示在 Kimi Code 里执行 `/plugins install <插件目录>`，`/reload` 或开新会话后生效。
+
+### WSL
+
+支持 WSL 形态一：Kimi Code 运行在 WSL 中，守护进程、渲染进程与宠物窗口仍在 Windows。解压插件包后，在插件根目录内运行：
+
+```sh
+sh deploy.sh
+```
+
+脚本会自动切换为 WSL 部署配置，停掉旧版宠物进程后完成更新；随后按提示在 WSL 的 Kimi Code 会话里执行 `/plugins install <插件目录>`，`/reload` 或开新会话后生效。
+
+### macOS
+
+暂不支持：目前只有 Windows 构建产物，部署脚本会在 macOS 上明确拒绝。
 
 ## 许可证
 

@@ -25,12 +25,17 @@ bridge/
       staging.ts         # 本地暂存 %TEMP%/kimi-pet-events/（时间戳+随机文件名，可排序回收）
       user.ts            # 用户名获取与非法字符过滤（管道名段）
     daemon/              # 常驻守护进程、会话状态机、渲染进程与控制管道管理（§3.4 / §4.5）
-    launcher/            # 单 exe 分发入口（阶段五 P1：--relay / --daemon / --kimi-pet-recover 三模式）
+    launcher/            # 单 exe 分发入口（--relay / --daemon / --kimi-pet-recover / --stop 四模式）
       main.ts
   test/                  # node:test 单测 + 命名管道集成测试（Windows）
   packaging/
     kimi-pet/
-      kimi.plugin.json   # 插件清单（§3.2，12 个事件钩子）
+      deploy.sh          # 跨平台部署脚本（POSIX 入口：WSL 清单就位、安装指引前经 --stop 停旧守护进程）
+      deploy.ps1         # 跨平台部署脚本（Windows 原生入口：Windows 清单恢复、安装指引前经 --stop 停旧守护进程）
+      kimi.plugin.json   # 插件清单（§3.2，12 个事件钩子，Windows 版直启 .\bin\kimi-petd.exe --relay）
+      kimi.plugin.wsl.json  # WSL 版清单（command 走 bin/kimi-pet-relay.sh）
+      bin/
+        kimi-pet-relay.sh   # WSL 宿主 relay 启动脚本（interop 直启 Windows 侧 kimi-petd.exe，可选覆盖 KIMI_PLUGIN_ROOT_WIN）
 ```
 
 ## 构建
