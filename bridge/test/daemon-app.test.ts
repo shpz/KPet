@@ -301,7 +301,7 @@ test('会话状态快照与 open_tui：握手补发状态，打开会话清除 u
     assert.equal(readState.session_id, 's1');
     assert.deepEqual(readState.payload, { working: false, unread: false });
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\w', sessionId: 's1' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\w', sessionId: 's1' });
     r.close();
   } finally {
     await stopApp(t);
@@ -340,7 +340,7 @@ test('会话目录握手合并与历史 open_tui：目录项下发并使用目�
 
     r.send(createEnvelope('open_tui', { session_id: 'history-1', source: 'bubble' }));
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\history', sessionId: 'history-1' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\history', sessionId: 'history-1' });
     r.close();
   } finally {
     await stopApp(t);
@@ -367,7 +367,53 @@ test('刚结束且目录尚未落盘的会话仍使用本轮记录的 cwd 打开
 
     r.send(createEnvelope('open_tui', { session_id: 'just-ended', source: 'pet' }));
     await waitUntil(() => opened.length === 1, 1000);
-    assert.deepEqual(opened[0], { terminal: 'wt', cwd: 'D:\\fresh', sessionId: 'just-ended' });
+    assert.deepEqual(opened[0], { target: 'cli', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\fresh', sessionId: 'just-ended' });
+    r.close();
+  } finally {
+    await stopApp(t);
+  }
+});
+
+test('open_target=web：open_tui 以 web 目标唤起并透传 URL 模板', { skip: !isWindows }, async () => {
+  const opened: Array<{ target?: string; terminal: string; webUrl?: string; cwd: string; sessionId: string | null }> = [];
+  const t = await startApp({ open_target: 'web', open_web_url: 'http://127.0.0.1:58627/?s={session_id}' }, {
+    openTuiFn: async (opts) => {
+      opened.push(opts);
+      return { terminal: 'web', ok: true };
+    },
+  });
+  try {
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"D:\\\\ws"}');
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    await r.waitFor('session_start');
+    r.send(createEnvelope('open_tui', { session_id: 's1', source: 'pet' }));
+    await waitUntil(() => opened.length === 1, 1000);
+    assert.deepEqual(opened[0], {
+      target: 'web', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/?s={session_id}', cwd: 'D:\\ws', sessionId: 's1',
+    });
+    r.close();
+  } finally {
+    await stopApp(t);
+  }
+});
+
+test('open_tui 唤起失败：补发 error 气泡，用户可感知（§4.5-3）', { skip: !isWindows }, async () => {
+  const t = await startApp({}, {
+    openTuiFn: async (opts) => ({ terminal: opts.terminal, ok: false, error: 'wt.exe 不存在' }),
+  });
+  try {
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"D:\\\\ws"}');
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    await r.waitFor('hello');
+    await r.waitFor('session_start');
+    r.send(createEnvelope('open_tui', { session_id: 's1', source: 'pet' }));
+    const notify = await r.waitFor('notify');
+    assert.equal(notify.session_id, 's1');
+    assert.equal((notify.payload as { level: string }).level, 'error');
+    assert.match((notify.payload as { text: string }).text, /打开会话失败/);
     r.close();
   } finally {
     await stopApp(t);

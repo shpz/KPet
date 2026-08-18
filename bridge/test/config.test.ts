@@ -36,6 +36,8 @@ test('默认配置：§7 全部键与默认值', () => {
   assert.equal(cfg.host_grace_seconds, 120);
   assert.equal(cfg.auto_quit_with_host, true);
   assert.equal(cfg.terminal, 'wt');
+  assert.equal(cfg.open_target, 'cli');
+  assert.equal(cfg.open_web_url, 'http://127.0.0.1:58627/');
   assert.equal(cfg.session.staleMinutes, 10);
   assert.equal(cfg.session.cleanupMinutes, 60);
   assert.equal(cfg.log_level, 'info');
@@ -87,6 +89,25 @@ test('类型非法逐项回退：字符串数字/负数/非法枚举 → 默认�
   assert.equal(config.auto_quit_with_host, true);
   assert.equal(config.log_level, 'info');
   assert.ok(warnings.length >= 6, `应有逐项告警，实际 ${warnings.length} 条`);
+});
+
+test('open_target / open_web_url：默认值、合法覆盖与非法回退（§7）', () => {
+  const dir = tempDir();
+  const p1 = writeConfig(dir, { open_target: 'web', open_web_url: 'https://example.com/s/{session_id}' });
+  const r1 = loadConfig({}, p1);
+  assert.equal(r1.config.open_target, 'web');
+  assert.equal(r1.config.open_web_url, 'https://example.com/s/{session_id}');
+
+  const p2 = writeConfig(dir, { open_target: 'browser', open_web_url: '' });
+  const r2 = loadConfig({}, p2);
+  assert.equal(r2.config.open_target, 'cli', '非法 open_target 回退默认 cli');
+  assert.equal(r2.config.open_web_url, 'http://127.0.0.1:58627/', '空字符串 open_web_url 回退默认');
+  assert.ok(r2.warnings.some((w) => w.includes('open_target')));
+  assert.ok(r2.warnings.some((w) => w.includes('open_web_url')));
+
+  const p3 = writeConfig(dir, { open_web_url: 123 });
+  const r3 = loadConfig({}, p3);
+  assert.equal(r3.config.open_web_url, 'http://127.0.0.1:58627/', '非字符串 open_web_url 回退默认');
 });
 
 test('session.staleMinutes/session.cleanupMinutes：嵌套对象与扁平带点键两种写法都支持', () => {

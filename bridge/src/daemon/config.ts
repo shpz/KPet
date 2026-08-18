@@ -14,6 +14,15 @@ import type { LogLevel } from './logger.js';
 /** 守护进程自身版本（hello.version / 日志），与 bridge 工程版本保持一致。 */
 export const DAEMON_VERSION = '0.1.0';
 
+/** 点击会话后的打开目标（§7 open_target）：cli=唤起 kimi 终端，web=打开浏览器。 */
+export type OpenTarget = 'cli' | 'web';
+
+/**
+ * web 打开目标的默认 URL 模板（§7 open_web_url）。
+ * 直接按会话恢复的 URL 格式未经官方文档验证，这里默认指向本地 kimi web 首页（`kimi web` 默认端口）。
+ */
+export const DEFAULT_OPEN_WEB_URL = 'http://127.0.0.1:58627/';
+
 export interface DaemonConfig {
   /** 渲染进程路径（§7，缺省 %KIMI_PLUGIN_ROOT%\renderer\Pet.exe）。 */
   renderer_path: string;
@@ -31,6 +40,10 @@ export interface DaemonConfig {
   auto_quit_with_host: boolean;
   /** 终端唤起方式：wt（Windows 终端）或 cmd（传统控制台，§4.5-3）。 */
   terminal: 'wt' | 'cmd';
+  /** 点击会话后的打开目标：cli（唤起 kimi 终端）或 web（打开浏览器，§7）。 */
+  open_target: OpenTarget;
+  /** web 目标下的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；会话 id 为空时替换为空串。 */
+  open_web_url: string;
   session: {
     /** 会话无事件强制转闲的时长（分钟，§3.4 状态卡死兜底）。 */
     staleMinutes: number;
@@ -124,6 +137,23 @@ function readTerminal(obj: Record<string, unknown>, warnings: string[]): 'wt' | 
   return 'wt';
 }
 
+/** 读取打开目标（§7 open_target）。 */
+function readOpenTarget(obj: Record<string, unknown>, warnings: string[]): OpenTarget {
+  const v = obj['open_target'];
+  if (v === 'cli' || v === 'web') return v;
+  if (v !== undefined) warnings.push('配置项 open_target 非法（需要 "cli" 或 "web"），使用默认值 "cli"');
+  return 'cli';
+}
+
+/** 读取 web 目标下的 URL 模板（§7 open_web_url）。 */
+function readOpenWebUrl(obj: Record<string, unknown>, warnings: string[]): string {
+  const v = obj['open_web_url'];
+  if (v === undefined) return DEFAULT_OPEN_WEB_URL;
+  if (typeof v === 'string' && v.length > 0) return v;
+  warnings.push(`配置项 open_web_url 非法（需要非空字符串），使用默认值 ${DEFAULT_OPEN_WEB_URL}`);
+  return DEFAULT_OPEN_WEB_URL;
+}
+
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 /** 读取日志级别（§7 log_level）。 */
@@ -145,6 +175,8 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
     host_grace_seconds: 120,
     auto_quit_with_host: true,
     terminal: 'wt',
+    open_target: 'cli',
+    open_web_url: DEFAULT_OPEN_WEB_URL,
     session: { staleMinutes: 10, cleanupMinutes: 60 },
     log_level: 'info',
   };
@@ -220,6 +252,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
     host_grace_seconds: readPositiveNumber(obj, 'host_grace_seconds', defaults.host_grace_seconds, warnings),
     auto_quit_with_host: readBoolean(obj, 'auto_quit_with_host', defaults.auto_quit_with_host, warnings),
     terminal: readTerminal(obj, warnings),
+    open_target: readOpenTarget(obj, warnings),
+    open_web_url: readOpenWebUrl(obj, warnings),
     session: { staleMinutes, cleanupMinutes },
     log_level: readLogLevel(obj, warnings),
   };

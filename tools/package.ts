@@ -3,7 +3,10 @@
  * 本脚本是唯一打包入口：仓库根 package.json 的 package 脚本指向这里。
  *
  * 打包配置要点：
- *   - UE 固定 Shipping（与 docs 文档统一命令一致，-iostore -compressed -nodebuginfo -clean）；
+ *   - UE 固定 Shipping（与 docs 文档统一命令一致，-iostore -compressed -nodebuginfo -clean -prereqs）；
+ *     -prereqs 随包暂存 vc_redist.x64.exe：bootstrap（根目录 Pet.exe）前置检查要求目标机器
+ *     VC++ 运行库版本 ≥ 引擎构建工具集版本（5.8 为 14.50，高于公开下载渠道最新版），
+ *     不满足时运行包内安装器自愈，缺失安装器则直接弹错退出；
  *   - bridge 为单 exe 双模式（launcher），不再产出 kimi-pet-bridge.exe；
  *   - 符号（*.pdb）不随包分发，renderer 组装后兜底删除；如需保留符号，可本地归档
  *     或后续接入 SymStore（本脚本不实现归档）。
@@ -190,7 +193,7 @@ function buildRenderer(opts: Options): string | null {
       "/c", RUN_UAT, "BuildCookRun",
       `-project=${UE_PROJECT}`, "-noP4", "-platform=Win64",
       "-clientconfig=Shipping", "-cook", "-build", "-stage", "-pak",
-      "-iostore", "-compressed", "-nodebuginfo", "-clean",
+      "-iostore", "-compressed", "-nodebuginfo", "-clean", "-prereqs",
     ],
     "UE: BuildCookRun（Shipping，首次约 10-20 分钟）",
   );

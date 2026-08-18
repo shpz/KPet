@@ -430,10 +430,35 @@ export class DaemonApp {
       const readUpdate = this.state.markSessionRead(sessionId);
       if (readUpdate) this.sendToRenderer(readUpdate);
     }
-    this.logger.info(`open_tui source=${payload.source} session=${sessionId ?? '(最近会话)'} cwd=${cwd}`);
-    void this.openTuiFn({ terminal: this.config.terminal, cwd, sessionId }).then((res) => {
-      if (res.ok) this.logger.info(`open_tui 唤起成功（${res.terminal}）`);
-      else this.logger.warn(`open_tui 唤起失败（${res.terminal}）: ${res.error ?? ''}`);
+    this.logger.info(
+      `open_tui source=${payload.source} target=${this.config.open_target} session=${sessionId ?? '(最近会话)'} cwd=${cwd}`,
+    );
+    void this.openTuiFn({
+      target: this.config.open_target,
+      terminal: this.config.terminal,
+      webUrl: this.config.open_web_url,
+      cwd,
+      sessionId,
+    }).then((res) => {
+      if (res.ok) {
+        this.logger.info(`open_tui 唤起成功（${res.terminal}）`);
+      } else {
+        // 失败不能只写日志让用户无感知：补发一条 error 气泡（§4.5-3 / §6.5 语义同源）。
+        this.logger.warn(`open_tui 唤起失败（${res.terminal}）: ${res.error ?? ''}`);
+        this.sendToRenderer({
+          type: 'notify',
+          session_id: sessionId,
+          payload: { text: `打开会话失败：${res.error ?? '未知原因'}`, level: 'error' },
+        });
+      }
+    }).catch((err) => {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`open_tui 异常: ${detail}`);
+      this.sendToRenderer({
+        type: 'notify',
+        session_id: sessionId,
+        payload: { text: '打开会话失败：内部错误', level: 'error' },
+      });
     });
   }
 

@@ -230,7 +230,7 @@ main():
 
 1. **冷启动**：`kimi` 启动 → SessionStart 钩子 → 转发器拉起守护进程 → 守护进程建管道、拉起渲染进程、缓存事件 → 渲染进程连控制管道发 `hello` → 守护进程回 `hello` 并补发 `sessions_snapshot` + `session_start` + `session_state` + `pet_state:Idle` → 宠物出现。
 2. **一轮工作**：用户提交 → `pet_state:Working`（宠物敲电脑）→ 每个工具调用产生 `task_start`/`task_end`（悬停可见任务列表）→ `Stop` → `pet_state:Idle`；期间完成事件触发 `notify` 气泡。
-3. **点击回传**：点击宠物 → 弹出会话面板 → 点击会话行 → `open_tui` → 守护进程用 `wt.exe -d <cwd> cmd /k kimi --session <会话id>` 拉起终端（`wt.exe` 是 Windows 终端，Win11 预装，可用性待验证；备选 `cmd /c start`；会话 id 为空时用 `kimi --continue` 恢复最近会话）。
+3. **点击回传**：点击宠物 → 弹出会话面板 → 点击会话行 → `open_tui` → 守护进程按 `open_target` 打开目标：默认 `cli` 用 `wt.exe -d <cwd> cmd /k kimi --session <会话id>` 拉起终端（`wt.exe` 是 Windows 终端，Win11 预装，可用性待验证；备选 `cmd /c start`；会话 id 为空时用 `kimi --continue` 恢复最近会话）；`web` 时用系统默认浏览器打开 `open_web_url` 模板 URL（能否在 web 侧直接恢复指定 CLI 会话属未验证假设，见 §7）。当 `open_target=web` 且 URL 为回环地址（`127.0.0.1`/`localhost`/`::1`）时，守护进程会先确保 kimi web 服务可用：TCP 探测 `host:port` 已在监听则直接开浏览器，未监听则以可见终端窗口拉起 `kimi web --no-open --port <端口>`（按 `terminal` 配置优先 Windows Terminal（`wt`），`wt` 不可用时回退传统 cmd 窗口）并轮询等待端口就绪（最多约 10 秒）后再开浏览器，拉起失败或超时则记错误日志并按既有逻辑补发失败气泡；该终端窗口即服务生命周期，用户关闭窗口即停止 kimi web 服务，下次点击会话时探测不到端口会自动重新拉起。kimi web 的 web UI 默认要求 bearer token，官方机制是 URL 的 `#token=` 片段自动认证：守护进程打开浏览器前仅对回环地址 URL 读取 token 文件 `%KIMI_CODE_HOME%\server.token`（未设 `KIMI_CODE_HOME` 时回退 `~/.kimi-code/server.token`），读到非空 token 即给 URL 拼上 `#token=<token>` 免密进入，文件缺失或不可读则静默回退裸 URL（用户可从拉起服务的终端窗口横幅复制 token 手动填入）；非回环 URL 一律不拼 token，防止泄漏到远端。非回环 URL 不做自动拉起，直接开浏览器（无法代管远端服务）。
 4. **渲染进程崩溃**：控制管道断开 → 守护进程按 1s/2s/4s/8s 指数退避重启（60 秒内最多 5 次，超限则停止重启并记日志，等下一个宿主事件再试一轮）→ 重连后回放状态快照（CLI 历史与活跃会话目录 + 当前 `pet_state` + 未完成任务列表）。
 5. **守护进程崩溃**：渲染进程写管道失败 → 每 5 秒重连，期间宠物保持离线渲染；下一个宿主事件到达时转发器会重新拉起守护进程。
 6. **宿主退出**：最后一个 `SessionEnd` → 倒计时 120 秒（`host_grace_seconds`）→ `shutdown` → 渲染进程退出 → 守护进程退出；倒计时内新开 `kimi` 则取消退出。
@@ -477,6 +477,8 @@ Working 内子状态:
 | `host_grace_seconds` | 120 | 宿主全部退出后的退出倒计时 |
 | `auto_quit_with_host` | true | 倒计时结束是否自动退出 |
 | `terminal` | `"wt"` | 终端唤起方式：Windows 终端（`wt`）或传统控制台（`cmd`） |
+| `open_target` | `"cli"` | 点击会话后的打开目标：`cli`（唤起 kimi 终端）或 `web`（打开浏览器；为回环地址时先确保 kimi web 服务可用） |
+| `open_web_url` | `"http://127.0.0.1:58627/"` | `open_target=web` 时的 URL 模板，支持 `{session_id}` 占位符（会话 id 为空时替换为空串）；直接按会话恢复的 URL 格式未经官方文档验证。为回环地址（`127.0.0.1`/`localhost`/`::1`）时，未监听会以可见终端窗口拉起 `kimi web --no-open --port <端口>`（按 `terminal` 配置优先 Windows Terminal（`wt`），`wt` 不可用时回退传统 cmd 窗口）并轮询等待端口就绪（最多约 10 秒）后打开，该终端窗口关闭即停止 kimi web 服务、下次探测不到端口会自动重新拉起；kimi web 的 web UI 默认要求 bearer token，官方机制是 URL 的 `#token=` 片段自动认证：守护进程打开浏览器前仅对回环地址 URL 读取 token 文件 `%KIMI_CODE_HOME%\server.token`（未设 `KIMI_CODE_HOME` 时回退 `~/.kimi-code/server.token`），读到非空 token 即给 URL 拼上 `#token=<token>` 免密进入，文件缺失或不可读则静默回退裸 URL（用户可从拉起服务的终端窗口横幅复制 token 手动填入）；非回环 URL 一律不拼 token，防止泄漏到远端；非回环地址直接打开 |
 | `session.staleMinutes` | 10 | 忙会话无事件强制转闲但保留活跃会话的时长 |
 | `session.cleanupMinutes` | 60 | 异常会话长期无事件才清理的时长，必须大于 `session.staleMinutes` |
 | `log_level` | `"info"` | 日志级别 |

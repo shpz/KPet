@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$EditorPath = "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe",
     [string]$ProjectPath = "D:\Workspace\UnrealProject\KimiPet\Pet\Pet.uproject",
     [int]$StartupTimeoutSeconds = 45,

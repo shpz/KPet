@@ -208,8 +208,16 @@ function handleMessage(socket: net.Socket, line: string): void {
       if (verificationMode && !verificationStateTimer) {
         verificationStateTimer = setTimeout(() => {
           if (!client) return;
-          send(client, "session_state", { working: false, unread: false }, "demo-working-session");
-          send(client, "session_state", { working: false, unread: false }, "demo-unread-session");
+          // 状态清除改走全量快照而不是两条增量 session_state：增量消息会触发面板
+          // 「活跃会话置顶」（MoveSessionToFront），把 demo-unread-session 移到首行，
+          // 导致后续「定向跳转 demo-working-session」点击命中的是 unread 会话。
+          // 全量快照同时清除 working/unread 呈现并恢复初始会话顺序。
+          const cleared: SessionInfo[] = sessions.map((session) => ({
+            ...session,
+            working: false,
+            unread: false,
+          }));
+          send(client, "sessions_snapshot", { sessions: cleared });
           console.log(`[${ts()}] VERIFY_STATE_CLEARED`);
         }, 5000);
       }
