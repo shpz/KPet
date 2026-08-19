@@ -11,6 +11,7 @@
 #include "Serialization/JsonWriter.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
+#include "WebBrowserModule.h"
 #include "Widgets/SNullWidget.h"
 #include "SWebBrowser.h"
 #include "Widgets/SWidget.h"
@@ -84,7 +85,11 @@ namespace
 		return WriteJsonAsJsSource(MakeShared<FJsonValueObject>(SessionToJson(Session)));
 	}
 
-	/** 任意字符串 -> 带双引号的 JS 字符串字面量。 */
+	/**
+	 * 任意字符串 -> 带双引号的 JS 字符串字面量。
+	 * U+2028/U+2029 会截断 JS 字符串字面量造成 SyntaxError，与 EscapeJsSource 口径一致，
+	 * 统一替换为 \uXXXX 等价转义，保证任意文本都能安全注入。
+	 */
 	FString QuoteJsString(const FString& Raw)
 	{
 		FString Escaped;
@@ -107,6 +112,12 @@ namespace
 				break;
 			case TEXT('\t'):
 				Escaped += TEXT("\\t");
+				break;
+			case TEXT('\u2028'):
+				Escaped += TEXT("\\u2028");
+				break;
+			case TEXT('\u2029'):
+				Escaped += TEXT("\\u2029");
 				break;
 			default:
 				Escaped += Ch;
@@ -140,6 +151,15 @@ bool FPetSessionWebPanel::Create()
 		return true;
 	}
 
+	// SWebBrowserView::Construct 只在 WebBrowser 模块已加载时才会创建 CEF 浏览器窗口，
+	// 否则 BrowserWindow 为空、控件永远黑屏且无任何回调。Build.cs 的模块依赖不会触发
+	// 运行时 StartupModule，必须在这里显式 Get()（即 LoadModuleChecked）完成加载与 CEF 初始化。
+	if (!IWebBrowserModule::Get().IsWebModuleAvailable())
+	{
+		UE_LOG(LogPet, Error, TEXT("WebBrowser 模块不可用（CEF 加载失败），回退 UMG 路径"));
+		return false;
+	}
+
 	FString Html;
 	const FString HtmlPath = FPaths::ProjectContentDir() / TEXT("UI/Web/session-panel.html");
 	if (!FFileHelper::LoadFileToString(Html, *HtmlPath) || Html.IsEmpty())
@@ -159,9 +179,13 @@ bool FPetSessionWebPanel::Create()
 		.BrowserFrameRate(30)
 		// SLATE_EVENT 的 (this,&Method) 绑定要求目标继承 TSharedFromThis，本面板由
 		// TUniquePtr 独占持有，因此用 CreateRaw 直接绑定裸指针。
-		.OnLoadCompleted(FSimpleDelegate::CreateRaw(this, &FPetSessionWebPanel::HandleLoadCompleted));
+		.OnLoadCompleted(FSimpleDelegate::CreateRaw(this, &FPetSessionWebPanel::HandleLoadCompleted))
+		.OnLoadError(FSimpleDelegate::CreateRaw(this, &FPetSessionWebPanel::HandleLoadError))
+		.OnConsoleMessage(FOnConsoleMessageDelegate::CreateRaw(this, &FPetSessionWebPanel::HandleConsoleMessage));
 
-	Browser->LoadString(Html, TEXT("http://kimipet.local/panel"));
+	// LoadString 通过请求拦截把 HTML 注入 DummyURL 的响应。DummyURL 不能真实可达，
+	// 也不用 .local（mDNS 保留后缀，拦截失效时 Chromium 解析会长时间挂起）。
+	Browser->LoadString(Html, TEXT("http://kimipet/panel"));
 	return true;
 }
 
@@ -176,6 +200,23 @@ void FPetSessionWebPanel::HandleLoadCompleted()
 	BindBridge();
 	ReplaySnapshot();
 	UE_LOG(LogPet, Log, TEXT("WebUI 会话面板页面加载完成，JS 桥与缓存快照已就绪"));
+}
+
+void FPetSessionWebPanel::HandleLoadError()
+{
+	// 说明加载失败的实际后果，便于现场排查：面板将保持空白、后续会话数据只入缓存
+	// 不会上屏、不会自动回退 UMG 面板（本类不实现回退逻辑）。
+	UE_LOG(LogPet, Error, TEXT("WebUI 会话面板页面加载失败（OnLoadError）：面板将保持空白，"
+		"后续会话数据仅入缓存不会上屏，且不会自动回退 UMG 面板"));
+}
+
+void FPetSessionWebPanel::HandleConsoleMessage(
+	const FString& Message,
+	const FString& Source,
+	int32 Line,
+	EWebBrowserConsoleLogSeverity Severity)
+{
+	UE_LOG(LogPet, Log, TEXT("WebUI 控制台 [%s:%d] %s"), *Source, Line, *Message);
 }
 
 void FPetSessionWebPanel::BindBridge()

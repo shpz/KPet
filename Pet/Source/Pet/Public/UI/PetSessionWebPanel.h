@@ -8,6 +8,7 @@ class SWebBrowser;
 class SWidget;
 class UPetSessionWebBridge;
 struct FPetSessionInfo;
+enum class EWebBrowserConsoleLogSeverity;
 
 /**
  * WebUI 会话面板（PoC）。
@@ -26,8 +27,9 @@ public:
 	~FPetSessionWebPanel();
 
 	/**
-	 * 创建 SWebBrowser 并加载页面。失败时（HTML 读取失败）改用内嵌中文兜底页，
-	 * 因此本函数不返回失败；真正的加载结果由 OnLoadCompleted 回调体现。
+	 * 创建 SWebBrowser 并加载页面。HTML 读取失败时改用内嵌中文兜底页，不返回失败；
+	 * 但 WebBrowser 模块不可用（CEF 加载失败）时返回 false，调用方需据此回退到 UMG 路径。
+	 * 页面本身的加载结果由 OnLoadCompleted / OnLoadError 回调体现。
 	 */
 	bool Create();
 
@@ -56,6 +58,12 @@ public:
 
 private:
 	void HandleLoadCompleted();
+	void HandleLoadError();
+	void HandleConsoleMessage(
+		const FString& Message,
+		const FString& Source,
+		int32 Line,
+		EWebBrowserConsoleLogSeverity Severity);
 	void BindBridge();
 	void ReplaySnapshot();
 	void ExecutePanelScript(const FString& Script) const;

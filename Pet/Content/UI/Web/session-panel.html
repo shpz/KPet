@@ -332,7 +332,9 @@ function normalize(item) {
     title: title,
     cwd: cwd,
     active: !!item.active,
-    working: !!item.working,
+    // working 是 active 会话的子状态：快照异常或消息乱序也不能让历史会话呈现为
+    // 「灰色但仍在工作」的矛盾状态。
+    working: !!(item.active && item.working),
     unread: !!item.unread
   };
 }
@@ -516,6 +518,11 @@ window.KimiPetPanel = {
     if (!target) return;
     sessions.forEach((s) => { s.active = false; });
     target.active = !!active;
+    // working 是 active 的子状态：非激活会话一律结束工作中的跳动；仅目标保留激活状态，
+    // 其 working 是否保留由后续钳制决定（激活时保留、取消激活时清除）。
+    sessions.forEach((s) => {
+      if (!s.active) s.working = false;
+    });
     renderList();
     showPanel();
   },
@@ -525,7 +532,7 @@ window.KimiPetPanel = {
     if (sessionId == null) return;
     const target = sessions.get(String(sessionId));
     if (!target || !state || typeof state !== 'object') return;
-    if (typeof state.working === 'boolean') target.working = state.working;
+    if (typeof state.working === 'boolean') target.working = target.active && state.working;
     if (typeof state.unread === 'boolean') target.unread = state.unread;
     renderList();
     showPanel();

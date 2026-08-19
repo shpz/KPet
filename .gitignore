@@ -12,6 +12,8 @@ dist/
 .pet/
 .codex/
 
+# 日志
+*.log
 
 # DCC
 *.blend1

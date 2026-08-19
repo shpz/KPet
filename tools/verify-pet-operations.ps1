@@ -195,6 +195,21 @@ function Wait-FilePattern([string]$Path, [string]$Pattern, [int]$TimeoutSeconds)
     throw "等待文件内容超时: $Pattern"
 }
 
+# 判定会话面板 WebUI（CEF）主路径是否真正上屏：轮询编辑器绝对日志直到出现加载结果文案。
+# 成功文案「WebUI 会话面板页面加载完成」= 主路径就绪；失败/降级文案
+# 「WebUI 会话面板页面加载失败（OnLoadError）」或「WebBrowser 模块不可用，回退 UMG 路径」
+# = UMG 降级；超时仍未出现任何标记返回 'UNKNOWN'，由调用方放行或报错。
+function Get-WebUiLoadMode([string]$LogPath, [int]$TimeoutSeconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $text = Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue
+        if ($text -match 'WebUI 会话面板页面加载完成') { return 'WebUI' }
+        if ($text -match 'WebUI 会话面板页面加载失败（OnLoadError）|WebBrowser 模块不可用.*回退 UMG 路径') { return 'UMG' }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return 'UNKNOWN'
+}
+
 function Get-ProcessResourceSnapshot([System.Diagnostics.Process]$Process) {
     $Process.Refresh()
     return [PSCustomObject]@{
@@ -634,6 +649,25 @@ try {
         throw "没有观察到会话面板打开时的滑动动画"
     }
 
+    # ---- WebUI（CEF）主路径判定 ----
+    # Editor/Development 模式必生成 -abslog 绝对日志，据此正向确证 WebUI 是否真正上屏；
+    # Shipping 默认不生成运行日志（与下文摄像机校验的既有容错一致），无法确证时按 WebUI
+    # 默认配置放行并跳过 UMG 像素断言，避免 Shipping 误报。
+    if (Test-Path -LiteralPath $editorLog -PathType Leaf) {
+        $webUiLoadMode = Get-WebUiLoadMode $editorLog 8
+        if ($webUiLoadMode -eq 'UNKNOWN') {
+            throw "无法从运行日志确证会话面板 WebUI（CEF）主路径已加载，也未检测到 UMG 降级标记"
+        }
+    } else {
+        $webUiLoadMode = 'WebUI'
+        Write-Output "未生成绝对日志（Shipping 默认），按 WebUI（CEF）默认路径处理并跳过 UMG 像素断言"
+    }
+    $webUiLoaded = ($webUiLoadMode -eq 'WebUI')
+    Write-Output "会话面板渲染路径判定=$webUiLoadMode"
+
+    # ---- 以下为 UMG 降级路径专用断言（滚动条滑块、激活配色、working/unread 像素坐标）----
+    # WebUI（CEF）主路径不适用这些 UMG 像素坐标，仅 UMG 面板走此段。
+    if (-not $webUiLoaded) {
     # 面板内容与列表行各自还有一次性入场动画；先等它们完全结束，避免把整行淡入
     # 误判为 working 三点或 unread 气泡的循环状态动画。
     Start-Sleep -Milliseconds 750
@@ -765,6 +799,25 @@ try {
     Write-Output (
         "50 条会话滚动差异=$scrollDifference 滑块位置=$topThumb->$bottomThumb->$returnThumb " +
         "回顶内容差异=$returnContentDifference 状态差异=$returnWorkingDifference/$returnUnreadDifference")
+    } else {
+        # WebUI（CEF）主路径已确证加载（见上方日志判定）。CEF 渲染不适用 UMG 的像素坐标与
+        # 滚动条滑块断言，这里跳过并初始化摘要占位，避免 WebUI 主路径误报；UMG 降级时
+        # 上面的像素/滚动条断言仍照常执行。
+        Write-Output "检测到 WebUI（CEF）会话面板已加载，跳过 UMG 专用像素与滚动条断言"
+        $workingDifference = "跳过(WebUI)"
+        $unreadDifference = "跳过(WebUI)"
+        $workingStoppedMotion = "跳过(WebUI)"
+        $unreadStoppedMotion = "跳过(WebUI)"
+        $workingStateChange = "跳过(WebUI)"
+        $unreadStateChange = "跳过(WebUI)"
+        $scrollDifference = "跳过(WebUI)"
+        $topThumb = "跳过(WebUI)"
+        $bottomThumb = "跳过(WebUI)"
+        $returnThumb = "跳过(WebUI)"
+        $returnContentDifference = "跳过(WebUI)"
+        $returnWorkingDifference = "跳过(WebUI)"
+        $returnUnreadDifference = "跳过(WebUI)"
+    }
 
     Test-RapidPanelReversal `
         $petWindow $panelWindow $hitPoint $directWindowInput ([uint32]$editorProcess.Id)
