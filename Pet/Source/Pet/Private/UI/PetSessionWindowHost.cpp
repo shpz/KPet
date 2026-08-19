@@ -120,7 +120,17 @@ bool FPetSessionWindowHost::IsGameThreadCall() const
 
 bool FPetSessionWindowHost::Create(UPetSessionPanelWidget* PanelWidget)
 {
-	if (!IsGameThreadCall() || !PanelWidget)
+	if (!PanelWidget)
+	{
+		return false;
+	}
+
+	return Create(PanelWidget->TakeWidget());
+}
+
+bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
+{
+	if (!IsGameThreadCall())
 	{
 		return false;
 	}
@@ -162,7 +172,7 @@ bool FPetSessionWindowHost::Create(UPetSessionPanelWidget* PanelWidget)
 		.ClientSize(FVector2f(PanelDesignWidth, PanelDesignHeight));
 
 	// TakeWidget 只在创建时接入 Slate。Host 不保存会话数据，也不包装 Widget 的选择委托。
-	SessionContent = PanelWidget->TakeWidget();
+	SessionContent = Content;
 	SessionWindow->SetContent(SessionContent.ToSharedRef());
 	FSlateApplication::Get().AddWindow(SessionWindow.ToSharedRef(), false);
 	SessionWindow->SetOpacity(0.0f);

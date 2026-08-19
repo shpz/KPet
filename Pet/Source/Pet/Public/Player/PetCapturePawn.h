@@ -3,7 +3,9 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Player/PetWorkState.h"
+#include "Templates/UniquePtr.h"
 #include "UObject/SoftObjectPtr.h"
+#include "UI/PetSessionWebPanel.h"
 #include "PetCapturePawn.generated.h"
 
 class FRHIGPUTextureReadback;
@@ -78,6 +80,24 @@ private:
 	void HandleShutdown(const FString& Reason);
 	void HandleCloseRequested();
 
+	/**
+	 * 数据路由：优先推给 WebUI 面板，否则推给 UMG 面板（与 GConfig 的
+	 * [Pet.SessionPanel] bUseWebUI 开关保持一致）。两个回调都只收现有资源，
+	 * 面板不存在时静默跳过，保证新旧路径互斥且都无需判空样板。
+	 */
+	template <typename TWebCall, typename TUmgCall>
+	void RouteSessionData(TWebCall&& WebCall, TUmgCall&& UmgCall)
+	{
+		if (SessionWebPanel)
+		{
+			WebCall(*SessionWebPanel);
+		}
+		else if (SessionPanelWidget)
+		{
+			UmgCall(*SessionPanelWidget);
+		}
+	}
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> RootComp = nullptr;
 
@@ -142,6 +162,13 @@ private:
 
 	PetLayeredWindow* PetWindow = nullptr;
 	FPetSessionWindowHost* SessionWindowHost = nullptr;
+
+	/** WebUI 会话面板（PoC）。非空时数据走 Web 路径，UMG 面板保持为空。 */
+	TUniquePtr<FPetSessionWebPanel> SessionWebPanel;
+
+	/** 桥 OnCloseRequested 绑定 Host::Close 的句柄，用于 Shutdown 时精确解绑。 */
+	FDelegateHandle SessionWebCloseHandle;
+
 	int32 PresentedFrames = 0;
 	bool bPresentedValidFrame = false;
 	bool bSessionPanelTogglePending = false;

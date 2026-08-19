@@ -9,6 +9,8 @@
 #include "Player/PetCharacterMotionComponent.h"
 #include "Player/PetSceneSlotComponent.h"
 #include "UI/PetSessionPanelWidget.h"
+#include "UI/PetSessionWebBridge.h"
+#include "UI/PetSessionWebPanel.h"
 #include "UI/PetSessionWindowHost.h"
 
 #include "Blueprint/UserWidget.h"
@@ -19,6 +21,7 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformTime.h"
 #include "Layout/SlateRect.h"
+#include "Misc/ConfigCacheIni.h"
 
 #include "RHIGPUReadback.h"
 #include "RenderingThread.h"
@@ -286,6 +289,46 @@ bool APetCapturePawn::ResolveRuntimeComponents()
 
 void APetCapturePawn::InitializeSessionPanel()
 {
+	// WebUI 开关来自 GGameIni 的 [Pet.SessionPanel] bUseWebUI；为 true 优先走 Web 路径，
+	// 创建失败回退 UMG 路径；为 false 直接走原有 UMG 路径，原逻辑不动。
+	bool bUseWebUI = false;
+	if (GConfig)
+	{
+		GConfig->GetBool(TEXT("Pet.SessionPanel"), TEXT("bUseWebUI"), bUseWebUI, GGameIni);
+	}
+
+	if (bUseWebUI)
+	{
+		SessionWebPanel = MakeUnique<FPetSessionWebPanel>();
+		if (!SessionWebPanel->Create())
+		{
+			UE_LOG(LogPet, Error, TEXT("创建 WebUI 会话面板失败；回退 UMG 路径"));
+			SessionWebPanel.Reset();
+		}
+		else
+		{
+			SessionWindowHost = new FPetSessionWindowHost();
+			if (!SessionWindowHost->Create(SessionWebPanel->GetContentWidget()))
+			{
+				UE_LOG(LogPet, Error, TEXT("创建 Slate 会话窗口失败；宠物本体将继续运行"));
+				delete SessionWindowHost;
+				SessionWindowHost = nullptr;
+				SessionWebPanel.Reset();
+				return;
+			}
+
+			if (UPetSessionWebBridge* Bridge = SessionWebPanel->GetBridge())
+			{
+				Bridge->OnSelectSession.AddUObject(this, &APetCapturePawn::HandleSessionSelected);
+				SessionWebCloseHandle = Bridge->OnCloseRequested.AddRaw(SessionWindowHost, &FPetSessionWindowHost::Close);
+			}
+
+			UpdateSessionPanelAnchor();
+			UE_LOG(LogPet, Log, TEXT("WebUI 会话面板已初始化"));
+			return;
+		}
+	}
+
 	if (SessionPanelWidgetClass.IsNull())
 	{
 		UE_LOG(LogPet, Error, TEXT("未配置会话面板 Widget 类；请在 BP_PetCapturePawn 中设置软类引用"));
@@ -331,6 +374,19 @@ void APetCapturePawn::ShutdownSessionPanel()
 	{
 		SessionPanelWidget->OnSessionSelected.RemoveAll(this);
 	}
+
+	// 先解绑 Web 桥委托并释放面板，再销毁 Host：句柄解绑在前，避免 Host 销毁后
+	// 桥仍持有失效的裸指针委托。
+	if (SessionWebPanel)
+	{
+		if (UPetSessionWebBridge* Bridge = SessionWebPanel->GetBridge())
+		{
+			Bridge->OnSelectSession.RemoveAll(this);
+			Bridge->OnCloseRequested.Remove(SessionWebCloseHandle);
+		}
+		SessionWebPanel.Reset();
+	}
+	SessionWebCloseHandle.Reset();
 
 	if (SessionWindowHost)
 	{
@@ -421,34 +477,30 @@ void APetCapturePawn::HandlePetState(const FString& State, const FString& Reason
 
 void APetCapturePawn::HandleSessionsSnapshot(const TArray<FPetSessionInfo>& Sessions)
 {
-	if (SessionPanelWidget)
-	{
-		SessionPanelWidget->ApplySnapshot(Sessions);
-	}
+	RouteSessionData(
+		[&Sessions](FPetSessionWebPanel& Panel) { Panel.ApplySnapshot(Sessions); },
+		[&Sessions](UPetSessionPanelWidget& Widget) { Widget.ApplySnapshot(Sessions); });
 }
 
 void APetCapturePawn::HandleSessionStart(const FString& SessionId, const FString& Cwd, bool bResume)
 {
-	if (SessionPanelWidget)
-	{
-		SessionPanelWidget->AddOrUpdateSession(SessionId, FString(), Cwd, true);
-	}
+	RouteSessionData(
+		[&SessionId, &Cwd](FPetSessionWebPanel& Panel) { Panel.AddOrUpdateSession(SessionId, FString(), Cwd, true); },
+		[&SessionId, &Cwd](UPetSessionPanelWidget& Widget) { Widget.AddOrUpdateSession(SessionId, FString(), Cwd, true); });
 }
 
 void APetCapturePawn::HandleSessionEnd(const FString& SessionId, const FString& Reason)
 {
-	if (SessionPanelWidget)
-	{
-		SessionPanelWidget->SetSessionActive(SessionId, false);
-	}
+	RouteSessionData(
+		[&SessionId](FPetSessionWebPanel& Panel) { Panel.SetSessionActive(SessionId, false); },
+		[&SessionId](UPetSessionPanelWidget& Widget) { Widget.SetSessionActive(SessionId, false); });
 }
 
 void APetCapturePawn::HandleSessionState(const FString& SessionId, bool bWorking, bool bUnread)
 {
-	if (SessionPanelWidget)
-	{
-		SessionPanelWidget->UpdateSessionState(SessionId, bWorking, bUnread);
-	}
+	RouteSessionData(
+		[&SessionId, bWorking, bUnread](FPetSessionWebPanel& Panel) { Panel.UpdateSessionState(SessionId, bWorking, bUnread); },
+		[&SessionId, bWorking, bUnread](UPetSessionPanelWidget& Widget) { Widget.UpdateSessionState(SessionId, bWorking, bUnread); });
 }
 
 void APetCapturePawn::HandleShutdown(const FString& Reason)
@@ -541,7 +593,9 @@ void APetCapturePawn::Tick(float DeltaTime)
 	if (bSessionPanelTogglePending)
 	{
 		bSessionPanelTogglePending = false;
-		if (SessionWindowHost && SessionPanelWidget)
+		// Web 路径不创建 UMG Widget（SessionPanelWidget 为空），可用任一资源作为
+		// 窗口切换守卫，避免 Web 模式下误报"资源未就绪"。
+		if (SessionWindowHost && (SessionPanelWidget || SessionWebPanel))
 		{
 			UpdateSessionPanelAnchor();
 			const bool bWasVisible = SessionWindowHost->IsVisible();
@@ -549,6 +603,8 @@ void APetCapturePawn::Tick(float DeltaTime)
 			if (!bWasVisible)
 			{
 				// 等到下一帧再重播：此时窗口已可见，ListView 条目也完成了 Slate 布局。
+				// Web 路径下 SessionPanelWidget 为空，ReplaySessionPanelPresentation
+				// 直接返回，UMG 专属动画自然跳过。
 				bSessionPanelPresentationPending = true;
 			}
 		}

@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会话面板</title>
+<style>
+  /* ============ 基础 ============ */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* 行高 = 行内容 56px + 行间距 4px；列表最多显示 8 行（不写死像素） */
+    --row-h: 60px;
+    --row-limit: 8;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    /* 不透明深底色填满整个窗口：窗口是矩形的，圆角卡片画在底色上，四角与底色同色 */
+    background: #14161e;
+    color: #eaf0fa;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* 点击关闭按钮后本地隐藏（无动画）；实际关闭由 C++ 控制，后续推送数据会自动恢复显示 */
+  body.is-hidden { display: none; }
+
+  /* ============ 面板卡片（深色玻璃拟态） ============ */
+  .panel {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    /* 比底色略亮的实色渐变，配 1px 细描边与顶边高光，保留原型 A 的玻璃质感 */
+    background: linear-gradient(180deg, #1b212e 0%, #161b27 100%);
+    border: 1px solid rgba(140, 170, 235, 0.16);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 10px 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .panel-title { font-size: 14px; font-weight: 600; letter-spacing: 1px; color: #e7edf8; }
+  .panel-count {
+    font-size: 11px;
+    color: #8a94ac;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+  }
+
+  /* 关闭按钮（×）：只向 C++ 发请求，实际关闭由 C++ 控制 */
+  .btn-close {
+    appearance: none;
+    margin-left: auto;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #8a94ac;
+    font: inherit;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .btn-close:hover { background: rgba(255, 255, 255, 0.08); color: #eaf0fa; }
+  .btn-close:active { transform: translateY(1px); }
+
+  /* ============ 主体区：列表 / 空态互斥填充 ============ */
+  .panel-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ============ 会话列表 ============ */
+  .session-list {
+    flex: 1;
+    min-height: 0;
+    /* 自适应视口高度：flex 撑满剩余空间，最多显示 8 行，超出滚动（16px 为上下内边距） */
+    max-height: calc(var(--row-limit) * var(--row-h) + 16px);
+    padding: 8px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+  /* 自定义滚动条（WebKit） */
+  .session-list::-webkit-scrollbar { width: 6px; }
+  .session-list::-webkit-scrollbar-track { background: transparent; }
+  .session-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+  }
+  .session-list::-webkit-scrollbar-thumb:hover { background: rgba(87, 214, 255, 0.45); }
+
+  /* 行 */
+  .session-row {
+    appearance: none;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+    height: 56px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px 0 0;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.03);
+    color: inherit;
+    cursor: pointer;
+    position: relative;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .session-row:last-child { margin-bottom: 0; }
+  .session-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .session-row.is-active {
+    background: rgba(87, 214, 255, 0.10);
+    border-color: rgba(87, 214, 255, 0.26);
+  }
+
+  /* 左侧激活强调条 */
+  .row-accent {
+    align-self: stretch;
+    width: 3px;
+    margin-left: 0;
+    border-radius: 0 3px 3px 0;
+    flex: none;
+    background: linear-gradient(180deg, #6be3ff 0%, #3fa9f5 100%);
+    box-shadow: 0 0 8px rgba(87, 214, 255, 0.55);
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .session-row.is-active .row-accent { opacity: 1; }
+
+  /* 行主内容 */
+  .row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .row-title {
+    font-size: 14px;
+    color: #eaf0fa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+  .session-row.is-active .row-title { color: #eef7ff; font-weight: 600; }
+  .row-cwd {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    color: #7c869e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+  .session-row.is-active .row-cwd { color: #93b4cc; }
+
+  /* 右侧徽标区 */
+  .row-badges { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+  /* 工作中：三点跳动（保留原型 A 动效） */
+  .badge-working { display: flex; gap: 3px; align-items: center; height: 6px; }
+  .badge-working i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #57d6ff;
+    animation: dotBounce 1s ease-in-out infinite;
+  }
+  .badge-working i:nth-child(2) { animation-delay: .15s; }
+  .badge-working i:nth-child(3) { animation-delay: .30s; }
+  @keyframes dotBounce {
+    0%, 100% { transform: translateY(0); opacity: .45; }
+    40%      { transform: translateY(-3px); opacity: 1; }
+  }
+
+  /* 未读徽标：契约中 unread 是布尔，仅表示「有未读」，用圆点示意（保留原红色 + 光晕语言） */
+  .badge-unread {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255, 90, 110, 0.92);
+    box-shadow: 0 0 6px rgba(255, 90, 110, 0.60);
+  }
+
+  /* 行入场动画（仅新增单条时使用） */
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .session-row.animate-in { animation: rowIn .28s ease both; }
+
+  /* ============ 空状态 ============ */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+  }
+  .empty-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 34px 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .empty-icon { color: #4a5268; width: 44px; height: 44px; }
+  .empty-title { font-size: 14px; color: #8a94ac; letter-spacing: 2px; }
+  .empty-sub { font-size: 12px; color: #565f74; }
+
+  [hidden] { display: none !important; }
+
+  /* 动效尊重系统设置 */
+  @media (prefers-reduced-motion: reduce) {
+    .badge-working i, .session-row.animate-in { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- 面板本体：尺寸跟随窗口视口 -->
+  <section class="panel" id="panel" aria-label="会话列表面板">
+    <header class="panel-header">
+      <span class="panel-title">会话</span>
+      <span class="panel-count" id="panelCount">0</span>
+      <button class="btn-close" id="btnClose" type="button" aria-label="关闭面板" title="关闭面板">×</button>
+    </header>
+
+    <div class="panel-body">
+      <!-- 会话列表（初始为空，真实数据由 C++ 通过 KimiPetPanel API 推入） -->
+      <div class="session-list" id="sessionList" role="listbox" aria-label="会话列表"></div>
+
+      <!-- 空状态（列表为空时自动显示） -->
+      <div class="empty-state" id="emptyState">
+        <div class="empty-inner">
+          <svg class="empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 15h28v16H22l-9 7v-7h-3z"/>
+            <circle cx="19" cy="23" r="1.4" fill="currentColor" stroke="none"/>
+            <circle cx="24" cy="23" r="1.4" fill="currentColor" stroke="none"/>
+            <circle cx="29" cy="23" r="1.4" fill="currentColor" stroke="none"/>
+          </svg>
+          <p class="empty-title">暂无会话</p>
+          <p class="empty-sub">新建或唤醒的会话会出现在这里</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<script>
+'use strict';
+
+/* ================================================================
+ * 会话面板脚本（供 UE5 WebBrowser LoadString 加载）
+ *
+ * 对外契约：window.KimiPetPanel
+ *   applySnapshot(items)            全量替换列表（items 为数组）
+ *   addOrUpdate(item)               新增或原位更新一条
+ *   removeSession(sessionId)        删除一条
+ *   setActive(sessionId, bool)      设置激活态（true 时其余会话取消激活）
+ *   updateState(sessionId, state)   局部更新 { working, unread }
+ *
+ * 条目形状：{ sessionId, title, cwd, active, working, unread }
+ * 全部方法幂等、防 undefined：C++ 可能在页面任意时机注入调用。
+ * ================================================================ */
+
+/* ---------- 元素引用 ---------- */
+const listEl   = document.getElementById('sessionList');
+const countEl  = document.getElementById('panelCount');
+const emptyEl  = document.getElementById('emptyState');
+const btnClose = document.getElementById('btnClose');
+
+/* ---------- 数据存储：Map 以 sessionId 为键，保持插入顺序 ---------- */
+const sessions = new Map();
+
+/* ---------- 工具函数 ---------- */
+function truncatePath(p, maxLen) {
+  maxLen = maxLen || 30;
+  if (p.length <= maxLen) return p;
+  const half = Math.floor((maxLen - 3) / 2);
+  return p.slice(0, half) + '…' + p.slice(p.length - (maxLen - 2 - half));
+}
+
+/* 兜底标题：title 为空时取 cwd 末段，cwd 也为空时取 sessionId 前 8 位 */
+function fallbackTitle(sessionId, cwd) {
+  const seg = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+  if (seg) return seg;
+  const short = String(sessionId).slice(0, 8);
+  return short || '(未命名会话)';
+}
+
+/* 规范化条目：字段缺失/类型异常时补默认值；无 sessionId 的条目忽略并告警 */
+function normalize(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    console.warn('[KimiPetPanel] 忽略非法会话条目：', item);
+    return null;
+  }
+  const sessionId = item.sessionId == null ? '' : String(item.sessionId);
+  if (!sessionId) {
+    console.warn('[KimiPetPanel] 会话条目缺少 sessionId，已忽略：', item);
+    return null;
+  }
+  const cwd = item.cwd == null ? '' : String(item.cwd);
+  let title = item.title == null ? '' : String(item.title);
+  if (!title.trim()) title = fallbackTitle(sessionId, cwd);
+  return {
+    sessionId: sessionId,
+    title: title,
+    cwd: cwd,
+    active: !!item.active,
+    working: !!item.working,
+    unread: !!item.unread
+  };
+}
+
+/* ---------- UE 桥调用 ---------- */
+/* 探测 window.ue.petbridge；桥方法按大小写不敏感方式查找（SelectSession 可能暴露为
+ * selectsession，ClosePanel 同理）；UE 绑定返回值是 Promise，无需 await；
+ * 桥不存在或方法缺失时仅告警、页面不崩（便于纯浏览器调试）。 */
+function findBridgeMethod(bridge, name) {
+  if (!bridge || typeof name !== 'string') return undefined;
+  if (typeof bridge[name] === 'function') return bridge[name];
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(bridge)) {
+    if (key.toLowerCase() === lower && typeof bridge[key] === 'function') {
+      return bridge[key];
+    }
+  }
+  return undefined;
+}
+
+function callBridge(action, ...args) {
+  try {
+    const host = (typeof window !== 'undefined') ? window : undefined;
+    const bridge = host && host.ue && host.ue.petbridge ? host.ue.petbridge : undefined;
+    if (!bridge) {
+      console.warn('[KimiPetPanel] UE 桥（window.ue.petbridge）不存在，忽略动作：' + action + '，参数：', args);
+      return;
+    }
+    const fn = findBridgeMethod(bridge, action);
+    if (typeof fn === 'function') {
+      fn.apply(bridge, args);
+    } else {
+      console.warn('[KimiPetPanel] UE 桥未暴露方法：' + action);
+    }
+  } catch (err) {
+    console.warn('[KimiPetPanel] 调用 UE 桥失败：', err);
+  }
+}
+
+/* ---------- 渲染 ---------- */
+function makeRow(item) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'session-row' + (item.active ? ' is-active' : '');
+  row.dataset.sessionId = item.sessionId;
+  row.setAttribute('role', 'option');
+  row.setAttribute('aria-selected', item.active ? 'true' : 'false');
+
+  const accent = document.createElement('span');
+  accent.className = 'row-accent';
+
+  const main = document.createElement('span');
+  main.className = 'row-main';
+  const title = document.createElement('span');
+  title.className = 'row-title';
+  title.textContent = item.title;
+  const cwd = document.createElement('span');
+  cwd.className = 'row-cwd';
+  cwd.textContent = truncatePath(item.cwd);
+  cwd.title = item.cwd;
+  main.append(title, cwd);
+
+  const badges = document.createElement('span');
+  badges.className = 'row-badges';
+  if (item.working) {
+    const w = document.createElement('span');
+    w.className = 'badge-working';
+    w.setAttribute('aria-label', '工作中');
+    w.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+    badges.appendChild(w);
+  }
+  if (item.unread) {
+    const u = document.createElement('span');
+    u.className = 'badge-unread';
+    u.setAttribute('aria-label', '有未读消息');
+    u.setAttribute('title', '有未读消息');
+    badges.appendChild(u);
+  }
+
+  row.append(accent, main, badges);
+  return row;
+}
+
+function renderList(animateSessionId) {
+  listEl.textContent = '';
+  let index = 0;
+  sessions.forEach((item) => {
+    const row = makeRow(item);
+    if (animateSessionId && item.sessionId === animateSessionId) {
+      row.classList.add('animate-in');
+      row.style.animationDelay = (index * 28) + 'ms';
+    }
+    listEl.appendChild(row);
+    index++;
+  });
+  updateCount();
+  syncEmptyState();
+}
+
+function updateCount() {
+  countEl.textContent = String(sessions.size);
+}
+
+/* 列表为空时自动切换空态视图 */
+function syncEmptyState() {
+  const empty = sessions.size === 0;
+  listEl.hidden = empty;
+  emptyEl.hidden = !empty;
+}
+
+/* ---------- 面板显隐 ---------- */
+/* 点击关闭只做本地隐藏（无动画）+ 发请求，实际关闭由 C++ 控制；
+ * 之后若有数据 API 调用则自动恢复显示，避免窗口未真正关闭时面板「失联」。 */
+function showPanel() {
+  document.body.classList.remove('is-hidden');
+}
+
+/* ---------- 行点击：选中会话 ---------- */
+/* 视觉切换（唯一激活 + 清除未读）在本地立即执行，不等 C++ 回推 */
+function selectSession(item) {
+  sessions.forEach((s) => { s.active = (s === item); });
+  item.unread = false;
+  renderList();
+  callBridge('SelectSession', item.sessionId);
+}
+
+/* 列表容器上做事件委托，避免反复重绘导致重复绑定 */
+listEl.addEventListener('click', (ev) => {
+  const row = ev.target.closest('.session-row');
+  if (!row || !row.dataset || !row.dataset.sessionId) return;
+  const item = sessions.get(row.dataset.sessionId);
+  if (item) selectSession(item);
+});
+
+btnClose.addEventListener('click', () => {
+  document.body.classList.add('is-hidden');
+  callBridge('ClosePanel');
+});
+
+/* ---------- 对外 API ---------- */
+window.KimiPetPanel = {
+
+  /* 全量替换列表；非数组入参按空列表处理并告警（幂等） */
+  applySnapshot(items) {
+    if (!Array.isArray(items)) {
+      console.warn('[KimiPetPanel] applySnapshot 期望数组入参，实际为：', items);
+      items = [];
+    }
+    sessions.clear();
+    items.forEach((raw) => {
+      const item = normalize(raw);
+      if (item) sessions.set(item.sessionId, item);
+    });
+    renderList();
+    showPanel();
+  },
+
+  /* 新增或原位更新一条（新增行带入场动画；幂等） */
+  addOrUpdate(raw) {
+    const item = normalize(raw);
+    if (!item) return;
+    const isNew = !sessions.has(item.sessionId);
+    sessions.set(item.sessionId, item);
+    renderList(isNew ? item.sessionId : undefined);
+    showPanel();
+  },
+
+  /* 删除一条；sessionId 缺失时静默忽略（幂等） */
+  removeSession(sessionId) {
+    if (sessionId == null) return;
+    sessions.delete(String(sessionId));
+    renderList();
+    showPanel();
+  },
+
+  /* 设置激活态：目标置为 active，其余会话取消激活（幂等） */
+  setActive(sessionId, active) {
+    if (sessionId == null) return;
+    const key = String(sessionId);
+    const target = sessions.get(key);
+    if (!target) return;
+    sessions.forEach((s) => { s.active = false; });
+    target.active = !!active;
+    renderList();
+    showPanel();
+  },
+
+  /* 局部更新工作/未读状态；state 缺失或字段非布尔时不改（幂等） */
+  updateState(sessionId, state) {
+    if (sessionId == null) return;
+    const target = sessions.get(String(sessionId));
+    if (!target || !state || typeof state !== 'object') return;
+    if (typeof state.working === 'boolean') target.working = state.working;
+    if (typeof state.unread === 'boolean') target.unread = state.unread;
+    renderList();
+    showPanel();
+  }
+};
+
+/* ---------- 首次渲染（初始为空列表 → 空态） ---------- */
+renderList();
+</script>
+</body>
+</html>

@@ -26,7 +26,8 @@ public class Pet : ModuleRules
 			"ApplicationCore",
 			"Projects",
 			"Json",
-			"JsonUtilities"
+			"JsonUtilities",
+			"WebBrowser"
 		});
 
 		if (Target.bBuildEditor)

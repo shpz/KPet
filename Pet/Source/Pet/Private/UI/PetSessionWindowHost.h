@@ -65,6 +65,7 @@ public:
 	FPetSessionWindowHost() = default;
 	~FPetSessionWindowHost();
 
+	bool Create(TSharedRef<SWidget> Content);
 	bool Create(UPetSessionPanelWidget* PanelWidget);
 	void Destroy();
 
