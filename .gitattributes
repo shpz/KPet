@@ -1,2 +1,10 @@
 # 防止 Windows 检出时把 shell 脚本写成 CRLF（WSL 宿主用 dash/sh 解析，CR 会导致 if/then 语法错误）
 *.sh text eol=lf
+
+# 二进制资产：禁止换行符转换与文本 diff，防止 autocrlf 等配置损坏文件
+*.uasset binary
+*.umap binary
+*.blend binary
+*.blend1 binary
+*.fbx binary
+*.png binary

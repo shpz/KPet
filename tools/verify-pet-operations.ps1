@@ -548,7 +548,30 @@ try {
     if (-not (Test-Path -LiteralPath $mockPath -PathType Leaf)) { throw "找不到模拟守护进程: $mockPath" }
 
     [PetVerifyWin32]::SetProcessDPIAware() | Out-Null
-    $mockProcess = Start-Process -FilePath "node.exe" -ArgumentList @("--experimental-strip-types", $mockPath, "--verification-mode") -WorkingDirectory $workspaceRoot `
+    # mock-daemon.ts 需要 TS 直跑：node >= 22.6 用 --experimental-strip-types，
+    # 低版本 node 回退到 bun（打包链路同样依赖 bun）。
+    # 探测经 cmd /c 包一层：避免 node 的 stderr 在 EAP=Stop 下触发 PS 5.1 的 NativeCommandError。
+    cmd /c "node.exe --experimental-strip-types -e 0 2>nul" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $mockExe = "node.exe"
+        $mockArgs = @("--experimental-strip-types", $mockPath, "--verification-mode")
+    } else {
+        # bun 常由 npm 安装为 bun.cmd 包装脚本，Start-Process 需定位真正的 bun.exe
+        $bunExe = (Get-Command bun.exe -ErrorAction SilentlyContinue).Source
+        if (-not $bunExe) {
+            $bunCmd = (Get-Command bun -ErrorAction SilentlyContinue).Source
+            if ($bunCmd) {
+                # npm 包装脚本同目录的 node_modules\bun\bin\bun.exe
+                $candidate = Join-Path (Split-Path $bunCmd -Parent) "node_modules\bun\bin\bun.exe"
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $bunExe = $candidate }
+            }
+        }
+        if (-not $bunExe) { throw "node 不支持 --experimental-strip-types 且未找到 bun.exe，无法运行模拟守护进程" }
+        $mockExe = $bunExe
+        $mockArgs = @($mockPath, "--verification-mode")
+        Write-Output "node 不支持 --experimental-strip-types，模拟守护进程改用 bun 运行: $mockExe"
+    }
+    $mockProcess = Start-Process -FilePath $mockExe -ArgumentList $mockArgs -WorkingDirectory $workspaceRoot `
         -RedirectStandardOutput $mockOut -RedirectStandardError $mockErr -WindowStyle Hidden -PassThru
     Start-Sleep -Milliseconds 800
     if ($mockProcess.HasExited) {

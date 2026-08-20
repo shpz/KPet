@@ -160,12 +160,11 @@ void APetCapturePawn::BeginPlay()
 	CaptureComponent->TextureTarget = RenderTarget;
 
 	// 游戏线程创建窗口（UE 主消息循环会顺带泵它的消息）
-	PetWindow = new PetLayeredWindow();
+	PetWindow = MakeUnique<PetLayeredWindow>();
 	if (!PetWindow->Create(RTSize, 150, 150))
 	{
 		UE_LOG(LogPet, Error, TEXT("Failed to create layered window"));
-		delete PetWindow;
-		PetWindow = nullptr;
+		PetWindow.Reset();
 	}
 	else
 	{
@@ -303,12 +302,11 @@ void APetCapturePawn::InitializePanels()
 		return;
 	}
 
-	SessionWindowHost = new FPetSessionWindowHost();
+	SessionWindowHost = MakeUnique<FPetSessionWindowHost>();
 	if (!SessionWindowHost->Create(SessionWebPanel->GetContentWidget()))
 	{
 		UE_LOG(LogPet, Error, TEXT("创建 Slate 会话窗口失败；宠物本体将继续运行"));
-		delete SessionWindowHost;
-		SessionWindowHost = nullptr;
+		SessionWindowHost.Reset();
 		SessionWebPanel.Reset();
 		return;
 	}
@@ -330,14 +328,13 @@ void APetCapturePawn::InitializePanels()
 	}
 	else
 	{
-		SettingsWindowHost = new FPetSessionWindowHost();
+		SettingsWindowHost = MakeUnique<FPetSessionWindowHost>();
 		// 卡片直接铺满客户区，避免透明留白在综合色键失效时露出黑色矩形。
 		SettingsWindowHost->SetClientSize(FVector2f(340.0f, 270.0f));
 		if (!SettingsWindowHost->Create(SettingsWebPanel->GetContentWidget()))
 		{
 			UE_LOG(LogPet, Error, TEXT("创建 Slate 设置窗口失败；设置面板不可用"));
-			delete SettingsWindowHost;
-			SettingsWindowHost = nullptr;
+			SettingsWindowHost.Reset();
 			SettingsWebPanel.Reset();
 		}
 		else if (UPetSettingsWebBridge* Bridge = SettingsWebPanel->GetBridge())
@@ -391,8 +388,7 @@ void APetCapturePawn::ShutdownPanels()
 	if (SessionWindowHost)
 	{
 		SessionWindowHost->Destroy();
-		delete SessionWindowHost;
-		SessionWindowHost = nullptr;
+		SessionWindowHost.Reset();
 	}
 
 	if (SettingsWebPanel)
@@ -411,8 +407,7 @@ void APetCapturePawn::ShutdownPanels()
 	if (SettingsWindowHost)
 	{
 		SettingsWindowHost->Destroy();
-		delete SettingsWindowHost;
-		SettingsWindowHost = nullptr;
+		SettingsWindowHost.Reset();
 	}
 }
 
@@ -988,8 +983,7 @@ void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	bSettingsPanelTogglePending = false;
 	ShutdownPanels();
 
-	delete PetWindow;
-	PetWindow = nullptr;
+	PetWindow.Reset();
 
 	ENQUEUE_RENDER_COMMAND(DestroyPetReadback)(
 		[this](FRHICommandListImmediate&)

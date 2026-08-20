@@ -84,7 +84,7 @@ private:
 	bool bCloseGestureArmed = false; // 左键按下瞬间 ESC 已按住；只在本次有效单击中触发关闭
 	POINT DragAnchorCursor{ 0, 0 }; // 按下时的屏幕光标位置
 	POINT DragGrabOffset{ 0, 0 };   // 按下点相对窗口左上角的偏移
-	uint64 PressTick = 0;           // 左键按下时刻（GetTickCount64，§6.5 单击时长判定）
+	uint64 PressTick = 0;           // 左键按下时刻（单调毫秒时间戳，§6.5 单击时长判定）
 	bool bCameraAdjusting = false;
 	bool bSuppressClickUntilButtonUp = false;
 	bool bWheelCameraCursorActive = false;

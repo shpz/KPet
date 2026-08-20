@@ -18,7 +18,9 @@
 #include "SWebBrowser.h"
 #include "Widgets/SWidget.h"
 
-namespace
+// 具名命名空间（非匿名）：unity build 下 PetSettingsWebPanel.cpp 与 PetSessionWebPanel.cpp
+// 会被合并进同一编译单元（Module.Pet.cpp），匿名命名空间内的同名符号会冲突重复定义。
+namespace PetSettingsPanelDetail
 {
 	/** HTML 读取失败时的内嵌中文兜底页。 */
 	const TCHAR* EmbeddedFallbackHtml =
@@ -121,7 +123,10 @@ namespace
 			UE_LOG(LogPet, Warning, TEXT("未找到 CVar r.D3D11.UseAllowTearing，无法校验弹窗 swapchain 模式"));
 		}
 	}
-}
+} // namespace PetSettingsPanelDetail
+
+// 与匿名命名空间等效：本文件内不加前缀直接使用上述辅助函数。
+using namespace PetSettingsPanelDetail;
 
 FPetSettingsWebPanel::FPetSettingsWebPanel()
 	: Bridge(NewObject<UPetSettingsWebBridge>(GetTransientPackage()))

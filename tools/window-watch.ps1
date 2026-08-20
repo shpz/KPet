@@ -1,4 +1,4 @@
-# Debug tool: watch window visibility/rect changes for the launched Pet.exe process tree.
+﻿# Debug tool: watch window visibility/rect changes for the launched Pet.exe process tree.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File tools/window-watch.ps1 [-Seconds 15]
 param(
   [int]$Seconds = 15,

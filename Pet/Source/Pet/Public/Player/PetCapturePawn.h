@@ -9,11 +9,11 @@
 #include "UI/PetSessionWebPanel.h"
 #include "UI/PetSettingsWebPanel.h"
 #include "Communication/PetSessionTypes.h"
+#include "Platform/PetLayeredWindow.h"
+#include "UI/PetSessionWindowHost.h"
 #include "PetCapturePawn.generated.h"
 
 class FRHIGPUTextureReadback;
-class FPetSessionWindowHost;
-class PetLayeredWindow;
 class UPetCameraManagerComponent;
 class UPetCharacterMotionComponent;
 class UPetMessageChannelComponent;
@@ -147,9 +147,9 @@ private:
 	FRHIGPUTextureReadback* Readback = nullptr;
 	std::atomic<bool> bCopyInFlight{ false };
 
-	PetLayeredWindow* PetWindow = nullptr;
-	FPetSessionWindowHost* SessionWindowHost = nullptr;
-	FPetSessionWindowHost* SettingsWindowHost = nullptr;
+	TUniquePtr<PetLayeredWindow> PetWindow;
+	TUniquePtr<FPetSessionWindowHost> SessionWindowHost;
+	TUniquePtr<FPetSessionWindowHost> SettingsWindowHost;
 
 	/** WebUI 会话面板。非空时数据走 Web 路径。 */
 	TUniquePtr<FPetSessionWebPanel> SessionWebPanel;

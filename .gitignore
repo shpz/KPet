@@ -15,5 +15,9 @@ dist/
 # 日志
 *.log
 
+# 系统产物
+.DS_Store
+Thumbs.db
+
 # DCC
 *.blend1

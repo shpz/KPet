@@ -9,6 +9,15 @@ static constexpr UINT PetCameraRotateMessage = WM_APP + 52;
 PetLayeredWindow* PetLayeredWindow::MouseHookOwner = nullptr;
 PetLayeredWindow* PetLayeredWindow::KeyboardHookOwner = nullptr;
 
+namespace
+{
+	/** 单调毫秒时间戳（替代 GetTickCount64；FPlatformTime 同为系统单调时钟，语义一致）。 */
+	uint64 NowMilliseconds()
+	{
+		return static_cast<uint64>(FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64()));
+	}
+}
+
 bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 {
 	Size = InSize;
@@ -142,7 +151,7 @@ void PetLayeredWindow::Tick(float)
 		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
 	}
 	if (bWheelCameraCursorActive &&
-		((GetAsyncKeyState('R') & 0x8000) == 0 || GetTickCount64() >= WheelCameraCursorExpireTick))
+		((GetAsyncKeyState('R') & 0x8000) == 0 || NowMilliseconds() >= WheelCameraCursorExpireTick))
 	{
 		bWheelCameraCursorActive = false;
 		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
@@ -327,7 +336,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		}
 		bDragging = true;
 		bDragThresholdMet = false;
-		PressTick = GetTickCount64(); // §6.5-1：按下只记录时间戳与锚点，不做任何动作
+		PressTick = NowMilliseconds(); // §6.5-1：按下只记录时间戳与锚点，不做任何动作
 		SetCapture(WindowHandle);
 		DragAnchorCursor.x = ClientX + Pos.x;
 		DragAnchorCursor.y = ClientY + Pos.y;
@@ -417,7 +426,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 			}
 			return 0;
 		}
-		const uint64 PressDurationMs = bDragging ? GetTickCount64() - PressTick : MAX_uint64;
+		const uint64 PressDurationMs = bDragging ? NowMilliseconds() - PressTick : MAX_uint64;
 		const EPetPointerReleaseAction ReleaseAction = PetLayeredWindowInput::ResolveReleaseAction(
 			bDragging,
 			bDragThresholdMet,
@@ -483,7 +492,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 			OnCameraRotate(static_cast<float>(DeltaX), static_cast<float>(DeltaY));
 		}
 		bWheelCameraCursorActive = true;
-		WheelCameraCursorExpireTick = GetTickCount64() + 250;
+		WheelCameraCursorExpireTick = NowMilliseconds() + 250;
 		::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
 		return 0;
 	}
@@ -600,7 +609,7 @@ void PetLayeredWindow::HandleCameraWheel(float WheelDelta)
 		OnCameraZoom(WheelDelta);
 	}
 	bWheelCameraCursorActive = true;
-	WheelCameraCursorExpireTick = GetTickCount64() + 250;
+	WheelCameraCursorExpireTick = NowMilliseconds() + 250;
 	::SetCursor(CameraCursor ? CameraCursor : LoadCursor(nullptr, IDC_CROSS));
 }
 
