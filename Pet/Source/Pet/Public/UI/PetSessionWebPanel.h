@@ -62,8 +62,14 @@ public:
 	/** 启停 Web 页面 FPS 上报（config_snapshot / 设置回调下发）。 */
 	void SetFpsMonitor(bool bEnabled);
 
-	/** 面板显隐通知：隐藏（压栈）期间 JS 一律不下发（缓存照常更新），恢复可见时全量重放。 */
+	/**
+	 * 面板显隐通知：隐藏（压栈）期间 JS 一律不下发、缓存照常更新。恢复可见时只标记
+	 * 待重放，等待窗口宿主确认 CEF 表面已从隐藏态恢复后再提交。
+	 */
 	void SetPanelVisible(bool bVisible);
+
+	/** 窗口宿主在 ShowWindow 后的 CEF 预热完成时调用；触发一次积压状态的全量重放。 */
+	void NotifyWindowSurfaceReady();
 
 private:
 	void HandleLoadCompleted();
@@ -77,6 +83,8 @@ private:
 	void ReplaySnapshot();
 	/** 页面就绪后向页面全量重放（快照 + 主题 + FPS 开关）；面板隐藏期间不发送。 */
 	void PushFullStateToPage();
+	/** 页面、窗口表面和可见状态均就绪时才执行一次待处理的全量重放。 */
+	void TryPushPendingFullState();
 	void ExecutePanelScript(const FString& Script) const;
 	FPetSessionInfo* FindSession(const FString& SessionId);
 	/** 页面加载完成且面板可见时才下发增量 JS；未就绪或隐藏（压栈）时只更新缓存。 */
@@ -96,6 +104,12 @@ private:
 
 	/** 面板是否可见（非隐藏 / 压栈）。初始为隐藏，控制 CEF JS 下发闸门。 */
 	bool bPanelVisible = false;
+
+	/** 当前可见周期的 CEF 软件表面是否已完成宿主预热。 */
+	bool bWindowSurfaceReady = false;
+
+	/** 当前可见周期需要补发快照、主题、FPS 与整页刷新。 */
+	bool bFullStateReplayPending = false;
 
 	/** 最近一次主题；页面加载完成后重放（避免加载期间丢失设置）。 */
 	FString LastTheme;

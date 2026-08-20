@@ -182,81 +182,12 @@ void PetLayeredWindow::DrawFpsOverlay()
 		return;
 	}
 
-	using namespace PetPixelFont;
-	constexpr int32 Scale = 2;          // 字体放大倍数，320 窗口下保证可读
-	constexpr int32 Margin = 6;         // 距窗口右上角边距
-	constexpr int32 PadX = 4;           // 文本横向内边距（再乘 Scale 后为实际像素）
-	constexpr int32 PadY = 2;
-	constexpr uint8 BgAlpha = 150;      // 半透明深色底，保证绿字在任何背景下可读
-	constexpr uint8 BgB = 18, BgG = 22, BgR = 26;
-
-	const int32 TextWidthPx = FMath::Max(FpsOverlayText.Len(), 1) * AdvanceWidth - 1; // 字形宽 + 字距
-	const int32 Width = TextWidthPx * Scale;
-	const int32 Height = GlyphHeight * Scale;
-	const int32 TotalWidth = Width + PadX * 2 * Scale;
-	const int32 TotalHeight = Height + PadY * 2 * Scale;
-	const int32 LeftX = Size - Margin - TotalWidth;
-	const int32 TopY = Margin;
-
-	// 半透明深色底（预乘：RGB *= BgAlpha/255；DIB 契约见 Present 注释）。
-	uint8* Base = static_cast<uint8*>(DibBits);
-	for (int32 Y = TopY; Y < TopY + TotalHeight; ++Y)
-	{
-		if (Y < 0 || Y >= Size)
-		{
-			continue;
-		}
-		for (int32 X = LeftX; X < LeftX + TotalWidth; ++X)
-		{
-			if (X < 0 || X >= Size)
-			{
-				continue;
-			}
-			uint8* P = Base + (Y * Size + X) * 4;
-			P[0] = static_cast<uint8>(BgB * BgAlpha / 255);
-			P[1] = static_cast<uint8>(BgG * BgAlpha / 255);
-			P[2] = static_cast<uint8>(BgR * BgAlpha / 255);
-			P[3] = BgAlpha;
-		}
-	}
-
-	// 绿字（alpha=255，RGB 直接写即预乘等价）。
-	const int32 BaseX = LeftX + PadX * Scale;
-	const int32 BaseY = TopY + PadY * Scale;
-	for (int32 CharIndex = 0; CharIndex < FpsOverlayText.Len(); ++CharIndex)
-	{
-		const TCHAR Ch = FpsOverlayText[CharIndex];
-		for (int32 Row = 0; Row < GlyphHeight; ++Row)
-		{
-			const uint8 Mask = GetGlyphRow(Ch, Row);
-			for (int32 Col = 0; Col < GlyphWidth; ++Col)
-			{
-				if ((Mask & (1u << (GlyphWidth - 1 - Col))) == 0)
-				{
-					continue;
-				}
-				const int32 GlyphX = BaseX + (CharIndex * AdvanceWidth + Col) * Scale;
-				const int32 GlyphY = BaseY + Row * Scale;
-				for (int32 Dy = 0; Dy < Scale; ++Dy)
-				{
-					for (int32 Dx = 0; Dx < Scale; ++Dx)
-					{
-						const int32 X = GlyphX + Dx;
-						const int32 Y = GlyphY + Dy;
-						if (X < 0 || X >= Size || Y < 0 || Y >= Size)
-						{
-							continue;
-						}
-						uint8* P = Base + (Y * Size + X) * 4;
-						P[0] = 0;
-						P[1] = 255;
-						P[2] = 0;
-						P[3] = 255;
-					}
-				}
-			}
-		}
-	}
+	// 仅写入不透明绿字，不再铺设深色矩形底板，避免遮住宠物和与浅色主题冲突。
+	PetPixelFont::DrawFpsOverlayTextToBgra(
+		static_cast<uint8*>(DibBits),
+		Size,
+		Size,
+		FpsOverlayText);
 }
 
 void PetLayeredWindow::Present(const uint8* SrcBGRA)

@@ -289,6 +289,23 @@ test('多会话汇总：任一会话忙 → Working，全部闲 → Idle（§3.4
   assert.deepEqual(byType(r2.out, 'pet_state')[0]!.payload, { state: 'Idle', reason: 'stop' });
 });
 
+test('多会话汇总：仍在工作的会话收到重复 SessionStart 后，另一会话完成不能切换 Idle', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
+  machine.processHostEvent(ev('SessionStart', 's2'));
+  machine.processHostEvent(ev('UserPromptSubmit', 's1'));
+  machine.processHostEvent(ev('UserPromptSubmit', 's2'));
+
+  // 重新打开 CLI/Web 或独立转发进程乱序时，SessionStart 可能再次抵达同一会话。
+  const repeatedStart = machine.processHostEvent(ev('SessionStart', 's2', { matcher: 'resume' }));
+  assert.equal(repeatedStart.out.length, 0, '已知会话的重复开始不应重复下发会话或全局状态消息');
+  assert.equal(machine.getSnapshot().sessions.find((session) => session.sessionId === 's2')!.busy, true);
+
+  const completed = machine.processHostEvent(ev('Stop', 's1'));
+  assert.equal(byType(completed.out, 'pet_state').length, 0, 's2 仍忙，不得错误切换 Idle');
+  assert.equal(machine.state, 'Working');
+});
+
 test('pet_state 去重：已 Working 时重复 UserPromptSubmit 不再下发', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
@@ -301,6 +318,20 @@ test('首见创建会话：守护进程中途启动，首个事件是 UserPrompt
   const r = machine.processHostEvent(ev('UserPromptSubmit', 'sX'));
   assert.equal(machine.activeSessions, 1);
   assert.equal((byType(r.out, 'pet_state')[0] as { payload: { state: string } }).payload.state, 'Working');
+});
+
+test('迟到的首次 SessionStart：公告会话但保留此前工作状态与任务', () => {
+  const { machine } = makeMachine();
+  machine.processHostEvent(ev('UserPromptSubmit', 's1'));
+  machine.processHostEvent(ev('PreToolUse', 's1', { tool_name: 'bash' }));
+
+  const lateStart = machine.processHostEvent(ev('SessionStart', 's1', { matcher: 'resume' }));
+  assert.equal(byType(lateStart.out, 'pet_state').length, 0, '已有 Working 不应被迟到开始改写');
+  assert.deepEqual(byType(lateStart.out, 'session_start')[0]!.payload, { cwd: 'D:\\ws', resume: true });
+  assert.deepEqual(byType(lateStart.out, 'session_state')[0]!.payload, { working: true, unread: false });
+  assert.equal(machine.getSnapshot().tasks.length, 1);
+  assert.equal(machine.hasPendingThrottle('s1'), true);
+  assert.equal(machine.state, 'Working');
 });
 
 test('未知 hook_event_name：忽略不报错（§4.2 向前兼容）', () => {
@@ -458,13 +489,17 @@ test('markSessionRead：打开会话清除 unread 并返回 session_state 更新
   assert.equal(machine.markSessionRead('missing'), null, '会话不存在时不生成更新');
 });
 
-test('同会话重开（SessionStart 再次到达）：任务表与节流缓冲重置', () => {
+test('同会话重复 SessionStart：保持工作状态、任务与节流缓冲', () => {
   const { machine } = makeMachine();
+  machine.processHostEvent(ev('SessionStart', 's1'));
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   machine.processHostEvent(ev('PreToolUse', 's1', { tool_name: 'bash' }));
-  machine.processHostEvent(ev('SessionStart', 's1'));
-  assert.equal(machine.getSnapshot().tasks.length, 0);
-  assert.equal(machine.state, 'Idle');
+  const r = machine.processHostEvent(ev('SessionStart', 's1', { matcher: 'resume' }));
+  assert.equal(r.out.length, 0, '重复开始不重复广播 session_start，避免会话列表重复');
+  assert.equal(machine.getSnapshot().tasks.length, 1);
+  assert.equal(machine.hasPendingThrottle('s1'), true);
+  assert.equal(machine.state, 'Working');
+  assert.equal(machine.getSnapshot().sessions[0]!.resume, true);
 });
 
 test('TaskStart 无 PreToolUse 前置也置忙（防御：task 事件本身意味着在工作）', () => {

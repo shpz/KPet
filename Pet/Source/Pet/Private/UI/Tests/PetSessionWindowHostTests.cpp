@@ -117,4 +117,70 @@ bool FPetSessionWindowHostAnimationTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPetSessionWindowHostSurfacePreparationTest,
+	"Pet.UI.SessionWindowHost.SurfacePreparation",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPetSessionWindowHostSurfacePreparationTest::RunTest(const FString& Parameters)
+{
+	using EPhase = EPetSessionWindowSurfacePreparationPhase;
+	constexpr float WarmupDuration = 0.10f;
+	constexpr float RefreshDuration = 0.10f;
+
+	// 两个 Host 分别承载会话页和设置页；它们的信号必须彼此独立，且在预热期不允许下发。
+	FPetSessionWindowSurfacePreparationState SessionSurface =
+		PetSessionWindowHostSurface::BeginOpening(true, WarmupDuration);
+	FPetSessionWindowSurfacePreparationState SettingsSurface =
+		PetSessionWindowHostSurface::BeginOpening(true, WarmupDuration);
+	TestEqual(TEXT("会话页隐藏后打开先进入预热"), SessionSurface.Phase, EPhase::WarmingUp);
+	TestEqual(TEXT("设置页隐藏后打开先进入预热"), SettingsSurface.Phase, EPhase::WarmingUp);
+	TestFalse(TEXT("会话页预热开始时不下发快照"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SessionSurface));
+	TestFalse(TEXT("设置页预热开始时不下发快照"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SettingsSurface));
+
+	TestFalse(TEXT("会话页预热未结束不发就绪信号"),
+		PetSessionWindowHostSurface::Advance(SessionSurface, 0.04f, RefreshDuration));
+	TestFalse(TEXT("设置页预热未结束不发就绪信号"),
+		PetSessionWindowHostSurface::Advance(SettingsSurface, 0.04f, RefreshDuration));
+	TestTrue(TEXT("预热期会话页保持透明"),
+		PetSessionWindowHostSurface::ShouldKeepWindowTransparent(SessionSurface));
+	TestTrue(TEXT("预热期设置页保持透明"),
+		PetSessionWindowHostSurface::ShouldKeepWindowTransparent(SettingsSurface));
+
+	TestTrue(TEXT("会话页预热结束仅发一次就绪信号"),
+		PetSessionWindowHostSurface::Advance(SessionSurface, 0.06f, RefreshDuration));
+	TestTrue(TEXT("设置页预热结束仅发一次就绪信号"),
+		PetSessionWindowHostSurface::Advance(SettingsSurface, 0.06f, RefreshDuration));
+	TestEqual(TEXT("会话页进入整页刷新等待"), SessionSurface.Phase, EPhase::Refreshing);
+	TestEqual(TEXT("设置页进入整页刷新等待"), SettingsSurface.Phase, EPhase::Refreshing);
+	TestTrue(TEXT("会话页可取到一次重放信号"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SessionSurface));
+	TestTrue(TEXT("设置页可取到一次重放信号"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SettingsSurface));
+	TestFalse(TEXT("会话页重放信号不可重复消费"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SessionSurface));
+	TestFalse(TEXT("设置页重放信号不可重复消费"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(SettingsSurface));
+
+	PetSessionWindowHostSurface::Advance(SessionSurface, RefreshDuration, RefreshDuration);
+	PetSessionWindowHostSurface::Advance(SettingsSurface, RefreshDuration, RefreshDuration);
+	TestEqual(TEXT("会话页整页刷新后允许淡入"), SessionSurface.Phase, EPhase::Ready);
+	TestEqual(TEXT("设置页整页刷新后允许淡入"), SettingsSurface.Phase, EPhase::Ready);
+
+	// 关闭动画中途反向打开时没有进入 WasHidden，应立即下发一次而不额外等待预热。
+	FPetSessionWindowSurfacePreparationState ReversedSurface =
+		PetSessionWindowHostSurface::BeginOpening(false, WarmupDuration);
+	TestEqual(TEXT("关闭中反向打开无需预热"), ReversedSurface.Phase, EPhase::Ready);
+	TestTrue(TEXT("关闭中反向打开立即允许重放"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(ReversedSurface));
+	TestFalse(TEXT("关闭中反向打开的信号仅一次"),
+		PetSessionWindowHostSurface::ConsumeContentReplayReady(ReversedSurface));
+	TestFalse(TEXT("关闭中反向打开不保持透明"),
+		PetSessionWindowHostSurface::ShouldKeepWindowTransparent(ReversedSurface));
+
+	return true;
+}
+
 #endif

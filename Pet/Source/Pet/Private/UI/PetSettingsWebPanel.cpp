@@ -23,9 +23,10 @@ namespace
 	/** HTML 读取失败时的内嵌中文兜底页。 */
 	const TCHAR* EmbeddedFallbackHtml =
 		TEXT("<html><head><meta charset=\"utf-8\"><style>")
-		TEXT("html,body{height:100%;margin:0;background:#14161e;color:#e6e8f0;")
-		TEXT("font-family:\"Microsoft YaHei\",sans-serif;display:flex;align-items:center;justify-content:center;}")
-		TEXT("p{margin:4px 0;text-align:center;}")
+		TEXT("html,body{height:100%;margin:0;background:transparent;color:#e6e8f0;")
+		TEXT("font-family:\"Microsoft YaHei\",sans-serif;}body{display:flex;}")
+		TEXT("div{flex:1;border-radius:14px;background:#14161e;display:flex;flex-direction:column;")
+		TEXT("align-items:center;justify-content:center;overflow:hidden;}p{margin:4px 0;text-align:center;}")
 		TEXT("</style></head><body><div>")
 		TEXT("<p>设置面板加载失败</p>")
 		TEXT("<p style=\"color:#8a90a3;font-size:12px;\">无法读取 Content/UI/Web/settings.html</p>")
@@ -196,7 +197,12 @@ void FPetSettingsWebPanel::HandleLoadCompleted()
 {
 	bPageLoaded = true;
 	BindBridge();
-	ReplaySnapshot();
+	if (bPanelVisible)
+	{
+		// 页面在可见周期内重载时，仍须等待宿主确认 CEF 纹理表面稳定。
+		bSnapshotReplayPending = true;
+		TryReplayPendingSnapshot();
+	}
 	UE_LOG(LogPet, Log, TEXT("WebUI 设置面板页面加载完成，JS 桥与缓存快照已就绪"));
 }
 
@@ -233,15 +239,28 @@ void FPetSettingsWebPanel::ReplaySnapshot()
 		ExecutePanelScript(FString::Printf(
 			TEXT("if (window.KimiPetSettings) { window.KimiPetSettings.applySettings(%s); }"),
 			*SettingsSnapshotToJsObject(*CachedSnapshot)));
+		// 恢复显示后强制两帧完整表面重绘，覆盖 CEF 软件纹理首次局部上传留下的
+		// 左上角杂色、透明区残留与黑底。
+		ExecutePanelScript(TEXT("if (window.KimiPetSettings) { window.KimiPetSettings.refreshSurface(); }"));
 	}
+}
+
+void FPetSettingsWebPanel::TryReplayPendingSnapshot()
+{
+	if (!bSnapshotReplayPending || !bPageLoaded || !bPanelVisible || !bWindowSurfaceReady || !Browser.IsValid())
+	{
+		return;
+	}
+
+	bSnapshotReplayPending = false;
+	ReplaySnapshot();
 }
 
 void FPetSettingsWebPanel::ExecutePanelScript(const FString& Script) const
 {
-	// 页面未就绪或面板隐藏（压栈）期间不下发 JS：隐藏期 CEF 被 WasHidden(true) 停帧，
-	// 注入 DOM 变更会在恢复后按脏矩形重绘时损坏画面（圆角不透明 / 整板黑）。
-	// 恢复可见时由 SetPanelVisible(true) 按 CachedSnapshot 重放补齐。
-	if (!bPageLoaded || !bPanelVisible || !Browser.IsValid())
+	// 页面未就绪、面板隐藏（压栈）或窗口表面尚未从 WasHidden 恢复时均不下发 JS。
+	// 否则脏矩形会在透明纹理上残留，恢复可见后由宿主就绪信号统一全量重放。
+	if (!bPageLoaded || !bPanelVisible || !bWindowSurfaceReady || !Browser.IsValid())
 	{
 		return;
 	}
@@ -251,8 +270,8 @@ void FPetSettingsWebPanel::ExecutePanelScript(const FString& Script) const
 void FPetSettingsWebPanel::ApplySnapshot(const FPetSettingsSnapshot& Snapshot)
 {
 	CachedSnapshot = MakeShared<FPetSettingsSnapshot>(Snapshot);
-	// 页面未就绪或面板隐藏（压栈）时只进缓存；恢复可见后由 SetPanelVisible(true) 重放。
-	if (bPageLoaded && bPanelVisible)
+	// 页面未就绪、隐藏或表面预热期时只进缓存；宿主就绪后由待处理重放统一补齐。
+	if (bPageLoaded && bPanelVisible && bWindowSurfaceReady)
 	{
 		ReplaySnapshot();
 	}
@@ -260,10 +279,32 @@ void FPetSettingsWebPanel::ApplySnapshot(const FPetSettingsSnapshot& Snapshot)
 
 void FPetSettingsWebPanel::SetPanelVisible(bool bVisible)
 {
-	bPanelVisible = bVisible;
-	// 恢复可见且页面就绪且已有缓存快照时重放，保证打开时状态最新。
-	if (bVisible && bPageLoaded && CachedSnapshot.IsValid())
+	if (bPanelVisible == bVisible)
 	{
-		ReplaySnapshot();
+		TryReplayPendingSnapshot();
+		return;
 	}
+
+	bPanelVisible = bVisible;
+	bWindowSurfaceReady = false;
+	if (bVisible)
+	{
+		// 不在 ShowWindow 同一时刻写入 CEF 软件纹理；等预热完成再重放。
+		bSnapshotReplayPending = true;
+	}
+	else
+	{
+		bSnapshotReplayPending = false;
+	}
+}
+
+void FPetSettingsWebPanel::NotifyWindowSurfaceReady()
+{
+	if (!bPanelVisible)
+	{
+		return;
+	}
+
+	bWindowSurfaceReady = true;
+	TryReplayPendingSnapshot();
 }

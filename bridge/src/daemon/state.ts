@@ -45,6 +45,8 @@ export interface Session {
   cwd: string | null;
   /** 是否为恢复会话（SessionStart matcher=resume，§3.2）。 */
   resume: boolean;
+  /** 是否已经收到过该会话的 SessionStart；工作事件可能先于它抵达。 */
+  hasSessionStart: boolean;
   busy: boolean;
   /** 是否有尚未在会话面板中查看的新回复。 */
   unread: boolean;
@@ -265,16 +267,34 @@ export class PetStateMachine {
     let throttled = false;
     let hostIdle = false;
 
+    // 宿主每个钩子都由独立转发进程投递，SessionStart 与后续工作事件可能乱序到达；
+    // 同一 session_id 的重复 SessionStart 也会在从会话列表重新打开 CLI/Web 时出现。
+    // 因而必须在 ensureSession 前保留“是否已知”的事实，不能把重复开始误当作新会话。
+    const sessionAlreadyActive = this.sessions.has(sessionId);
     const session = this.ensureSession(sessionId, parsed, now);
 
     switch (hook) {
       case 'SessionStart':
-        // 记录活跃会话；同 id 重开则重置（清空旧任务与节流缓冲）；忙标志复位后重判主状态
-        session.busy = false;
-        session.unread = false;
-        session.resume = extractResume(parsed);
-        this.clearSessionTasks(session);
-        this.recomputeIdle(out, 'session_start');
+        // 工作事件可能先于 SessionStart 抵达。此时必须补发会话公告，但保留已经识别
+        // 到的 busy/task；只有真正重复的 SessionStart 才完全幂等。
+        if (session.hasSessionStart) {
+          // 重复 SessionStart 不能重置 busy/task，否则另一会话完成时聚合会误以为
+          // “全部空闲”并把 KPet 切到 Idle。
+          // resume 是单调信息：已知会话后续以 resume 方式接入时可补充，但不能反向覆盖。
+          session.resume = session.resume || extractResume(parsed);
+          break;
+        }
+        session.hasSessionStart = true;
+        if (!sessionAlreadyActive) {
+          session.busy = false;
+          session.unread = false;
+          session.resume = extractResume(parsed);
+          this.clearSessionTasks(session);
+          this.recomputeIdle(out, 'session_start');
+        } else {
+          // 迟到的首次 SessionStart：保留此前 UserPromptSubmit/PreToolUse 建立的状态。
+          session.resume = session.resume || extractResume(parsed);
+        }
         out.push({ type: 'session_start', session_id: sessionId, payload: { cwd: session.cwd ?? '', resume: session.resume } });
         out.push(this.makeSessionState(session));
         break;
@@ -490,6 +510,7 @@ export class PetStateMachine {
         sessionId,
         cwd: str(parsed['cwd']),
         resume: extractResume(parsed),
+        hasSessionStart: false,
         busy: false,
         unread: false,
         lastEventAt: now,

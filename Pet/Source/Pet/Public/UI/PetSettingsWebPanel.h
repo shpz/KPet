@@ -44,8 +44,14 @@ public:
 	 */
 	void ApplySnapshot(const FPetSettingsSnapshot& Snapshot);
 
-	/** 面板显隐通知：隐藏（压栈）期间快照只入缓存，恢复可见时按缓存重放。 */
+	/**
+	 * 面板显隐通知：隐藏（压栈）期间快照只入缓存。恢复可见时等待窗口宿主确认
+	 * CEF 表面已从隐藏态恢复后，才按缓存重放，避免透明纹理保留旧像素。
+	 */
 	void SetPanelVisible(bool bVisible);
+
+	/** 窗口宿主在 ShowWindow 后的 CEF 预热完成时调用；触发一次积压设置的全量重放。 */
+	void NotifyWindowSurfaceReady();
 
 private:
 	void HandleLoadCompleted();
@@ -57,6 +63,8 @@ private:
 		EWebBrowserConsoleLogSeverity Severity);
 	void BindBridge();
 	void ReplaySnapshot();
+	/** 页面、窗口表面和可见状态均就绪时才执行一次待处理的快照重放。 */
+	void TryReplayPendingSnapshot();
 	void ExecutePanelScript(const FString& Script) const;
 
 	/** SWebBrowser 控件本体。 */
@@ -73,4 +81,10 @@ private:
 
 	/** 面板是否可见（非隐藏 / 压栈）。初始为隐藏，控制 CEF JS 下发闸门。 */
 	bool bPanelVisible = false;
+
+	/** 当前可见周期的 CEF 软件表面是否已完成宿主预热。 */
+	bool bWindowSurfaceReady = false;
+
+	/** 当前可见周期需要补发设置快照与整页刷新。 */
+	bool bSnapshotReplayPending = false;
 };

@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import * as vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import {
   isAbsoluteSessionDir,
   MAX_SESSION_CATALOG_ENTRIES,
@@ -13,6 +15,85 @@ import {
   type SessionCatalogEntry,
   type SessionCatalogReadFile,
 } from '../src/daemon/session-catalog.js';
+
+const SESSION_PANEL_PATH = fileURLToPath(new URL('../../../Pet/Content/UI/Web/session-panel.html', import.meta.url));
+
+class PanelTestClassList {
+  add(..._tokens: string[]): void {}
+  remove(..._tokens: string[]): void {}
+  toggle(_token: string, _force?: boolean): boolean { return false; }
+}
+
+class PanelTestElement {
+  textContent = '';
+  hidden = false;
+  type = '';
+  title = '';
+  className = '';
+  dataset: Record<string, string> = {};
+  style: { animationDelay?: string; opacity?: string } = {};
+  classList = new PanelTestClassList();
+  clientHeight = 0;
+  scrollHeight = 0;
+
+  get offsetWidth(): number { return 0; }
+  append(..._children: PanelTestElement[]): void {}
+  appendChild(child: PanelTestElement): PanelTestElement { return child; }
+  setAttribute(_name: string, _value: string): void {}
+  addEventListener(_name: string, _listener: unknown): void {}
+  closest(_selector: string): PanelTestElement | null { return null; }
+}
+
+interface PanelSessionState {
+  sessionId: string;
+  active: boolean;
+  working: boolean;
+  unread: boolean;
+}
+
+interface TestPanelApi {
+  applySnapshot(items: Array<Record<string, unknown>>): void;
+  setActive(sessionId: string, active: boolean): void;
+  __kimiPetTestSnapshot(): PanelSessionState[];
+  __kimiPetTestSelect(sessionId: string): void;
+}
+
+function loadSessionPanelForTest(): TestPanelApi {
+  const elements = new Map<string, PanelTestElement>([
+    ['sessionList', new PanelTestElement()],
+    ['panelCount', new PanelTestElement()],
+    ['emptyState', new PanelTestElement()],
+    ['btnClose', new PanelTestElement()],
+  ]);
+  const panelDocument = {
+    body: new PanelTestElement(),
+    documentElement: new PanelTestElement(),
+    getElementById(id: string): PanelTestElement | null { return elements.get(id) ?? null; },
+    createElement(_tagName: string): PanelTestElement { return new PanelTestElement(); },
+  };
+  const sandbox: Record<string, unknown> = {
+    document: panelDocument,
+    console: { warn: () => undefined },
+    performance: { now: () => 0 },
+    requestAnimationFrame: (_callback: () => void) => 0,
+    cancelAnimationFrame: (_id: number) => undefined,
+  };
+  sandbox['window'] = sandbox;
+
+  const html = fs.readFileSync(SESSION_PANEL_PATH, 'utf8');
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  if (!script) throw new Error('未找到会话面板脚本');
+  vm.runInNewContext(
+    `${script}\nwindow.KimiPetPanel.__kimiPetTestSnapshot = () => Array.from(sessions.values()).map((item) => ({ ...item }));\nwindow.KimiPetPanel.__kimiPetTestSelect = (sessionId) => { const item = sessions.get(String(sessionId)); if (item) selectSession(item); };`,
+    sandbox,
+    { filename: SESSION_PANEL_PATH },
+  );
+  return sandbox['KimiPetPanel'] as TestPanelApi;
+}
+
+function panelStates(panel: TestPanelApi): PanelSessionState[] {
+  return Array.from(panel.__kimiPetTestSnapshot(), ({ sessionId, active, working, unread }) => ({ sessionId, active, working, unread }));
+}
 
 function writeFixture(records: Array<{ sessionId: string; title: string; cwd: string; updatedAt: number; archived?: boolean }>): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-session-catalog-'));
@@ -36,6 +117,26 @@ function writeFixture(records: Array<{ sessionId: string; title: string; cwd: st
   fs.writeFileSync(indexPath, `${lines.join('\n')}\n`, 'utf8');
   return indexPath;
 }
+
+test('会话面板：点击与结束只影响目标会话，多会话工作态保持', () => {
+  const panel = loadSessionPanelForTest();
+  panel.applySnapshot([
+    { sessionId: 's1', title: '会话一', cwd: 'D:\\one', active: true, working: true, unread: true },
+    { sessionId: 's2', title: '会话二', cwd: 'D:\\two', active: true, working: true, unread: true },
+  ]);
+
+  panel.__kimiPetTestSelect('s1');
+  assert.deepEqual(panelStates(panel), [
+    { sessionId: 's1', active: true, working: true, unread: false },
+    { sessionId: 's2', active: true, working: true, unread: true },
+  ], '点击行只能清目标 unread，不能覆盖任一会话的 active/working');
+
+  panel.setActive('s1', false);
+  assert.deepEqual(panelStates(panel), [
+    { sessionId: 's1', active: false, working: false, unread: false },
+    { sessionId: 's2', active: true, working: true, unread: true },
+  ], '结束 s1 时只能清 s1 的 active/working，s2 必须继续工作');
+});
 
 test('resolveSessionIndexPath：优先 KIMI_CODE_HOME，否则回退用户目录', () => {
   assert.equal(resolveSessionIndexPath({ KIMI_CODE_HOME: 'D:\\kimi' }), path.join('D:\\kimi', 'session_index.jsonl'));
@@ -119,6 +220,33 @@ test('readSessionCatalog：最多返回 50 条', () => {
   }
 });
 
+test('readSessionCatalog：先按工作目录折叠，再限制 50 条', () => {
+  const repeatedCount = MAX_SESSION_CATALOG_ENTRIES + 3;
+  const records = [
+    ...Array.from({ length: repeatedCount }, (_, index) => ({
+      sessionId: `same-workspace-${index}`,
+      title: `重复会话${index}`,
+      cwd: index % 2 === 0 ? 'D:/Workspace/KimiPet' : 'd:\\workspace\\kimipet\\',
+      updatedAt: 10_000 - index,
+    })),
+    { sessionId: 'older-other-workspace', title: '较早的其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 1 },
+  ];
+  const indexPath = writeFixture(records);
+  try {
+    const result = readSessionCatalog({ indexPath });
+    assert.deepEqual(result, [
+      {
+        sessionId: 'same-workspace-0', title: '重复会话0', cwd: 'D:/Workspace/KimiPet', updatedAt: 10_000,
+      },
+      {
+        sessionId: 'older-other-workspace', title: '较早的其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 1,
+      },
+    ]);
+  } finally {
+    fs.rmSync(path.dirname(indexPath), { recursive: true, force: true });
+  }
+});
+
 test('mergeSessionSnapshots：合并历史与活跃状态，保持 active/working/unread 且活跃 cwd 优先', () => {
   const history: SessionCatalogEntry[] = [
     { sessionId: 'h1', title: '历史一', cwd: 'D:\\history1', updatedAt: 200 },
@@ -140,6 +268,51 @@ test('mergeSessionSnapshots：合并历史与活跃状态，保持 active/workin
     {
       session_id: 'h1', title: '历史一', cwd: 'D:\\history1', active: false,
       working: false, unread: false, updated_at: 200,
+    },
+  ]);
+});
+
+test('mergeSessionSnapshots：同一工程的历史会话只保留最近一条', () => {
+  const history: SessionCatalogEntry[] = [
+    { sessionId: 'recent', title: '最近会话', cwd: 'D:/Workspace/KimiPet', updatedAt: 300 },
+    { sessionId: 'older', title: '旧会话', cwd: 'd:\\workspace\\kimipet\\', updatedAt: 200 },
+    { sessionId: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 100 },
+  ];
+
+  assert.deepEqual(mergeSessionSnapshots(history, []), [
+    {
+      session_id: 'recent', title: '最近会话', cwd: 'D:/Workspace/KimiPet', active: false,
+      working: false, unread: false, updated_at: 300,
+    },
+    {
+      session_id: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', active: false,
+      working: false, unread: false, updated_at: 100,
+    },
+  ]);
+});
+
+test('mergeSessionSnapshots：活跃会话不折叠，并覆盖同工程历史副本', () => {
+  const history: SessionCatalogEntry[] = [
+    { sessionId: 'history', title: '历史副本', cwd: 'D:\\Workspace\\KimiPet', updatedAt: 100 },
+    { sessionId: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 90 },
+  ];
+  const active = [
+    { sessionId: 'active-one', cwd: 'D:/Workspace/KimiPet', busy: true, unread: false },
+    { sessionId: 'active-two', cwd: 'd:\\workspace\\kimipet\\', busy: false, unread: true },
+  ];
+
+  assert.deepEqual(mergeSessionSnapshots(history, active), [
+    {
+      session_id: 'active-one', title: '', cwd: 'D:/Workspace/KimiPet', active: true,
+      working: true, unread: false, updated_at: 0,
+    },
+    {
+      session_id: 'active-two', title: '', cwd: 'd:\\workspace\\kimipet\\', active: true,
+      working: false, unread: true, updated_at: 0,
+    },
+    {
+      session_id: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', active: false,
+      working: false, unread: false, updated_at: 90,
     },
   ]);
 });

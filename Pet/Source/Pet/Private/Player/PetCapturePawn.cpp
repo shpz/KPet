@@ -321,7 +321,7 @@ void APetCapturePawn::InitializePanels()
 		Bridge->OnCloseRequested.AddUObject(this, &APetCapturePawn::HandleCloseSession);
 	}
 
-	// ---- 设置面板（Ctrl+, 打开；尺寸按 settings.html 的 340px 宽卡片定） ----
+	// ---- 设置面板（Ctrl+, 打开；窗口与 settings.html 的圆角卡片同尺寸） ----
 	SettingsWebPanel = MakeUnique<FPetSettingsWebPanel>();
 	if (!SettingsWebPanel->Create())
 	{
@@ -331,8 +331,8 @@ void APetCapturePawn::InitializePanels()
 	else
 	{
 		SettingsWindowHost = new FPetSessionWindowHost();
-		// settings.html 卡片宽 340px + 四周 12px padding；高取 460 容纳全部设置项。
-		SettingsWindowHost->SetClientSize(FVector2f(380.0f, 460.0f));
+		// 卡片直接铺满客户区，避免透明留白在综合色键失效时露出黑色矩形。
+		SettingsWindowHost->SetClientSize(FVector2f(340.0f, 270.0f));
 		if (!SettingsWindowHost->Create(SettingsWebPanel->GetContentWidget()))
 		{
 			UE_LOG(LogPet, Error, TEXT("创建 Slate 设置窗口失败；设置面板不可用"));
@@ -820,6 +820,12 @@ void APetCapturePawn::Tick(float DeltaTime)
 			UpdateSessionPanelAnchor();
 		}
 		SessionWindowHost->TickWindowAnimation(DeltaTime);
+		// 隐藏后重显时，宿主先让 CEF 退出 WasHidden，再允许会话页提交快照与整页刷新。
+		// 这样不会把隐藏期积压的列表更新写进尚未稳定的软件纹理，留下视觉重复行。
+		if (SessionWebPanel && SessionWindowHost->ConsumeContentSurfaceReady())
+		{
+			SessionWebPanel->NotifyWindowSurfaceReady();
+		}
 	}
 
 	// Ctrl+, 切换设置面板；显隐动画与锚点与会话面板一致。
@@ -835,6 +841,12 @@ void APetCapturePawn::Tick(float DeltaTime)
 			UpdateSettingsPanelAnchor();
 		}
 		SettingsWindowHost->TickWindowAnimation(DeltaTime);
+		// 设置页同样使用透明 CEF 软件纹理；必须等宿主预热结束后再重放设置快照，
+		// 否则首次打开或压栈恢复会把旧纹理直接暴露到桌面。
+		if (SettingsWebPanel && SettingsWindowHost->ConsumeContentSurfaceReady())
+		{
+			SettingsWebPanel->NotifyWindowSurfaceReady();
+		}
 	}
 
 	if (!RenderTarget)

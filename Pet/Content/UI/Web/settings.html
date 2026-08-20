@@ -39,6 +39,14 @@
     --row-active-bg: rgba(87, 214, 255, 0.10);
     --row-active-border: rgba(87, 214, 255, 0.26);
 
+    /* 设置页的单选与分段按钮独立于会话行，始终保留可辨识的底板与描边。 */
+    --control-bg: rgba(255, 255, 255, 0.03);
+    --control-border: rgba(255, 255, 255, 0.10);
+    --control-hover-bg: rgba(255, 255, 255, 0.08);
+    --control-hover-border: rgba(255, 255, 255, 0.18);
+    --control-active-bg: rgba(87, 214, 255, 0.10);
+    --control-active-border: rgba(87, 214, 255, 0.34);
+
     --accent-bar: linear-gradient(180deg, #6be3ff 0%, #3fa9f5 100%);
     --accent-glow: rgba(87, 214, 255, 0.55);
     --accent-soft: rgba(87, 214, 255, 0.12);
@@ -86,6 +94,14 @@
     --row-hover-border: transparent;
     --row-active-bg: #eef4fe;
     --row-active-border: transparent;
+
+    /* 会话行保持极简无边框；设置控件另用浅底与低对比描边，避免退化成纯文字。 */
+    --control-bg: #f6f8fb;
+    --control-border: #dce4ef;
+    --control-hover-bg: #eef3fb;
+    --control-hover-border: #b9cae6;
+    --control-active-bg: #e8effc;
+    --control-active-border: #8eace6;
 
     --accent-bar: linear-gradient(180deg, #3b6fe0 0%, #2f5bc4 100%);
     --accent-glow: rgba(59, 111, 224, 0.35);
@@ -135,6 +151,14 @@
     --row-active-bg: rgba(245, 130, 79, 0.10);
     --row-active-border: transparent;
 
+    /* 会话行保持轻盈；设置控件采用暖白底与杏色描边，保留按钮边界。 */
+    --control-bg: #fff8ef;
+    --control-border: #efd5ba;
+    --control-hover-bg: #fff0de;
+    --control-hover-border: #eab98f;
+    --control-active-bg: #fde9d6;
+    --control-active-border: #eea16d;
+
     --accent-bar: linear-gradient(180deg, #f5824f 0%, #ffb37e 100%);
     --accent-glow: rgba(245, 130, 79, 0.40);
     --accent-soft: #fde9d6;
@@ -152,9 +176,9 @@
     --empty-icon: #d99b5f;
   }
 
-  html, body { height: 100%; }
+  html, body { height: 100%; background: transparent; }
 
-  /* 设置页嵌在透明 Slate 弹窗：html/body 全透明，只有圆角卡片有实体底色 */
+  /* 设置页与 Slate 客户区同尺寸；透明只用于四个圆角，Win 端另有原生窗口区域裁剪兜底 */
   body {
     background: transparent;
     color: var(--text-1);
@@ -164,7 +188,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 12px;
   }
 
   /* 点击关闭按钮后本地隐藏（无动画）；实际关闭由 C++ 控制 */
@@ -172,7 +195,8 @@
 
   /* ============ 设置卡片 ============ */
   .settings-card {
-    width: 340px;
+    width: 100%;
+    height: 100%;
     max-height: 100%;
     display: flex;
     flex-direction: column;
@@ -224,7 +248,18 @@
     flex-direction: column;
     gap: 18px;
     overflow-y: auto;
+    /* 选择 Web 后会展示地址提示；内容超高时沿用会话面板的细滚动条。 */
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-color) transparent;
   }
+  .settings-body::-webkit-scrollbar { width: 6px; }
+  .settings-body::-webkit-scrollbar-track { background: transparent; }
+  .settings-body::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+  .settings-body::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
   .field { display: flex; flex-direction: column; gap: 8px; }
   .field-label { font-size: 12px; font-weight: 600; letter-spacing: .5px; color: var(--text-2); }
 
@@ -244,21 +279,21 @@
     justify-content: center;
     height: 34px;
     border-radius: 8px;
-    border: 1px solid var(--row-border);
-    background: var(--row-bg);
+    border: 1px solid var(--control-border);
+    background: var(--control-bg);
     color: var(--text-1);
     font-size: 12px;
     cursor: pointer;
     transition: background .15s ease, border-color .15s ease, color .15s ease;
   }
   .radio-option span:hover {
-    background: var(--row-hover-bg);
-    border-color: var(--row-hover-border);
+    background: var(--control-hover-bg);
+    border-color: var(--control-hover-border);
     color: var(--text-1-active);
   }
   .radio-option input:checked + span {
-    background: var(--row-active-bg);
-    border-color: var(--row-active-border);
+    background: var(--control-active-bg);
+    border-color: var(--control-active-border);
     color: var(--text-1-active);
     font-weight: 600;
   }
@@ -284,9 +319,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--row-border);
+    border: 1px solid var(--control-border);
     border-radius: 8px;
-    background: var(--row-bg);
+    background: var(--control-bg);
     color: var(--text-1);
     font: inherit;
     font-size: 12px;
@@ -294,13 +329,13 @@
     transition: background .15s ease, border-color .15s ease, color .15s ease;
   }
   .segment button:hover {
-    background: var(--row-hover-bg);
-    border-color: var(--row-hover-border);
+    background: var(--control-hover-bg);
+    border-color: var(--control-hover-border);
     color: var(--text-1-active);
   }
   .segment button.is-selected {
-    background: var(--row-active-bg);
-    border-color: var(--row-active-border);
+    background: var(--control-active-bg);
+    border-color: var(--control-active-border);
     color: var(--text-1-active);
     font-weight: 600;
   }
@@ -321,33 +356,38 @@
     height: 22px;
   }
   .switch input {
+    appearance: none;
+    -webkit-appearance: none;
     position: absolute;
     opacity: 0;
     width: 100%;
     height: 100%;
     margin: 0;
+    border: 0;
+    background: transparent;
     cursor: pointer;
   }
   .switch .track {
     position: absolute;
     inset: 0;
     border-radius: 999px;
-    background: var(--row-border);
-    border: 1px solid var(--row-border);
+    background: var(--control-border);
+    border: 1px solid var(--control-border);
     transition: background .15s ease, border-color .15s ease;
   }
   .switch .knob {
     position: absolute;
-    top: 2px;
+    top: 50%;
     left: 2px;
     width: 16px;
     height: 16px;
     border-radius: 50%;
     background: var(--text-2);
+    transform: translateY(-50%);
     transition: transform .15s ease, background .15s ease;
   }
   .switch input:checked + .track { background: var(--busy); border-color: var(--busy); }
-  .switch input:checked ~ .knob { transform: translateX(18px); background: var(--panel-bg); }
+  .switch input:checked ~ .knob { transform: translate(18px, -50%); background: var(--panel-bg); }
   .switch input:focus-visible + .track { outline: 1px solid var(--accent-glow); }
 
   [hidden] { display: none !important; }
@@ -374,11 +414,11 @@
         <div class="radio-group" role="radiogroup" aria-labelledby="openTargetLabel">
           <label class="radio-option">
             <input type="radio" name="openTarget" value="cli" checked>
-            <span>kimi code cli</span>
+            <span>CLI</span>
           </label>
           <label class="radio-option">
             <input type="radio" name="openTarget" value="web">
-            <span>kimi web</span>
+            <span>Web</span>
           </label>
         </div>
         <p class="uri-hint" id="uriHint" hidden></p>
@@ -436,6 +476,27 @@ const themeButtons = document.querySelectorAll('.segment button');
 
 /* ---------- 主题清单：与会话面板共用同一套 themeId ---------- */
 const THEME_IDS = ['dark-glass', 'light-minimal', 'cute-pet'];
+
+/* ---------- 透明表面完整刷新 ---------- */
+/* UE WebBrowser 的软件纹理首次可能只上传局部脏区。恢复显示后对整页做两帧轻量
+ * 重绘，覆盖透明区的未初始化像素与旧画面。宿主预热期间整窗透明，用户看不到
+ * 这里用于触发重绘的细微透明度变化。 */
+let surfaceRefreshToken = 0;
+function refreshSurface() {
+  const token = ++surfaceRefreshToken;
+  const root = document.documentElement;
+  root.style.opacity = '';
+  void root.offsetWidth;
+  requestAnimationFrame(() => {
+    if (token !== surfaceRefreshToken) return;
+    root.style.opacity = '0.999';
+    void root.offsetWidth;
+    requestAnimationFrame(() => {
+      if (token !== surfaceRefreshToken) return;
+      root.style.opacity = '';
+    });
+  });
+}
 
 /* ---------- 当前状态（C++ 经 applySettings 推入，用户操作即时更新） ---------- */
 const state = {
@@ -532,9 +593,9 @@ function renderControls() {
     document.body.dataset.theme = state.uiTheme;
   }
 
-  /* kimi web 地址只读提示：仅选择 kimi web 时展示 */
+  /* Web 地址只读提示：仅选择 Web 时展示 */
   if (state.openTarget === 'web') {
-    uriHintEl.textContent = 'kimi web 地址：' + (state.openWebUrl || '（未设置）');
+    uriHintEl.textContent = 'Web 地址：' + (state.openWebUrl || '（未设置）');
     uriHintEl.hidden = false;
   } else {
     uriHintEl.textContent = '';
@@ -568,6 +629,11 @@ window.KimiPetSettings = {
       }
     }
     renderControls();
+  },
+
+  /* 面板从隐藏态恢复后调用；requestAnimationFrame 在 CEF 隐藏期间会自然等待 */
+  refreshSurface() {
+    refreshSurface();
   }
 };
 

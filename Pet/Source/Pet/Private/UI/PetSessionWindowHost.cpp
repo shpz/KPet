@@ -108,6 +108,75 @@ float PetSessionWindowHostAnimation::AdvanceProgress(
 	}
 }
 
+FPetSessionWindowSurfacePreparationState PetSessionWindowHostSurface::BeginOpening(
+	const bool bNeedsWarmup,
+	const float WarmupDuration)
+{
+	FPetSessionWindowSurfacePreparationState State;
+	if (bNeedsWarmup)
+	{
+		State.Phase = EPetSessionWindowSurfacePreparationPhase::WarmingUp;
+		State.Remaining = FMath::Max(WarmupDuration, 0.0f);
+	}
+	else
+	{
+		// 关闭动画中途反向打开时原生窗口与 CEF 都未隐藏，可立即重放一次内容。
+		State.bContentReplayReady = true;
+	}
+	return State;
+}
+
+bool PetSessionWindowHostSurface::Advance(
+	FPetSessionWindowSurfacePreparationState& State,
+	const float DeltaTime,
+	const float RefreshDuration)
+{
+	const float SafeDeltaTime = FMath::Max(DeltaTime, 0.0f);
+	switch (State.Phase)
+	{
+	case EPetSessionWindowSurfacePreparationPhase::WarmingUp:
+		State.Remaining = FMath::Max(0.0f, State.Remaining - SafeDeltaTime);
+		// 累计帧时长常会留下接近零的浮点尾差；不能因此多等一帧，
+		// 否则内容重放信号与透明保持时长都会偏离配置值。
+		if (State.Remaining > UE_KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+		// CEF 已脱离 WasHidden；此时才允许内容层下发快照与 refreshSurface。
+		State.Phase = EPetSessionWindowSurfacePreparationPhase::Refreshing;
+		State.Remaining = FMath::Max(RefreshDuration, 0.0f);
+		State.bContentReplayReady = true;
+		return true;
+
+	case EPetSessionWindowSurfacePreparationPhase::Refreshing:
+		State.Remaining = FMath::Max(0.0f, State.Remaining - SafeDeltaTime);
+		if (State.Remaining <= UE_KINDA_SMALL_NUMBER)
+		{
+			State.Remaining = 0.0f;
+			State.Phase = EPetSessionWindowSurfacePreparationPhase::Ready;
+		}
+		return false;
+
+	case EPetSessionWindowSurfacePreparationPhase::Ready:
+	default:
+		return false;
+	}
+}
+
+bool PetSessionWindowHostSurface::ConsumeContentReplayReady(
+	FPetSessionWindowSurfacePreparationState& State)
+{
+	const bool bWasReady = State.bContentReplayReady;
+	State.bContentReplayReady = false;
+	return bWasReady;
+}
+
+bool PetSessionWindowHostSurface::ShouldKeepWindowTransparent(
+	const FPetSessionWindowSurfacePreparationState& State)
+{
+	return State.Phase != EPetSessionWindowSurfacePreparationPhase::Ready;
+}
+
 FPetSessionWindowHost::~FPetSessionWindowHost()
 {
 	Destroy();
@@ -174,9 +243,11 @@ bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
 	SessionWindow->SetOpacity(0.0f);
 	SessionWindow->HideWindow();
 	WindowSizeInSlateScreen = ReadWindowSizeInSlateScreen();
+	ApplyRoundedWindowRegion(true);
 
 	AnimationState = EPetSessionWindowAnimationState::Hidden;
 	AnimationProgress = 0.0f;
+	SurfacePreparation = FPetSessionWindowSurfacePreparationState();
 	bHasMovedPosition = false;
 	return true;
 }
@@ -190,6 +261,9 @@ void FPetSessionWindowHost::Destroy()
 
 	AnimationState = EPetSessionWindowAnimationState::Hidden;
 	AnimationProgress = 0.0f;
+	SurfacePreparation = FPetSessionWindowSurfacePreparationState();
+	LastRoundedRegionSize = FIntPoint::NoneValue;
+	LastRoundedRegionRadius = INDEX_NONE;
 	bHasAnchor = false;
 	bHasMovedPosition = false;
 	StopContentActiveTimer();
@@ -214,13 +288,29 @@ void FPetSessionWindowHost::Destroy()
 
 void FPetSessionWindowHost::BeginOpening()
 {
+	// 已彻底隐藏的窗口恢复时，CEF 要先从 WasHidden 状态苏醒并补齐软件纹理。
+	// 关闭动画中途反向打开仍有完整纹理，不额外等待，保证快速反向操作连贯。
+	const bool bNeedsSurfaceWarmup = !SessionWindow->IsVisible();
 	AnimationState = EPetSessionWindowAnimationState::Opening;
+	SurfacePreparation = PetSessionWindowHostSurface::BeginOpening(
+		bNeedsSurfaceWarmup,
+		SurfaceWarmupDuration);
+	if (bNeedsSurfaceWarmup)
+	{
+		// 原生窗口若已隐藏，旧动画进度不再具有视觉连续性；必须从全透明开始预热，
+		// 避免异常关闭/重显交错时沿用非零 alpha 露出尚未刷新的浏览器表面。
+		AnimationProgress = 0.0f;
+	}
 	StartContentActiveTimer();
 	// 先设置透明度与锚点位置，再让 Slate 显示窗口，避免透明窗口先出现在默认的 0,0。
 	ApplyWindowTransform(true);
 	if (SessionWindow.IsValid() && !SessionWindow->IsVisible())
 	{
 		SessionWindow->ShowWindow();
+		// ShowWindow 首次会创建 Slate viewport，并可能重写原生分层窗口属性；显示后
+		// 立即重放透明度与色键，避免首帧短暂露出黑色矩形。
+		ApplyWindowTransform(true);
+		ApplyRoundedWindowRegion(true);
 	}
 	SessionWindow->BringToFront(false);
 }
@@ -256,6 +346,7 @@ EActiveTimerReturnType FPetSessionWindowHost::HandleContentActiveTimer(double, f
 void FPetSessionWindowHost::BeginClosing()
 {
 	AnimationState = EPetSessionWindowAnimationState::Closing;
+	SurfacePreparation = FPetSessionWindowSurfacePreparationState();
 	ApplyWindowTransform(false);
 }
 
@@ -299,6 +390,22 @@ void FPetSessionWindowHost::TickWindowAnimation(const float DeltaTime)
 		return;
 	}
 
+	if (AnimationState == EPetSessionWindowAnimationState::Opening &&
+		PetSessionWindowHostSurface::ShouldKeepWindowTransparent(SurfacePreparation))
+	{
+		PetSessionWindowHostSurface::Advance(
+			SurfacePreparation,
+			DeltaTime,
+			SurfaceRefreshDuration);
+		// 预热和整页刷新阶段保持当前进度（隐藏态打开时为 0），每帧重申原生综合色键，
+		// 防止 viewport 初始化或窗口重显覆盖 LWA_COLORKEY。
+		ApplyWindowTransform(false);
+		if (PetSessionWindowHostSurface::ShouldKeepWindowTransparent(SurfacePreparation))
+		{
+			return;
+		}
+	}
+
 	AnimationProgress = PetSessionWindowHostAnimation::AdvanceProgress(
 		AnimationState,
 		AnimationProgress,
@@ -312,6 +419,7 @@ void FPetSessionWindowHost::TickWindowAnimation(const float DeltaTime)
 	else if (AnimationState == EPetSessionWindowAnimationState::Closing && AnimationProgress <= 0.0f)
 	{
 		AnimationProgress = 0.0f;
+		SurfacePreparation = FPetSessionWindowSurfacePreparationState();
 		ApplyWindowTransform(true);
 		SessionWindow->HideWindow();
 		AnimationState = EPetSessionWindowAnimationState::Hidden;
@@ -377,6 +485,8 @@ void FPetSessionWindowHost::ApplyWindowTransform(const bool bForceMove)
 		SessionWindow->MoveWindowTo(AnimatedPosition);
 		LastMovedPosition = AnimatedPosition;
 		bHasMovedPosition = true;
+		// 跨显示器移动可能同步改变原生窗口 DPI 与物理尺寸；按新尺寸更新圆角区域。
+		ApplyRoundedWindowRegion(false);
 	}
 }
 
@@ -392,7 +502,7 @@ void FPetSessionWindowHost::ApplyWindowOpacity(const float Opacity)
 
 #if PLATFORM_WINDOWS
 	// Slate 弹窗在 Windows 经不透明 swapchain 上屏：PerWindow 只提供整窗 alpha，
-	// 像素 alpha 被 DWM 忽略，透明页面（设置面板）卡片外区域因此渲染成黑框。
+	// 像素 alpha 被 DWM 忽略，两个透明 WebUI 页面卡片外区域因此会渲染成黑框。
 	// 给分层窗口追加黑色色键（LWA_COLORKEY）：CEF 透明像素预乘后恰为纯黑，
 	// 由 DWM 抠除透出桌面；LWA_ALPHA 继续承担整窗淡入淡出。
 	// 代价：页面任何元素都不得使用纯黑 RGB(0,0,0)，且半透明像素按预乘色显示
@@ -412,6 +522,67 @@ void FPetSessionWindowHost::ApplyWindowOpacity(const float Opacity)
 #endif
 }
 
+void FPetSessionWindowHost::ApplyRoundedWindowRegion(const bool bForce)
+{
+#if PLATFORM_WINDOWS
+	if (!SessionWindow.IsValid())
+	{
+		return;
+	}
+
+	const TSharedPtr<FGenericWindow>& NativeWindow = SessionWindow->GetNativeWindow();
+	if (!NativeWindow.IsValid())
+	{
+		return;
+	}
+
+	HWND HWnd = static_cast<HWND>(NativeWindow->GetOSWindowHandle());
+	RECT WindowRect = {};
+	if (!HWnd || !::GetWindowRect(HWnd, &WindowRect))
+	{
+		return;
+	}
+
+	const int32 Width = WindowRect.right - WindowRect.left;
+	const int32 Height = WindowRect.bottom - WindowRect.top;
+	if (Width <= 0 || Height <= 0)
+	{
+		return;
+	}
+
+	const uint32 WindowDpi = ::GetDpiForWindow(HWnd);
+	const float DpiScale = WindowDpi > 0 ? static_cast<float>(WindowDpi) / 96.0f : 1.0f;
+	const int32 Radius = FMath::Max(1, FMath::RoundToInt(RoundedCornerRadius * DpiScale));
+	const FIntPoint RegionSize(Width, Height);
+	if (!bForce && RegionSize == LastRoundedRegionSize && Radius == LastRoundedRegionRadius)
+	{
+		return;
+	}
+
+	// CreateRoundRectRgn 的右下边界会少一像素，按 UE 自身 WindowsWindow 实现加一补齐。
+	HRGN RoundedRegion = ::CreateRoundRectRgn(0, 0, Width + 1, Height + 1, Radius * 2, Radius * 2);
+	if (!RoundedRegion)
+	{
+		UE_LOG(LogPet, Warning, TEXT("创建 WebUI 窗口圆角区域失败，Win 错误码=%lu"), ::GetLastError());
+		return;
+	}
+
+	// SetWindowRgn 成功后区域句柄归系统所有；失败时仍由调用方释放。
+	if (::SetWindowRgn(HWnd, RoundedRegion, true) == 0)
+	{
+		const DWORD ErrorCode = ::GetLastError();
+		::DeleteObject(RoundedRegion);
+		UE_LOG(LogPet, Warning, TEXT("应用 WebUI 窗口圆角区域失败，Win 错误码=%lu"), ErrorCode);
+		return;
+	}
+
+	LastRoundedRegionSize = RegionSize;
+	LastRoundedRegionRadius = Radius;
+#else
+	(void)bForce;
+#endif
+}
+
 FVector2f FPetSessionWindowHost::ReadWindowSizeInSlateScreen() const
 {
 	if (!SessionWindow.IsValid())
@@ -428,4 +599,14 @@ FVector2f FPetSessionWindowHost::ReadWindowSizeInSlateScreen() const
 bool FPetSessionWindowHost::IsVisible() const
 {
 	return SessionWindow.IsValid() && AnimationState != EPetSessionWindowAnimationState::Hidden;
+}
+
+bool FPetSessionWindowHost::ConsumeContentSurfaceReady()
+{
+	if (!IsGameThreadCall())
+	{
+		return false;
+	}
+
+	return PetSessionWindowHostSurface::ConsumeContentReplayReady(SurfacePreparation);
 }

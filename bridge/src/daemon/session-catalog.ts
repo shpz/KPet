@@ -80,8 +80,9 @@ export function resolveSessionIndexPath(env: NodeJS.ProcessEnv = process.env): s
  * 读取 CLI 会话目录。
  *
  * 单行或单个 state.json 损坏时跳过该记录，不让目录损坏阻断守护进程握手。
- * 同一个 sessionId 只保留 updatedAt 更新的记录，最终按更新时间倒序并限制
- * 为最多 50 条。
+ * 同一个 sessionId 只保留 updatedAt 更新的记录；随后按更新时间倒序对同一工作目录
+ * 折叠为最新一条，最终限制为最多 50 个工作目录。先折叠再限制，避免单一工程的历史
+ * 会话挤占整个展示配额。
  */
 export function readSessionCatalog(options: SessionCatalogOptions = {}): SessionCatalogEntry[] {
   const indexPath = options.indexPath ?? resolveSessionIndexPath(options.env ?? process.env);
@@ -128,13 +129,28 @@ export function readSessionCatalog(options: SessionCatalogOptions = {}): Session
     }
   });
 
+  const representedWorkspaces = new Set<string>();
   return [...entries.values()]
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs || b.ordinal - a.ordinal)
+    .filter((entry) => {
+      const workspaceKey = getWorkspaceKey(entry.cwd);
+      if (!workspaceKey) return true;
+      if (representedWorkspaces.has(workspaceKey)) return false;
+      representedWorkspaces.add(workspaceKey);
+      return true;
+    })
     .slice(0, MAX_SESSION_CATALOG_ENTRIES)
     .map(({ updatedAtMs: _updatedAtMs, ordinal: _ordinal, ...entry }) => entry);
 }
 
-/** 把 CLI 历史与状态机活跃会话合并为 sessions_snapshot 列表。 */
+/**
+ * 把 CLI 历史与状态机活跃会话合并为 sessions_snapshot 列表。
+ *
+ * Kimi Code 会在同一工程目录下持续写入新的会话 ID。若直接把每条目录记录都展示出来，
+ * 用户每次从面板恢复会话后都会看到同一工程堆积出大量几乎相同的条目。历史记录因此按
+ * 工作目录折叠，只保留最近一条；活跃会话不折叠，保证同一工程中并行运行的多个会话仍
+ * 可分别看到和打开。
+ */
 export function mergeSessionSnapshots(
   history: readonly SessionCatalogEntry[],
   active: readonly ActiveSessionEntry[],
@@ -142,27 +158,34 @@ export function mergeSessionSnapshots(
   const historyById = new Map(history.map((entry) => [entry.sessionId, entry]));
   const result: SessionSnapshotItem[] = [];
   const emitted = new Set<string>();
+  const representedWorkspaces = new Set<string>();
 
   // 活跃会话优先显示。状态机传入顺序为最近活动优先；若 CLI 目录已经
   // 落盘则复用标题和更新时间，否则标题留空，让 UE 使用 cwd 目录名降级，
   // 避免把长 UUID 当作正常会话标题。
   for (const current of active) {
     const item = historyById.get(current.sessionId);
+    const cwd = current.cwd ?? item?.cwd ?? '';
     result.push({
       session_id: current.sessionId,
       title: truncateUtf8(item?.title ?? '', MAX_SESSION_TITLE_BYTES),
-      cwd: truncateUtf8(current.cwd ?? item?.cwd ?? '', MAX_SESSION_CWD_BYTES),
+      cwd: truncateUtf8(cwd, MAX_SESSION_CWD_BYTES),
       active: true,
       working: current.busy,
       unread: current.unread,
       updated_at: item?.updatedAt ?? 0,
     });
     emitted.add(current.sessionId);
+    const workspaceKey = getWorkspaceKey(cwd);
+    if (workspaceKey) representedWorkspaces.add(workspaceKey);
   }
 
-  // 再补 CLI 历史，保持目录本身的更新时间倒序。
+  // 再补 CLI 历史，保持目录本身的更新时间倒序。同一工作目录只保留第一条（即最近
+  // 一条）；已经有活跃会话的工作目录不再补历史，避免列表出现同工程的冗余副本。
   for (const item of history) {
     if (emitted.has(item.sessionId)) continue;
+    const workspaceKey = getWorkspaceKey(item.cwd);
+    if (workspaceKey && representedWorkspaces.has(workspaceKey)) continue;
     result.push({
       session_id: item.sessionId,
       title: truncateUtf8(item.title, MAX_SESSION_TITLE_BYTES),
@@ -172,8 +195,27 @@ export function mergeSessionSnapshots(
       unread: false,
       updated_at: item.updatedAt,
     });
+    if (workspaceKey) representedWorkspaces.add(workspaceKey);
   }
   return result.slice(0, MAX_SESSION_CATALOG_ENTRIES);
+}
+
+/**
+ * 生成用于折叠历史会话的工作目录键。
+ *
+ * Windows 的盘符和 UNC 路径不区分大小写，且 Kimi Code 可能在同一索引中混用正反
+ * 斜杠；这里统一后再比较。POSIX/WSL 路径保留大小写，避免把 Linux 下两个不同目录
+ * 误合并。
+ */
+function getWorkspaceKey(cwd: string): string {
+  let normalized = cwd.trim().replace(/\\/g, '/');
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (/^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')) {
+    return normalized.toLowerCase();
+  }
+  return normalized;
 }
 
 function parseIndexRecord(line: string): SessionIndexRecord | null {

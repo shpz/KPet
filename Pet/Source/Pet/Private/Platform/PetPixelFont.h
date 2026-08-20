@@ -20,6 +20,9 @@ namespace PetPixelFont
 	constexpr int32 GlyphHeight = 6;
 	/** 字距步长：相邻字形列间距为 1px，取 GlyphWidth + 1。 */
 	constexpr int32 AdvanceWidth = GlyphWidth + 1;
+	/** FPS 叠加文字的输出规格：仅绘制字形，不绘制任何矩形底板。 */
+	constexpr int32 FpsOverlayScale = 2;
+	constexpr int32 FpsOverlayMargin = 8;
 
 	/** 是否为已收录字形（空格也视为字形，其行掩码全 0、经 AdvanceWidth 留白）。 */
 	inline bool HasGlyph(const TCHAR Ch)
@@ -85,5 +88,59 @@ namespace PetPixelFont
 			}
 		}
 		return 0;
+	}
+
+	/**
+	 * 把 FPS 文本直接写入预乘 BGRA DIB 的右上角。
+	 * 仅覆盖命中字形的像素；其余像素完全不动，因而叠加层没有深色底板。
+	 */
+	inline void DrawFpsOverlayTextToBgra(uint8* Bgra, int32 Width, int32 Height, const FString& Text)
+	{
+		if (!Bgra || Width <= 0 || Height <= 0 || Text.IsEmpty())
+		{
+			return;
+		}
+
+		const int32 TextWidth = FMath::Max(Text.Len(), 1) * AdvanceWidth - 1;
+		const int32 BaseX = Width - FpsOverlayMargin - TextWidth * FpsOverlayScale;
+		const int32 BaseY = FpsOverlayMargin;
+
+		for (int32 CharIndex = 0; CharIndex < Text.Len(); ++CharIndex)
+		{
+			const TCHAR Ch = Text[CharIndex];
+			for (int32 Row = 0; Row < GlyphHeight; ++Row)
+			{
+				const uint8 Mask = GetGlyphRow(Ch, Row);
+				for (int32 Col = 0; Col < GlyphWidth; ++Col)
+				{
+					if ((Mask & (1u << (GlyphWidth - 1 - Col))) == 0)
+					{
+						continue;
+					}
+
+					const int32 GlyphX = BaseX + (CharIndex * AdvanceWidth + Col) * FpsOverlayScale;
+					const int32 GlyphY = BaseY + Row * FpsOverlayScale;
+					for (int32 Dy = 0; Dy < FpsOverlayScale; ++Dy)
+					{
+						for (int32 Dx = 0; Dx < FpsOverlayScale; ++Dx)
+						{
+							const int32 X = GlyphX + Dx;
+							const int32 Y = GlyphY + Dy;
+							if (X < 0 || X >= Width || Y < 0 || Y >= Height)
+							{
+								continue;
+							}
+
+							uint8* Pixel = Bgra + (Y * Width + X) * 4;
+							// 绿字为不透明像素，RGB 无需额外预乘；亮度足以在深浅宠物材质上辨认。
+							Pixel[0] = 0;
+							Pixel[1] = 255;
+							Pixel[2] = 0;
+							Pixel[3] = 255;
+						}
+					}
+				}
+			}
+		}
 	}
 }

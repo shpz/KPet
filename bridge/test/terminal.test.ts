@@ -14,6 +14,7 @@ import {
   buildOpenWebUrl,
   buildStartWebServiceCommand,
   buildWslFallbackCommand,
+  buildWslStartWebServiceFallbackCommand,
   openTui,
   type ConnectFn,
   type SpawnFn,
@@ -207,11 +208,11 @@ test('buildOpenWebCommand：cmd /c start "" <url> 走系统默认浏览器', () 
   });
 });
 
-test('buildStartWebServiceCommand：wt 模式 → wt.exe -d <cwd> cmd /k kimi web（可见窗口）', () => {
+test('buildStartWebServiceCommand：wt 模式 → 显式新建标签、刷新环境后启动 kimi web（可见窗口）', () => {
   const cmd = buildStartWebServiceCommand({ terminal: 'wt', cwd: 'D:\\ws', sessionId: null }, 58627);
   assert.deepEqual(cmd, {
     file: 'wt.exe',
-    args: ['-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
+    args: ['new-tab', '--reloadEnvironment', '-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
     cwd: 'D:\\ws',
   });
 });
@@ -222,6 +223,27 @@ test('buildStartWebServiceCommand：cmd 模式 → cmd /c start（§4.5-3 备选
     file: 'cmd.exe',
     args: ['/c', 'start', '', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
     cwd: 'D:\\ws',
+  });
+});
+
+test('buildStartWebServiceCommand：wsl 模式 → wt 进入指定发行版启动 kimi web，启动目录转为 Windows 路径', () => {
+  const cmd = buildStartWebServiceCommand({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: null }, 58627);
+  assert.deepEqual(cmd, {
+    file: 'wt.exe',
+    args: [
+      '-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--',
+      'kimi', 'web', '--no-open', '--port', '58627',
+    ],
+    cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj',
+  });
+});
+
+test('buildWslStartWebServiceFallbackCommand：wsl 回退 → cmd start wsl.exe bash 内启动 kimi web', () => {
+  const cmd = buildWslStartWebServiceFallbackCommand({ terminal: 'wsl', wslDistro: 'Ubuntu', cwd: '/home/me/proj', sessionId: null }, 58627);
+  assert.deepEqual(cmd, {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--exec', 'bash', '-lc', 'kimi web --no-open --port 58627'],
+    cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj',
   });
 });
 
@@ -305,7 +327,43 @@ test('openTui：target=web 服务未运行 → 经 wt.exe 可见窗口拉起 kim
   // 回归：wt 不能以 windowsHide=true 拉起，否则 libuv 的 SW_HIDE 会隐藏 GUI 窗口（服务窗口不可见）
   assert.deepEqual(spawned[0], {
     file: 'wt.exe',
-    args: ['-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
+    args: ['new-tab', '--reloadEnvironment', '-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
+    windowsHide: false,
+  });
+  assert.deepEqual(spawned[1], {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'http://127.0.0.1:58627/'],
+    windowsHide: true,
+  });
+});
+
+test('openTui：target=web + terminal=wsl → 在 WSL 内拉起 kimi web，就绪后才打开浏览器', async () => {
+  const spawned: Array<{ file: string; args: string[]; windowsHide?: boolean }> = [];
+  let probes = 0;
+  const connectFn: ConnectFn = () => {
+    probes++;
+    return Promise.resolve(probes > 1);
+  };
+  const spawnFn: SpawnFn = (file, args, opts) => {
+    spawned.push({ file, args, windowsHide: opts.windowsHide });
+    return fakeChild('ok') as never;
+  };
+  const res = await openTui(
+    { target: 'web', terminal: 'wsl', wslDistro: 'Ubuntu', webUrl: 'http://127.0.0.1:58627/', cwd: '/home/me/proj', sessionId: null },
+    spawnFn,
+    connectFn,
+    { pollMs: 1, waitMs: 100 },
+    noToken,
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.terminal, 'web');
+  assert.equal(spawned.length, 2, '先在 WSL 内拉起 kimi web，再打开浏览器');
+  assert.deepEqual(spawned[0], {
+    file: 'wt.exe',
+    args: [
+      '-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--',
+      'kimi', 'web', '--no-open', '--port', '58627',
+    ],
     windowsHide: false,
   });
   assert.deepEqual(spawned[1], {
@@ -340,7 +398,7 @@ test('openTui：target=web wt.exe 不存在（ENOENT）→ 回退 cmd /c start �
   assert.equal(spawned.length, 3, 'wt 拉起失败 → cmd 回退拉起 → 打开浏览器');
   assert.deepEqual(spawned[0], {
     file: 'wt.exe',
-    args: ['-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
+    args: ['new-tab', '--reloadEnvironment', '-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'],
     windowsHide: false,
   });
   // cmd 回退路径：外层 cmd 存根隐藏，真正的服务窗口由 start 新开
@@ -350,6 +408,48 @@ test('openTui：target=web wt.exe 不存在（ENOENT）→ 回退 cmd /c start �
     windowsHide: true,
   });
   assert.deepEqual(spawned[2], { file: 'cmd.exe', args: ['/c', 'start', '', 'http://127.0.0.1:58627/'], windowsHide: true });
+});
+
+test('openTui：target=web + terminal=wsl 且 wt.exe 缺失 → 回退后仍在 WSL 内拉起 kimi web', async () => {
+  const behaviors: Array<'enoent' | 'ok'> = ['enoent', 'ok', 'ok'];
+  const spawned: Array<{ file: string; args: string[]; windowsHide?: boolean }> = [];
+  let probes = 0;
+  const connectFn: ConnectFn = () => {
+    probes++;
+    return Promise.resolve(probes > 1);
+  };
+  const spawnFn: SpawnFn = (file, args, opts) => {
+    spawned.push({ file, args, windowsHide: opts.windowsHide });
+    return fakeChild(behaviors.shift()!) as never;
+  };
+  const res = await openTui(
+    { target: 'web', terminal: 'wsl', wslDistro: 'Ubuntu', webUrl: 'http://127.0.0.1:58627/', cwd: '/home/me/proj', sessionId: null },
+    spawnFn,
+    connectFn,
+    { pollMs: 1, waitMs: 100 },
+    noToken,
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.terminal, 'web');
+  assert.equal(spawned.length, 3, 'wt 失败后经 WSL 回退拉起服务，再打开浏览器');
+  assert.deepEqual(spawned[0], {
+    file: 'wt.exe',
+    args: [
+      '-d', '\\\\wsl.localhost\\Ubuntu\\home\\me\\proj', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--',
+      'kimi', 'web', '--no-open', '--port', '58627',
+    ],
+    windowsHide: false,
+  });
+  assert.deepEqual(spawned[1], {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', '-d', 'Ubuntu', '--cd', '/home/me/proj', '--exec', 'bash', '-lc', 'kimi web --no-open --port 58627'],
+    windowsHide: true,
+  });
+  assert.deepEqual(spawned[2], {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'http://127.0.0.1:58627/'],
+    windowsHide: true,
+  });
 });
 
 test('openTui：target=web 拉起后服务一直未就绪 → 超时返回 ok=false', async () => {
@@ -370,7 +470,7 @@ test('openTui：target=web 拉起后服务一直未就绪 → 超时返回 ok=fa
   assert.equal(res.terminal, 'web');
   assert.match(res.error ?? '', /未就绪/);
   assert.equal(spawned.length, 1, '只拉起 kimi web，超时后未开浏览器');
-  assert.deepEqual(spawned[0], { file: 'wt.exe', args: ['-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'] });
+  assert.deepEqual(spawned[0], { file: 'wt.exe', args: ['new-tab', '--reloadEnvironment', '-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'] });
 });
 
 test('openTui：target=web wt 与 cmd 两条拉起路径均失败（ENOENT）→ 返回 ok=false（中文错误描述）', async () => {
@@ -391,7 +491,7 @@ test('openTui：target=web wt 与 cmd 两条拉起路径均失败（ENOENT）→
   assert.equal(res.terminal, 'web');
   assert.match(res.error ?? '', /未安装或不在 PATH/);
   assert.equal(seen.length, 2, 'wt 失败后回退 cmd，两条路径都失败才判失败');
-  assert.deepEqual(seen[0], { file: 'wt.exe', args: ['-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'] });
+  assert.deepEqual(seen[0], { file: 'wt.exe', args: ['new-tab', '--reloadEnvironment', '-d', 'D:\\ws', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'] });
   assert.deepEqual(seen[1], { file: 'cmd.exe', args: ['/c', 'start', '', 'cmd', '/k', 'kimi', 'web', '--no-open', '--port', '58627'] });
 });
 

@@ -46,4 +46,78 @@ bool FPetPixelFontGlyphTableTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPetPixelFontTransparentFpsOverlayTest,
+	"Pet.Platform.PixelFont.TransparentFpsOverlay",
+	EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+
+bool FPetPixelFontTransparentFpsOverlayTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 CanvasWidth = 96;
+	constexpr int32 CanvasHeight = 40;
+	const FString Text = TEXT("3D:12");
+	TArray<uint8> Pixels;
+	Pixels.Init(0, CanvasWidth * CanvasHeight * 4);
+
+	PetPixelFont::DrawFpsOverlayTextToBgra(Pixels.GetData(), CanvasWidth, CanvasHeight, Text);
+
+	// 以同一字形表推导应写入的位置。若渲染器重新引入矩形底板，非字形像素会立即失败。
+	TSet<int32> ExpectedInk;
+	const int32 TextWidth = (Text.Len() * PetPixelFont::AdvanceWidth - 1) * PetPixelFont::FpsOverlayScale;
+	const int32 BaseX = CanvasWidth - PetPixelFont::FpsOverlayMargin - TextWidth;
+	const int32 BaseY = PetPixelFont::FpsOverlayMargin;
+	for (int32 CharIndex = 0; CharIndex < Text.Len(); ++CharIndex)
+	{
+		for (int32 Row = 0; Row < PetPixelFont::GlyphHeight; ++Row)
+		{
+			const uint8 Mask = PetPixelFont::GetGlyphRow(Text[CharIndex], Row);
+			for (int32 Col = 0; Col < PetPixelFont::GlyphWidth; ++Col)
+			{
+				if ((Mask & (1u << (PetPixelFont::GlyphWidth - 1 - Col))) == 0)
+				{
+					continue;
+				}
+				for (int32 Dy = 0; Dy < PetPixelFont::FpsOverlayScale; ++Dy)
+				{
+					for (int32 Dx = 0; Dx < PetPixelFont::FpsOverlayScale; ++Dx)
+					{
+						const int32 X = BaseX + (CharIndex * PetPixelFont::AdvanceWidth + Col) * PetPixelFont::FpsOverlayScale + Dx;
+						const int32 Y = BaseY + Row * PetPixelFont::FpsOverlayScale + Dy;
+						ExpectedInk.Add(Y * CanvasWidth + X);
+					}
+				}
+			}
+		}
+	}
+
+	int32 ActualInkCount = 0;
+	bool bUnexpectedPixelWritten = false;
+	bool bGlyphColorInvalid = false;
+	for (int32 PixelIndex = 0; PixelIndex < CanvasWidth * CanvasHeight; ++PixelIndex)
+	{
+		const uint8* Pixel = Pixels.GetData() + PixelIndex * 4;
+		const bool bWritten = Pixel[0] != 0 || Pixel[1] != 0 || Pixel[2] != 0 || Pixel[3] != 0;
+		if (!bWritten)
+		{
+			continue;
+		}
+
+		++ActualInkCount;
+		if (!ExpectedInk.Contains(PixelIndex))
+		{
+			bUnexpectedPixelWritten = true;
+			continue;
+		}
+		if (Pixel[0] != 0 || Pixel[1] != 255 || Pixel[2] != 0 || Pixel[3] != 255)
+		{
+			bGlyphColorInvalid = true;
+		}
+	}
+
+	TestEqual(TEXT("只写入字形像素数量"), ActualInkCount, ExpectedInk.Num());
+	TestFalse(TEXT("非字形像素保持透明且没有底板"), bUnexpectedPixelWritten);
+	TestFalse(TEXT("字形像素保持不透明绿字"), bGlyphColorInvalid);
+	return true;
+}
+
 #endif

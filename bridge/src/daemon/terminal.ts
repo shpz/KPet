@@ -11,7 +11,7 @@
  * - open_target=web：用系统默认浏览器打开 open_web_url 模板（§7，支持 {session_id} 占位符；
  *   能否在 web 侧直接按会话恢复属未验证假设，见 config.ts 的 DEFAULT_OPEN_WEB_URL 注释）；
  * - open_target=web 且 URL 为回环地址（127.0.0.1 / localhost / ::1）时，开浏览器前先探测端口，
- *   未运行则经可见终端窗口拉起 `kimi web --no-open --port <port>`（terminal=wt 时 wt.exe 直拉，
+ *   未运行则经可见终端窗口拉起 `kimi web --no-open --port <port>`（terminal=wt 时 wt.exe 显式新建标签并刷新环境，
  *   wt 缺失回退 `cmd /c start`）并轮询等待就绪；服务挂在可见窗口上，用户关窗即停止服务，
  *   下次点击会自动重新拉起；非回环 URL 无法代管远端服务，维持现状直接开浏览器；
  * - open_target=web 且 URL 为回环地址时，开浏览器前读取本地 token 文件（%KIMI_CODE_HOME%
@@ -150,7 +150,10 @@ function defaultReadServerToken(): string | null {
 
 /**
  * 构造拉起 kimi web 服务的可见终端命令（纯函数，可单测）。与 cli 路径同构（§4.5-3）：
- * wt 直拉（-d <cwd> cmd /k kimi web ...），cmd 经 `cmd /c start` 中转新开窗口。
+ * wt 显式 new-tab，并以 --reloadEnvironment 刷新 Windows Terminal 已运行实例的环境后再
+ * 执行 `cmd /k kimi web ...`；cmd 经 `cmd /c start` 中转新开窗口。
+ * Windows Terminal 在携带 commandline 时默认继承其自身已缓存的环境，Kimi 安装后仍开着的
+ * 终端可能缺少新版 PATH，导致 wt 启动成功但 tab 内找不到 kimi、端口始终不会就绪。
  * 服务挂在可见窗口上，用户关窗即停止服务。
  */
 export function buildStartWebServiceCommand(opts: OpenTuiOptions, port: number): OpenTuiCommand {
@@ -158,14 +161,40 @@ export function buildStartWebServiceCommand(opts: OpenTuiOptions, port: number):
   if (opts.terminal === 'wt') {
     return {
       file: 'wt.exe',
-      args: ['-d', opts.cwd, 'cmd', '/k', ...webArgs],
+      args: ['new-tab', '--reloadEnvironment', '-d', opts.cwd, 'cmd', '/k', ...webArgs],
       cwd: opts.cwd,
+    };
+  }
+  if (opts.terminal === 'wsl') {
+    // web 服务必须与会话 CLI 处于同一 WSL 环境，否则 Windows 侧找不到仅安装在
+    // WSL 内的 kimi，端口永远不会就绪，后续浏览器也不会被打开。
+    const winCwd = wslToWindowsPath(opts.cwd, opts.wslDistro);
+    const distroArgs = opts.wslDistro ? ['-d', opts.wslDistro] : [];
+    return {
+      file: 'wt.exe',
+      args: ['-d', winCwd, 'wsl.exe', ...distroArgs, '--cd', opts.cwd, '--', ...webArgs],
+      cwd: winCwd,
     };
   }
   return {
     file: 'cmd.exe',
     args: ['/c', 'start', '', 'cmd', '/k', ...webArgs],
     cwd: opts.cwd,
+  };
+}
+
+/**
+ * terminal=wsl 且 wt.exe 缺失时拉起 kimi web 的回退命令。外层 cmd 只负责 start，
+ * 实际服务仍由指定 WSL 发行版中的 bash 执行，避免误在 Windows PATH 查找 kimi。
+ */
+export function buildWslStartWebServiceFallbackCommand(opts: OpenTuiOptions, port: number): OpenTuiCommand {
+  const winCwd = wslToWindowsPath(opts.cwd, opts.wslDistro);
+  const distroArgs = opts.wslDistro ? ['-d', opts.wslDistro] : [];
+  const webCommand = `kimi web --no-open --port ${port}`;
+  return {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '', 'wsl.exe', ...distroArgs, '--cd', opts.cwd, '--exec', 'bash', '-lc', webCommand],
+    cwd: winCwd,
   };
 }
 
@@ -387,7 +416,14 @@ function startWebService(
         const code = (err as NodeJS.ErrnoException).code;
         if (terminal === 'wt' && code === 'ENOENT') {
           // wt.exe 未安装：回退 cmd /c start（§4.5-3 备选）
-          attempt('cmd', buildStartWebServiceCommand({ ...opts, terminal: 'cmd' }, port));
+          // terminal=wsl 时，回退路径也必须在 WSL 内执行 kimi web；否则 Windows PATH
+          // 中找不到 kimi 后只会等到端口超时，浏览器不会启动。
+          attempt(
+            'cmd',
+            opts.terminal === 'wsl'
+              ? buildWslStartWebServiceFallbackCommand(opts, port)
+              : buildStartWebServiceCommand({ ...opts, terminal: 'cmd' }, port),
+          );
         } else {
           // 两条路径都失败（如 wt 缺失后 cmd 也不可用）才判定拉起失败
           const reason = code === 'ENOENT' ? 'kimi 未安装或不在 PATH' : code ?? err.message;

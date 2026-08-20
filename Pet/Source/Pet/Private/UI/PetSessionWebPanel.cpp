@@ -23,9 +23,10 @@ namespace
 	/** HTML 读取失败时的内嵌中文兜底页。 */
 	const TCHAR* EmbeddedFallbackHtml =
 		TEXT("<html><head><meta charset=\"utf-8\"><style>")
-		TEXT("html,body{height:100%;margin:0;background:#14161e;color:#e6e8f0;")
-		TEXT("font-family:\"Microsoft YaHei\",sans-serif;display:flex;align-items:center;justify-content:center;}")
-		TEXT("p{margin:4px 0;text-align:center;}")
+		TEXT("html,body{height:100%;margin:0;background:transparent;color:#e6e8f0;")
+		TEXT("font-family:\"Microsoft YaHei\",sans-serif;}body{display:flex;}")
+		TEXT("div{flex:1;border-radius:14px;background:#14161e;display:flex;flex-direction:column;")
+		TEXT("align-items:center;justify-content:center;overflow:hidden;}p{margin:4px 0;text-align:center;}")
 		TEXT("</style></head><body><div>")
 		TEXT("<p>会话面板加载失败</p>")
 		TEXT("<p style=\"color:#8a90a3;font-size:12px;\">无法读取 Content/UI/Web/session-panel.html</p>")
@@ -133,7 +134,7 @@ namespace
 	 * 禁用 CEF 加速绘制（共享纹理），强制走软件位图路径（OnPaint）。
 	 * 与设置面板共用同一处置：加速路径下 CEF 偶发回退软件 OnPaint，引擎随即
 	 * 释放纹理重建、仅按脏矩形部分上传，未初始化区域会显示为彩色重影；
-	 * 本面板虽不透明，但两面板共用进程级 CEF 配置，谁先创建浏览器都要先禁用。
+	 * 两个面板现在都保留透明圆角并共用进程级 CEF 配置，谁先创建都要先禁用。
 	 * CanSupportAcceleratedPaint 在创建首个浏览器窗口时静态缓存该命令行参数，
 	 * 必须在 SAssignNew(Browser, ...) 之前追加。
 	 */
@@ -155,7 +156,7 @@ namespace
 	 * DefaultEngine.ini 的 [SystemSettings]（GSystemSettings.Initialize 早于 RHIInit）在
 	 * RHI 初始化前生效。此处只回读有效值并记日志：值为 0 表示 blit 已生效（弹窗 Host
 	 * 的黑色色键 LWA_COLORKEY 可被 DWM 合成、透出桌面）；非 0 提示 ini 未生效、flip 交换链
-	 * 下 DWM 不保证色键合成，设置面板透明区域可能显示为黑框。
+	 * 下 DWM 不保证色键合成，两个面板的透明圆角可能显示为黑框。
 	 * 与设置面板同一路由：两面板共用同一弹窗宿主，谁先创建都要先校验。
 	 */
 	void VerifyBlitSwapChainForLayeredWindows()
@@ -170,7 +171,7 @@ namespace
 			else
 			{
 				UE_LOG(LogPet, Warning, TEXT("r.D3D11.UseAllowTearing=%d：ini 未生效或被运行时改写，弹窗可能走 flip 交换链，"
-					"DWM 不保证色键合成，设置面板透明区域可能显示为黑框"), Value);
+					"DWM 不保证色键合成，WebUI 面板透明圆角可能显示为黑框"), Value);
 			}
 		}
 		else
@@ -229,8 +230,9 @@ bool FPetSessionWebPanel::Create()
 		.ShowAddressBar(false)
 		.ShowErrorMessage(false)
 		.ShowInitialThrobber(false)
-		.SupportsTransparency(false)
-		.BackgroundColor(FColor(20, 22, 30, 255))
+		// 会话页与设置页统一走透明软件位图路径；页面只绘制圆角卡片，四角保留透明。
+		.SupportsTransparency(true)
+		.BackgroundColor(FColor(0, 0, 0, 0))
 		.BrowserFrameRate(30)
 		// SLATE_EVENT 的 (this,&Method) 绑定要求目标继承 TSharedFromThis，本面板由
 		// TUniquePtr 独占持有，因此用 CreateRaw 直接绑定裸指针。
@@ -253,11 +255,12 @@ void FPetSessionWebPanel::HandleLoadCompleted()
 {
 	bPageLoaded = true;
 	BindBridge();
-	// 面板已可见时立即全量重放；隐藏（压栈）期间不下发，恢复可见时由
-	// SetPanelVisible(true) 经 PushFullStateToPage 补齐。
+	// 页面重载发生在可见周期内时，仍要等待窗口宿主确认 CEF 表面已稳定；
+	// 否则会在 WasHidden 刚解除时只留下部分脏矩形，旧会话行看起来像重复项。
 	if (bPanelVisible)
 	{
-		PushFullStateToPage();
+		bFullStateReplayPending = true;
+		TryPushPendingFullState();
 	}
 	UE_LOG(LogPet, Log, TEXT("WebUI 会话面板页面加载完成，JS 桥与缓存快照已就绪"));
 }
@@ -276,6 +279,20 @@ void FPetSessionWebPanel::PushFullStateToPage()
 	ExecutePanelScript(FString::Printf(
 		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setFpsMonitor(%s); }"),
 		bFpsMonitorEnabled ? TEXT("true") : TEXT("false")));
+	// CEF 软件纹理新建或从 WasHidden 恢复时可能只上传脏矩形；页面侧用两帧整页
+	// 透明度变化强制完整重绘，宿主预热期间仍保持整窗透明，不会闪烁。
+	ExecutePanelScript(TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.refreshSurface(); }"));
+}
+
+void FPetSessionWebPanel::TryPushPendingFullState()
+{
+	if (!bFullStateReplayPending || !bPageLoaded || !bPanelVisible || !bWindowSurfaceReady || !Browser.IsValid())
+	{
+		return;
+	}
+
+	bFullStateReplayPending = false;
+	PushFullStateToPage();
 }
 
 void FPetSessionWebPanel::HandleLoadError()
@@ -316,10 +333,10 @@ void FPetSessionWebPanel::ReplaySnapshot()
 
 void FPetSessionWebPanel::ExecutePanelScript(const FString& Script) const
 {
-	// 页面未就绪或面板隐藏（压栈）期间不下发 JS：隐藏期 CEF 被 WasHidden(true) 停帧，
-	// 此时注入的 DOM 变更会在恢复后按脏矩形重绘时损坏画面（圆角不透明 / 整板黑）。
-	// 缓存由各 Setter 照常维护，恢复可见时由 SetPanelVisible(true) 全量重放补齐。
-	if (!bPageLoaded || !bPanelVisible || !Browser.IsValid())
+	// 页面未就绪、面板隐藏（压栈）或窗口表面尚未从 WasHidden 恢复时都不下发 JS。
+	// 此时注入的 DOM 变更可能只上传脏矩形，旧会话行会残留并视觉上与新列表叠加；
+	// 缓存由各 Setter 照常维护，宿主确认表面就绪后统一全量重放。
+	if (!bPageLoaded || !bPanelVisible || !bWindowSurfaceReady || !Browser.IsValid())
 	{
 		return;
 	}
@@ -455,11 +472,36 @@ void FPetSessionWebPanel::SetFpsMonitor(bool bEnabled)
 
 void FPetSessionWebPanel::SetPanelVisible(bool bVisible)
 {
-	bPanelVisible = bVisible;
-	// 恢复可见且页面已就绪时全量重放：隐藏期间可能累积了快照 / 主题 / FPS 更新，
-	// 一次补齐到页面（期间 CEF 停帧、JS 一概不下发）。
-	if (bVisible && bPageLoaded)
+	if (bPanelVisible == bVisible)
 	{
-		PushFullStateToPage();
+		// 同一可见周期内的重复通知无需重置表面就绪状态；若页面刚完成加载，
+		// 只尝试补发此前挂起的全量状态即可。
+		TryPushPendingFullState();
+		return;
 	}
+
+	bPanelVisible = bVisible;
+	bWindowSurfaceReady = false;
+	if (bVisible)
+	{
+		// 隐藏期间可能累积了快照、主题和 FPS 更新；但不能在 ShowWindow 同一时刻
+		// 直接注入，须等 WindowHost 的预热信号后一次补齐。
+		bFullStateReplayPending = true;
+	}
+	else
+	{
+		// 下一次可见周期必定重新由宿主触发表面预热与完整重放。
+		bFullStateReplayPending = false;
+	}
+}
+
+void FPetSessionWebPanel::NotifyWindowSurfaceReady()
+{
+	if (!bPanelVisible)
+	{
+		return;
+	}
+
+	bWindowSurfaceReady = true;
+	TryPushPendingFullState();
 }

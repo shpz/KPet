@@ -14,7 +14,7 @@
     --row-limit: 8;
 
     /* ===== 主题变量（默认 dark-glass 深色玻璃：与既有配色一致） ===== */
-    /* 页面底色（窗口矩形四角即此色），面板圆角卡片画在其上 */
+    /* 页面透明区的后备色；实体颜色只由面板卡片绘制 */
     --bg: #14161e;
 
     /* 文字层级 */
@@ -82,7 +82,8 @@
 
     --panel-bg: #ffffff;
     --panel-border: rgba(15, 23, 42, 0.07);
-    --panel-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px rgba(15, 23, 42, 0.10);
+    /* 色键透明圆角外侧不能可靠混合桌面，禁用外投影避免角落色带 */
+    --panel-shadow: none;
 
     --divider: #eef1f5;
     --pill-bg: #f2f4f8;
@@ -128,7 +129,8 @@
 
     --panel-bg: #fffdf7;
     --panel-border: rgba(196, 140, 88, 0.22);
-    --panel-shadow: 0 2px 4px rgba(150, 96, 52, 0.10), 0 16px 40px rgba(150, 96, 52, 0.20);
+    /* 同上：只保留卡片本体，不向透明圆角写入阴影像素 */
+    --panel-shadow: none;
 
     --divider: #f6e8d8;
     --pill-bg: #fde9d6;
@@ -161,11 +163,11 @@
     --empty-icon: #d99b5f;
   }
 
-  html, body { height: 100%; }
+  html, body { height: 100%; background: transparent; }
 
   body {
-    /* 不透明深底色填满整个窗口：窗口是矩形的，圆角卡片画在底色上，四角与底色同色 */
-    background: var(--bg);
+    /* 浏览器与 Slate 宿主共同保留透明背景，让面板四个圆角真正透出桌面 */
+    background: transparent;
     color: var(--text-1);
     font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
     overflow: hidden;
@@ -433,10 +435,11 @@
  *   applySnapshot(items)            全量替换列表（items 为数组）
  *   addOrUpdate(item)               新增或原位更新一条
  *   removeSession(sessionId)        删除一条
- *   setActive(sessionId, bool)      设置激活态（true 时其余会话取消激活）
+ *   setActive(sessionId, bool)      设置目标会话的激活态
  *   updateState(sessionId, state)   局部更新 { working, unread }
  *   setTheme(themeId)               切换主题（body[data-theme] 即时生效）
  *   setFpsMonitor(enabled)          启停 FPS 上报
+ *   refreshSurface()                恢复显示后强制完整重绘透明表面
  *
  * 条目形状：{ sessionId, title, cwd, active, working, unread }
  * 全部方法幂等、防 undefined：C++ 可能在页面任意时机注入调用。
@@ -453,6 +456,27 @@ const sessions = new Map();
 
 /* ---------- 主题清单：与设置页共用同一套 themeId ---------- */
 const THEME_IDS = ['dark-glass', 'light-minimal', 'cute-pet'];
+
+/* ---------- 透明表面完整刷新 ---------- */
+/* UE WebBrowser 的软件纹理首次可能只上传局部脏区。恢复显示时短暂改变整页透明度，
+ * 让 CEF 连续提交两次完整页面绘制，覆盖未初始化像素与隐藏前残留。宿主会在预热期
+ * 保持整窗透明，因此这个极小的透明度变化不会被用户看到。 */
+let surfaceRefreshToken = 0;
+function refreshSurface() {
+  const token = ++surfaceRefreshToken;
+  const root = document.documentElement;
+  root.style.opacity = '';
+  void root.offsetWidth;
+  requestAnimationFrame(() => {
+    if (token !== surfaceRefreshToken) return;
+    root.style.opacity = '0.999';
+    void root.offsetWidth;
+    requestAnimationFrame(() => {
+      if (token !== surfaceRefreshToken) return;
+      root.style.opacity = '';
+    });
+  });
+}
 
 /* ---------- 工具函数 ---------- */
 function truncatePath(p, maxLen) {
@@ -650,9 +674,8 @@ function showPanel() {
 }
 
 /* ---------- 行点击：选中会话 ---------- */
-/* 视觉切换（唯一激活 + 清除未读）在本地立即执行，不等 C++ 回推 */
+/* 点击仅乐观清除目标未读，不改宿主维护的会话激活态。 */
 function selectSession(item) {
-  sessions.forEach((s) => { s.active = (s === item); });
   item.unread = false;
   renderList();
   callBridge('SelectSession', item.sessionId);
@@ -707,19 +730,14 @@ window.KimiPetPanel = {
     showPanel();
   },
 
-  /* 设置激活态：目标置为 active，其余会话取消激活（幂等） */
+  /* 设置激活态：仅更新目标；结束目标会话时同时结束其工作态（幂等）。 */
   setActive(sessionId, active) {
     if (sessionId == null) return;
     const key = String(sessionId);
     const target = sessions.get(key);
     if (!target) return;
-    sessions.forEach((s) => { s.active = false; });
     target.active = !!active;
-    // working 是 active 的子状态：非激活会话一律结束工作中的跳动；仅目标保留激活状态，
-    // 其 working 是否保留由后续钳制决定（激活时保留、取消激活时清除）。
-    sessions.forEach((s) => {
-      if (!s.active) s.working = false;
-    });
+    if (!target.active) target.working = false;
     renderList();
     showPanel();
   },
@@ -751,6 +769,11 @@ window.KimiPetPanel = {
     } else {
       window.KimiPetFps.stop();
     }
+  },
+
+  /* 面板从隐藏态恢复后调用；requestAnimationFrame 在 CEF 隐藏期间会自然等待 */
+  refreshSurface() {
+    refreshSurface();
   }
 };
 
