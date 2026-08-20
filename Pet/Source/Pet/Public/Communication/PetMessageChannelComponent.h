@@ -1,14 +1,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Communication/PetControlClient.h"
 #include "Communication/PetSessionTypes.h"
 #include "Components/ActorComponent.h"
 #include "PetMessageChannelComponent.generated.h"
 
-class FPetControlClient;
-
 DECLARE_MULTICAST_DELEGATE_TwoParams(FPetStateMessageNative, const FString&, const FString&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FPetSessionsSnapshotNative, const TArray<FPetSessionInfo>&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FPetConfigSnapshotNative, const FPetSettingsSnapshot&);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FPetSessionStartNative, const FString&, const FString&, bool);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FPetSessionEndNative, const FString&, const FString&);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FPetSessionStateNative, const FString&, bool, bool);
@@ -43,6 +43,7 @@ public:
 
 	void SendOpenTui(const FString& SessionId = FString());
 	void SendPetMoved(int32 X, int32 Y);
+	void SendUpdateConfig(const FPetConfigPatch& Patch);
 	bool SendClosePet();
 
 	bool IsConnected() const;
@@ -50,6 +51,7 @@ public:
 
 	FPetStateMessageNative OnPetState;
 	FPetSessionsSnapshotNative OnSessionsSnapshot;
+	FPetConfigSnapshotNative OnConfigSnapshot;
 	FPetSessionStartNative OnSessionStart;
 	FPetSessionEndNative OnSessionEnd;
 	FPetSessionStateNative OnSessionState;

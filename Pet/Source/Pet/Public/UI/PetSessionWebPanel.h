@@ -11,14 +11,14 @@ struct FPetSessionInfo;
 enum class EWebBrowserConsoleLogSeverity;
 
 /**
- * WebUI 会话面板（PoC）。
+ * WebUI 会话面板。
  *
- * 用 SWebBrowser 加载 Content/UI/Web/session-panel.html，把 UMG 会话面板的
+ * 用 SWebBrowser 加载 Content/UI/Web/session-panel.html，把会话面板的
  * 数据 API 镜像为 C++ -> JS 调用（window.KimiPetPanel.*），并持有
  * UPetSessionWebBridge 供 JS -> C++ 回调。全部方法必须在游戏线程调用。
  *
  * 该面板只负责 Web 内容与数据收发，不创建 SWindow；窗口由
- * FPetSessionWindowHost 承载，与 UMG 回退路径共用同一宿主。
+ * FPetSessionWindowHost 承载（UMG 路径已移除，会话面板仅此一条路径）。
  */
 class FPetSessionWebPanel
 {
@@ -28,8 +28,8 @@ public:
 
 	/**
 	 * 创建 SWebBrowser 并加载页面。HTML 读取失败时改用内嵌中文兜底页，不返回失败；
-	 * 但 WebBrowser 模块不可用（CEF 加载失败）时返回 false，调用方需据此回退到 UMG 路径。
-	 * 页面本身的加载结果由 OnLoadCompleted / OnLoadError 回调体现。
+	 * 但 WebBrowser 模块不可用（CEF 加载失败）时返回 false，会话面板即不可用
+	 *（UMG 路径已移除，无回退）。页面本身的加载结果由 OnLoadCompleted / OnLoadError 回调体现。
 	 */
 	bool Create();
 
@@ -56,6 +56,15 @@ public:
 	void SetSessionActive(const FString& SessionId, bool bActive);
 	void UpdateSessionState(const FString& SessionId, bool bWorking, bool bUnread);
 
+	/** 切换主题（三主题之一），页面加载完成前缓存、完成后重放。 */
+	void SetTheme(const FString& ThemeId);
+
+	/** 启停 Web 页面 FPS 上报（config_snapshot / 设置回调下发）。 */
+	void SetFpsMonitor(bool bEnabled);
+
+	/** 面板显隐通知：隐藏（压栈）期间 JS 一律不下发（缓存照常更新），恢复可见时全量重放。 */
+	void SetPanelVisible(bool bVisible);
+
 private:
 	void HandleLoadCompleted();
 	void HandleLoadError();
@@ -66,9 +75,11 @@ private:
 		EWebBrowserConsoleLogSeverity Severity);
 	void BindBridge();
 	void ReplaySnapshot();
+	/** 页面就绪后向页面全量重放（快照 + 主题 + FPS 开关）；面板隐藏期间不发送。 */
+	void PushFullStateToPage();
 	void ExecutePanelScript(const FString& Script) const;
 	FPetSessionInfo* FindSession(const FString& SessionId);
-	/** 页面加载完成前只更新缓存；完成后同时下发增量 JS。 */
+	/** 页面加载完成且面板可见时才下发增量 JS；未就绪或隐藏（压栈）时只更新缓存。 */
 	void PublishChangesOnlyWhenReady(const FString& Script);
 
 	/** SWebBrowser 控件本体。 */
@@ -82,4 +93,13 @@ private:
 
 	/** 页面 OnLoadCompleted 是否已经触发。 */
 	bool bPageLoaded = false;
+
+	/** 面板是否可见（非隐藏 / 压栈）。初始为隐藏，控制 CEF JS 下发闸门。 */
+	bool bPanelVisible = false;
+
+	/** 最近一次主题；页面加载完成后重放（避免加载期间丢失设置）。 */
+	FString LastTheme;
+
+	/** 最近一次 FPS 上报开关；页面加载完成后重放。 */
+	bool bFpsMonitorEnabled = false;
 };

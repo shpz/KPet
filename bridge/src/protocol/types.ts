@@ -20,11 +20,13 @@ export const MESSAGE_TYPES = [
   'task_end', // 守→渲 | PostToolUse(Failure) / SubagentStop | 触发完成气泡
   'tasks_snapshot', // 守→渲 | 连接建立 / 渲染进程重启后 | 全量状态恢复
   'sessions_snapshot', // 守→渲 | 连接建立 / 渲染进程重启后 | CLI 历史与活跃会话目录
+  'config_snapshot', // 守→渲 | 连接建立 / 配置更新后 | 全量配置快照（设置 WebUI 初始化）
   'notify', // 守→渲 | 任务完成/失败、Notification | 消息气泡
   'open_tui', // 渲→守 | 点击宠物 / 点击气泡 | 请求打开终端
   'heartbeat', // 渲→守 | 每 3 秒 | 保活心跳
   'pet_moved', // 渲→守 | 拖拽结束 | 位置持久化
   'close_pet', // 渲→守 | 用户请求关闭宠物；payload.reason=user
+  'update_config', // 渲→守 | 设置 WebUI 保存 | 请求更新守护进程配置
   'shutdown', // 守→渲 | 守护进程退出前 | 通知渲染进程退出
   'protocol_error', // 双向 | 收到非法消息 | 仅日志用途
 ] as const;
@@ -122,6 +124,14 @@ export interface SessionsSnapshotPayload {
   sessions: SessionSnapshotItem[];
 }
 
+/** config_snapshot：守护进程全量有效配置，供设置 WebUI 初始化 / 更新后刷新。 */
+export interface ConfigSnapshotPayload {
+  open_target: OpenTarget;
+  ui_theme: UiThemeName;
+  fps_monitor: boolean;
+  open_web_url: string;
+}
+
 export type NotifyLevel = 'info' | 'success' | 'error';
 
 export interface NotifyPayload {
@@ -159,6 +169,21 @@ export interface ClosePetPayload {
   reason: 'user';
 }
 
+/** update_config 可更新的配置值。 */
+export type OpenTarget = 'cli' | 'web';
+/** 设置 WebUI 主题（ui_theme）：dark-glass / light-minimal / cute-pet。 */
+export type UiThemeName = 'dark-glass' | 'light-minimal' | 'cute-pet';
+
+/**
+ * update_config：设置 WebUI 保存时由渲染进程下发的部分配置。
+ * 字段可缺省，至少要有一个合法字段，否则守护进程回 protocol_error。
+ */
+export interface UpdateConfigPayload {
+  open_target?: OpenTarget;
+  ui_theme?: UiThemeName;
+  fps_monitor?: boolean;
+}
+
 export type ShutdownReason = 'host_gone' | 'user' | 'error';
 
 export interface ShutdownPayload {
@@ -183,11 +208,13 @@ export interface PayloadMap {
   task_end: TaskEndPayload;
   tasks_snapshot: TasksSnapshotPayload;
   sessions_snapshot: SessionsSnapshotPayload;
+  config_snapshot: ConfigSnapshotPayload;
   notify: NotifyPayload;
   open_tui: OpenTuiPayload;
   heartbeat: HeartbeatPayload;
   pet_moved: PetMovedPayload;
   close_pet: ClosePetPayload;
+  update_config: UpdateConfigPayload;
   shutdown: ShutdownPayload;
   protocol_error: ProtocolErrorPayload;
 }

@@ -5,7 +5,10 @@
 #include "Player/PetWorkState.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/SoftObjectPtr.h"
+#include "UI/PetPanelStack.h"
 #include "UI/PetSessionWebPanel.h"
+#include "UI/PetSettingsWebPanel.h"
+#include "Communication/PetSessionTypes.h"
 #include "PetCapturePawn.generated.h"
 
 class FRHIGPUTextureReadback;
@@ -15,7 +18,6 @@ class UPetCameraManagerComponent;
 class UPetCharacterMotionComponent;
 class UPetMessageChannelComponent;
 class UPetSceneSlotComponent;
-class UPetSessionPanelWidget;
 class UAnimInstance;
 class USceneCaptureComponent2D;
 class USkeletalMeshComponent;
@@ -67,11 +69,22 @@ private:
 	void AdjustCameraRotation(float DeltaX, float DeltaY);
 	void AdjustCameraZoom(float WheelDelta);
 	void ApplyCameraCursorImage();
-	void InitializeSessionPanel();
-	void ShutdownSessionPanel();
+	void InitializePanels();
+	void ShutdownPanels();
 	void UpdateSessionPanelAnchor();
-	void ReplaySessionPanelPresentation();
+	void UpdateSettingsPanelAnchor();
+	void ApplyPanelStackStep(const FPetPanelStackStep& Step);
+	FSlateRect ComputePetBoundsInSlateScreen() const;
 	void HandleSessionSelected(const FString& SessionId);
+	void HandleConfigSnapshot(const FPetSettingsSnapshot& Snapshot);
+	void HandleSetOpenTarget(const FString& Target);
+	void HandleSetTheme(const FString& ThemeId);
+	void HandleSetFpsMonitor(bool bEnabled);
+	void HandleCloseSettings();
+	void HandleCloseSession();
+	void HandleReportFps(int32 Fps);
+	void ToggleSessionPanel();
+	void ToggleSettingsPanel();
 	void HandlePetState(const FString& State, const FString& Reason);
 	void HandleSessionsSnapshot(const TArray<FPetSessionInfo>& Sessions);
 	void HandleSessionStart(const FString& SessionId, const FString& Cwd, bool bResume);
@@ -79,24 +92,6 @@ private:
 	void HandleSessionState(const FString& SessionId, bool bWorking, bool bUnread);
 	void HandleShutdown(const FString& Reason);
 	void HandleCloseRequested();
-
-	/**
-	 * 数据路由：优先推给 WebUI 面板，否则推给 UMG 面板（与 GConfig 的
-	 * [Pet.SessionPanel] bUseWebUI 开关保持一致）。两个回调都只收现有资源，
-	 * 面板不存在时静默跳过，保证新旧路径互斥且都无需判空样板。
-	 */
-	template <typename TWebCall, typename TUmgCall>
-	void RouteSessionData(TWebCall&& WebCall, TUmgCall&& UmgCall)
-	{
-		if (SessionWebPanel)
-		{
-			WebCall(*SessionWebPanel);
-		}
-		else if (SessionPanelWidget)
-		{
-			UmgCall(*SessionPanelWidget);
-		}
-	}
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "组件", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> RootComp = nullptr;
@@ -141,14 +136,6 @@ private:
 	UPROPERTY()
 	TObjectPtr<UTextureRenderTarget2D> RenderTarget = nullptr;
 
-	/** 会话面板的 UMG Blueprint 类，由 BP_PetCapturePawn 配置软引用并参与 Cook。 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "会话面板", meta = (AllowPrivateAccess = "true"))
-	TSoftClassPtr<UPetSessionPanelWidget> SessionPanelWidgetClass;
-
-	/** 由 Pawn 强引用持有，避免 SWindow 中的 SObjectWidget 指向已回收对象。 */
-	UPROPERTY(Transient)
-	TObjectPtr<UPetSessionPanelWidget> SessionPanelWidget = nullptr;
-
 	/** 分层窗口左上角在 Windows 虚拟桌面中的屏幕像素坐标。 */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "窗口", meta = (AllowPrivateAccess = "true"))
 	FIntPoint WindowScreenPosition = FIntPoint::ZeroValue;
@@ -162,17 +149,34 @@ private:
 
 	PetLayeredWindow* PetWindow = nullptr;
 	FPetSessionWindowHost* SessionWindowHost = nullptr;
+	FPetSessionWindowHost* SettingsWindowHost = nullptr;
 
-	/** WebUI 会话面板（PoC）。非空时数据走 Web 路径，UMG 面板保持为空。 */
+	/** WebUI 会话面板。非空时数据走 Web 路径。 */
 	TUniquePtr<FPetSessionWebPanel> SessionWebPanel;
 
-	/** 桥 OnCloseRequested 绑定 Host::Close 的句柄，用于 Shutdown 时精确解绑。 */
-	FDelegateHandle SessionWebCloseHandle;
+	/** WebUI 设置面板。 */
+	TUniquePtr<FPetSettingsWebPanel> SettingsWebPanel;
+
+	/** 最近一次 config_snapshot 全量配置（守护进程权威，设置面板回推后对齐）。 */
+	FPetSettingsSnapshot CurrentSettings;
+
+	/** 两个 WebUI 面板的堆栈式导航状态；所有开关路径都经它推进。 */
+	FPetPanelStackState PanelStack;
+
+	/** Ctrl+, 热键触发的设置面板切换请求（消息线程置位，游戏线程 Tick 消费）。 */
+	bool bSettingsPanelTogglePending = false;
+
+	/** 3D 世界帧率统计（Tick 计数，每秒结算一次）。 */
+	double WorldFpsStatsStartTime = 0.0;
+	int32 WorldFpsFramesInWindow = 0;
+	int32 WorldFps = 0;
+
+	/** WebUI 帧率（两面板 ReportFps 取最近值；-1 表示尚无上报的未知态）。 */
+	int32 WebFps = -1;
 
 	int32 PresentedFrames = 0;
 	bool bPresentedValidFrame = false;
 	bool bSessionPanelTogglePending = false;
-	bool bSessionPanelPresentationPending = false;
 	bool bCloseRequestPending = false;
 	bool bCloseRequested = false;
 	double CloseFallbackDeadline = 0.0;

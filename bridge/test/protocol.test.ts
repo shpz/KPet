@@ -114,8 +114,36 @@ test('validateEnvelope：id 可选，缺省信封通过（§4.2 id 可选）', (
   assert.equal('id' in input, false);
 });
 
-test('isKnownType 覆盖协议全部 17 种消息类型', () => {
-  assert.equal(MESSAGE_TYPES.length, 17);
+test('isKnownType 覆盖协议全部 19 种消息类型', () => {
+  assert.equal(MESSAGE_TYPES.length, 19);
   for (const t of MESSAGE_TYPES) assert.equal(isKnownType(t), true);
   assert.equal(isKnownType('nope'), false);
+});
+
+test('update_config / config_snapshot：消息类型登记与 payload 构造', () => {
+  assert.equal(isKnownType('update_config'), true);
+  assert.equal(isKnownType('config_snapshot'), true);
+
+  const upd = createEnvelope('update_config', { ui_theme: 'cute-pet', fps_monitor: true });
+  assert.equal(upd.type, 'update_config');
+  assert.equal(upd.session_id, null, '与会话无关，信封 session_id 为 null');
+  assert.deepEqual(upd.payload, { ui_theme: 'cute-pet', fps_monitor: true });
+
+  const snap = createEnvelope('config_snapshot', {
+    open_target: 'cli',
+    ui_theme: 'dark-glass',
+    fps_monitor: false,
+    open_web_url: 'http://127.0.0.1:58627/',
+  });
+  assert.equal(snap.type, 'config_snapshot');
+  assert.deepEqual(snap.payload, {
+    open_target: 'cli',
+    ui_theme: 'dark-glass',
+    fps_monitor: false,
+    open_web_url: 'http://127.0.0.1:58627/',
+  });
+
+  // 两种新消息通过信封结构校验（字段级由收方校验）
+  assert.equal(validateEnvelope(JSON.parse(JSON.stringify(upd))).ok, true);
+  assert.equal(validateEnvelope(JSON.parse(JSON.stringify(snap))).ok, true);
 });

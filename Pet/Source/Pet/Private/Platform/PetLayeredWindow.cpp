@@ -1,11 +1,13 @@
 #include "Platform/PetLayeredWindow.h"
 #include "Platform/PetLayeredWindowInput.h"
+#include "Platform/PetPixelFont.h"
 #include "Pet.h"
 
 static const TCHAR* PetWindowClassName = TEXT("KimiPetLayeredWindow");
 static constexpr UINT PetCameraWheelMessage = WM_APP + 51;
 static constexpr UINT PetCameraRotateMessage = WM_APP + 52;
 PetLayeredWindow* PetLayeredWindow::MouseHookOwner = nullptr;
+PetLayeredWindow* PetLayeredWindow::KeyboardHookOwner = nullptr;
 
 bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 {
@@ -78,6 +80,15 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 	{
 		UE_LOG(LogPet, Warning, TEXT("安装摄像机滚轮监听失败: %u，将回退为窗口滚轮消息"), GetLastError());
 	}
+	// Ctrl+, 设置面板快捷键：与 ESC/R 同款语义——低层键盘钩子只观察不拦截，
+	// 仅当光标停在宠物不透明像素上时才触发（窗口是 WS_EX_NOACTIVATE，永远拿不到
+	// 键盘焦点，无法用常规按键消息，也不用全局 RegisterHotKey 抢其它程序的按键）。
+	KeyboardHookOwner = this;
+	KeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, &PetLayeredWindow::StaticLowLevelKeyboardProc, HookModule, 0);
+	if (!KeyboardHook)
+	{
+		UE_LOG(LogPet, Warning, TEXT("安装 Ctrl+, 键盘监听失败: %u，设置面板快捷键不可用"), GetLastError());
+	}
 	UE_LOG(LogPet, Log, TEXT("Layered window created: %dx%d at (%d,%d)"), Size, Size, Pos.x, Pos.y);
 	return true;
 }
@@ -92,6 +103,15 @@ void PetLayeredWindow::Destroy()
 	if (MouseHookOwner == this)
 	{
 		MouseHookOwner = nullptr;
+	}
+	if (KeyboardHook)
+	{
+		UnhookWindowsHookEx(KeyboardHook);
+		KeyboardHook = nullptr;
+	}
+	if (KeyboardHookOwner == this)
+	{
+		KeyboardHookOwner = nullptr;
 	}
 	if (GetCapture() == WindowHandle)
 	{
@@ -126,6 +146,116 @@ void PetLayeredWindow::Tick(float)
 	{
 		bWheelCameraCursorActive = false;
 		::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+	}
+}
+
+void PetLayeredWindow::SetFpsOverlayEnabled(bool bEnabled)
+{
+	if (bFpsOverlayEnabled == bEnabled)
+	{
+		return;
+	}
+	bFpsOverlayEnabled = bEnabled;
+	// 值不变也强制重拼文本，保证开关切换后绘制文本与最新值一致。
+	SetFpsValues(WorldFps, WebFps);
+}
+
+void PetLayeredWindow::SetFpsValues(int32 InWorldFps, int32 InWebFps)
+{
+	WorldFps = InWorldFps;
+	WebFps = InWebFps;
+	// WebFps<0 表示无上报（未知态），显示 "--"。
+	FString Text = FString::Printf(
+		TEXT("3D:%d UI:%s"),
+		WorldFps,
+		WebFps >= 0 ? *FString::FromInt(WebFps) : TEXT("--"));
+	if (Text != FpsOverlayText)
+	{
+		FpsOverlayText = MoveTemp(Text);
+	}
+}
+
+void PetLayeredWindow::DrawFpsOverlay()
+{
+	if (!DibBits || FpsOverlayText.IsEmpty())
+	{
+		return;
+	}
+
+	using namespace PetPixelFont;
+	constexpr int32 Scale = 2;          // 字体放大倍数，320 窗口下保证可读
+	constexpr int32 Margin = 6;         // 距窗口右上角边距
+	constexpr int32 PadX = 4;           // 文本横向内边距（再乘 Scale 后为实际像素）
+	constexpr int32 PadY = 2;
+	constexpr uint8 BgAlpha = 150;      // 半透明深色底，保证绿字在任何背景下可读
+	constexpr uint8 BgB = 18, BgG = 22, BgR = 26;
+
+	const int32 TextWidthPx = FMath::Max(FpsOverlayText.Len(), 1) * AdvanceWidth - 1; // 字形宽 + 字距
+	const int32 Width = TextWidthPx * Scale;
+	const int32 Height = GlyphHeight * Scale;
+	const int32 TotalWidth = Width + PadX * 2 * Scale;
+	const int32 TotalHeight = Height + PadY * 2 * Scale;
+	const int32 LeftX = Size - Margin - TotalWidth;
+	const int32 TopY = Margin;
+
+	// 半透明深色底（预乘：RGB *= BgAlpha/255；DIB 契约见 Present 注释）。
+	uint8* Base = static_cast<uint8*>(DibBits);
+	for (int32 Y = TopY; Y < TopY + TotalHeight; ++Y)
+	{
+		if (Y < 0 || Y >= Size)
+		{
+			continue;
+		}
+		for (int32 X = LeftX; X < LeftX + TotalWidth; ++X)
+		{
+			if (X < 0 || X >= Size)
+			{
+				continue;
+			}
+			uint8* P = Base + (Y * Size + X) * 4;
+			P[0] = static_cast<uint8>(BgB * BgAlpha / 255);
+			P[1] = static_cast<uint8>(BgG * BgAlpha / 255);
+			P[2] = static_cast<uint8>(BgR * BgAlpha / 255);
+			P[3] = BgAlpha;
+		}
+	}
+
+	// 绿字（alpha=255，RGB 直接写即预乘等价）。
+	const int32 BaseX = LeftX + PadX * Scale;
+	const int32 BaseY = TopY + PadY * Scale;
+	for (int32 CharIndex = 0; CharIndex < FpsOverlayText.Len(); ++CharIndex)
+	{
+		const TCHAR Ch = FpsOverlayText[CharIndex];
+		for (int32 Row = 0; Row < GlyphHeight; ++Row)
+		{
+			const uint8 Mask = GetGlyphRow(Ch, Row);
+			for (int32 Col = 0; Col < GlyphWidth; ++Col)
+			{
+				if ((Mask & (1u << (GlyphWidth - 1 - Col))) == 0)
+				{
+					continue;
+				}
+				const int32 GlyphX = BaseX + (CharIndex * AdvanceWidth + Col) * Scale;
+				const int32 GlyphY = BaseY + Row * Scale;
+				for (int32 Dy = 0; Dy < Scale; ++Dy)
+				{
+					for (int32 Dx = 0; Dx < Scale; ++Dx)
+					{
+						const int32 X = GlyphX + Dx;
+						const int32 Y = GlyphY + Dy;
+						if (X < 0 || X >= Size || Y < 0 || Y >= Size)
+						{
+							continue;
+						}
+						uint8* P = Base + (Y * Size + X) * 4;
+						P[0] = 0;
+						P[1] = 255;
+						P[2] = 0;
+						P[3] = 255;
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -181,6 +311,12 @@ void PetLayeredWindow::Present(const uint8* SrcBGRA)
 	{
 		UE_LOG(LogPet, Verbose, TEXT("Frame %d alpha stats(fixed): a==0: %d (%.1f%%), a==255: %d, mid: %d, maxRGB(a=0): %d"),
 			FrameCounter, AlphaZero, 100.0 * AlphaZero / NumPixels, AlphaFull, AlphaMid, MaxRgbAmongTransparent);
+	}
+
+	// FPS 叠加层：值未变化时文本缓存复用，仅在 Present（DIB 已整帧重写）后上屏。
+	if (bFpsOverlayEnabled)
+	{
+		DrawFpsOverlay();
 	}
 
 	UpdateOnScreen();
@@ -473,6 +609,35 @@ LRESULT CALLBACK PetLayeredWindow::StaticLowLevelMouseProc(int32 Code, WPARAM WP
 		}
 	}
 	return CallNextHookEx(Owner ? Owner->MouseHook : nullptr, Code, WParam, LParam);
+}
+
+LRESULT CALLBACK PetLayeredWindow::StaticLowLevelKeyboardProc(int32 Code, WPARAM WParam, LPARAM LParam)
+{
+	PetLayeredWindow* Owner = KeyboardHookOwner;
+	if (Code >= 0 && Owner && Owner->WindowHandle && (WParam == WM_KEYDOWN || WParam == WM_SYSKEYDOWN))
+	{
+		const KBDLLHOOKSTRUCT* KeyInfo = reinterpret_cast<const KBDLLHOOKSTRUCT*>(LParam);
+		if (KeyInfo && KeyInfo->vkCode == VK_OEM_COMMA && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
+		{
+			// 与 ESC/R 同一触发域：光标正指着宠物本体（不透明像素）才响应。
+			// 按住连发只触发一次，与原先 MOD_NOREPEAT 行为对齐。
+			POINT Cursor{};
+			if (!Owner->bSettingsChordDown && GetCursorPos(&Cursor) && Owner->IsOpaqueScreenPoint(Cursor) && Owner->OnHotKey)
+			{
+				Owner->OnHotKey();
+			}
+			Owner->bSettingsChordDown = true;
+		}
+	}
+	else if (Code >= 0 && Owner && (WParam == WM_KEYUP || WParam == WM_SYSKEYUP))
+	{
+		const KBDLLHOOKSTRUCT* KeyInfo = reinterpret_cast<const KBDLLHOOKSTRUCT*>(LParam);
+		if (KeyInfo && KeyInfo->vkCode == VK_OEM_COMMA)
+		{
+			Owner->bSettingsChordDown = false;
+		}
+	}
+	return CallNextHookEx(Owner ? Owner->KeyboardHook : nullptr, Code, WParam, LParam);
 }
 
 bool PetLayeredWindow::IsOpaqueScreenPoint(const POINT& ScreenPoint) const

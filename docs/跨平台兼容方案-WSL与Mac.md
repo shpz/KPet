@@ -116,10 +116,10 @@
 - 显示器 id 用 `MonitorFromPoint` / `GetMonitorInfoW`：
   - `PetControlClient.cpp:134-147` `SendPetMoved`。
 
-#### 2.2.3 会话面板（主路径 WebUI 依赖 CEF；仅 UMG/Slate 降级路径跨平台）
+#### 2.2.3 会话面板（仅 WebUI 路径；UMG 路径已移除）
 
-- 会话面板的主路径是 WebUI，依赖 CEF（`SWebBrowser`，见 `Pet/Source/Pet/Private/UI/PetSessionWebPanel.cpp`）：CEF 在 macOS 无现成对应物，需另行处理（WebKit/CEF 等价物），因此主路径并非「Mac 可直接复用」。
-- Mac 可直接复用的是 UMG/Slate 降级路径（由 `[Pet.SessionPanel] bUseWebUI` 切换；`FPetSessionWebPanel::Create()` 失败时回退），其窗口宿主是标准 Slate `SWindow`、不依赖 Win32：
+- 会话面板仅 WebUI 路径（UMG 路径已移除、无降级），依赖 CEF（`SWebBrowser`，见 `Pet/Source/Pet/Private/UI/PetSessionWebPanel.cpp`）：CEF 在 macOS 无现成对应物，需另行处理（WebKit/CEF 等价物），因此会话面板并非「Mac 可直接复用」。
+- 会话面板的窗口宿主是标准 Slate `SWindow`、不依赖 Win32（跨平台部分仅限窗口承载）：
   - `Pet/Source/Pet/Private/UI/PetSessionWindowHost.cpp:145-162`：`SWindow` + `EWindowType::Notification` + `IsTopmostWindow(true)` + `SupportsTransparency(EWindowTransparency::PerWindow)` + `ActivationPolicy(EWindowActivationPolicy::Never)`。
   - `Pet/Source/Pet/Private/Pet.cpp:13-137`：Slate 启动守卫（隐藏默认游戏窗口），跨平台 Slate API。
 - DPI 坐标契约换算在 `PetCapturePawn.cpp:408-419`，使用跨平台 `FPlatformApplicationMisc::GetDPIScaleFactorAtPoint`，但注释写「Win32 物理像素」。
@@ -129,7 +129,6 @@
 - `tools/verify-pet-operations.ps1`：PowerShell + Win32 P/Invoke（`user32.dll` 的 `EnumWindows/WindowFromPoint/SendMessageW/PrintWindow/SetCursorPos` 等，`tools/verify-pet-operations.ps1:20-57`、`140-295`），纯 Windows 验收。
 - `tools/window-watch.ps1`：PowerShell + Win32 `EnumWindows` + `Get-CimInstance Win32_Process`（`tools/window-watch.ps1:14-23`、`43`、`90`）。
 - `tools/mock-daemon.ts:35`：`\\.\pipe\KimiPet.PET.<用户名>` 命名管道。
-- `tools/create-session-widget-assets.py:9`：调用 `UnrealEditor-Cmd.exe`（Windows UE 命令行）。
 - `tools/package.ts`：整包打包全 Windows：
   - `tools/package.ts:42` `UE_ENGINE = "C:\\Program Files\\Epic Games\\UE_5.8"`。
   - `tools/package.ts:43` `RunUAT.bat`；`187` `taskkill /F /IM UnrealEditor.exe`；`191-198` `-platform=Win64`。

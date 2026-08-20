@@ -45,12 +45,16 @@ public:
 	/** 上报拖拽结束（§6.4 → pet_moved，含所在显示器 id）。 */
 	void SendPetMoved(int32 X, int32 Y);
 
+	/** 请求更新守护进程配置（update_config，字段缺省表示不修改）。 */
+	void SendUpdateConfig(const FPetConfigPatch& Patch);
+
 	/** 请求用户关闭宠物。返回 false 表示当前未连接，调用方应执行本地退出兜底。 */
 	bool SendClosePet();
 
 	// ---- 事件回调（游戏线程触发） ----
 	TFunction<void(const FString& State, const FString& Reason)> OnPetState;
 	TFunction<void(const TArray<FPetSessionInfo>& Sessions)> OnSessionsSnapshot;
+	TFunction<void(const FPetSettingsSnapshot& Snapshot)> OnConfigSnapshot;
 	TFunction<void(const FString& SessionId, const FString& Cwd, bool bResume)> OnSessionStart;
 	TFunction<void(const FString& SessionId, const FString& Reason)> OnSessionEnd;
 	TFunction<void(const FString& SessionId, bool bWorking, bool bUnread)> OnSessionState;

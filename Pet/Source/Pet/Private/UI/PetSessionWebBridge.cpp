@@ -14,3 +14,12 @@ void UPetSessionWebBridge::ClosePanel()
 {
 	OnCloseRequested.Broadcast();
 }
+
+void UPetSessionWebBridge::ReportFps(int32 Fps)
+{
+	if (Fps < 0)
+	{
+		return;
+	}
+	OnReportFps.Broadcast(Fps);
+}

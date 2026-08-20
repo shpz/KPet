@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import {
+  applyConfigPatch,
   defaultConfig,
   expandEnvVars,
   getConfigPath,
@@ -14,7 +15,9 @@ import {
   getLogFilePath,
   loadConfig,
   resolveRendererPath,
+  saveConfig,
 } from '../src/daemon/config.js';
+import type { UpdateConfigPayload } from '../src/protocol/types.js';
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-config-test-'));
@@ -39,6 +42,8 @@ test('默认配置：§7 全部键与默认值', () => {
   assert.equal(cfg.wsl_distro, '');
   assert.equal(cfg.open_target, 'cli');
   assert.equal(cfg.open_web_url, 'http://127.0.0.1:58627/');
+  assert.equal(cfg.ui_theme, 'dark-glass');
+  assert.equal(cfg.fps_monitor, false);
   assert.equal(cfg.session.staleMinutes, 10);
   assert.equal(cfg.session.cleanupMinutes, 60);
   assert.equal(cfg.log_level, 'info');
@@ -259,4 +264,94 @@ test('wsl_distro：缺省空串；字符串合法；非法类型回退默认并�
   const r = loadConfig({}, writeConfig(dir, { wsl_distro: 123 }));
   assert.equal(r.config.wsl_distro, '', '非字符串回退默认空串');
   assert.ok(r.warnings.some((w) => w.includes('wsl_distro')));
+});
+
+test('ui_theme / fps_monitor：默认值、合法覆盖与非法回退', () => {
+  const dir = tempDir();
+  assert.equal(loadConfig({}, writeConfig(dir, {})).config.ui_theme, 'dark-glass', '缺省 ui_theme=dark-glass');
+  assert.equal(loadConfig({}, writeConfig(dir, {})).config.fps_monitor, false, '缺省 fps_monitor=false');
+
+  const p1 = writeConfig(dir, { ui_theme: 'light-minimal', fps_monitor: true });
+  const r1 = loadConfig({}, p1);
+  assert.equal(r1.config.ui_theme, 'light-minimal');
+  assert.equal(r1.config.fps_monitor, true);
+  assert.equal(loadConfig({}, writeConfig(dir, { ui_theme: 'cute-pet' })).config.ui_theme, 'cute-pet');
+
+  const p2 = writeConfig(dir, { ui_theme: 'dark' });
+  const r2 = loadConfig({}, p2);
+  assert.equal(r2.config.ui_theme, 'dark-glass', '非法 ui_theme 回退默认 dark-glass');
+  assert.ok(r2.warnings.some((w) => w.includes('ui_theme')));
+
+  const p3 = writeConfig(dir, { fps_monitor: 'yes' });
+  const r3 = loadConfig({}, p3);
+  assert.equal(r3.config.fps_monitor, false, '非布尔 fps_monitor 回退默认 false');
+  assert.ok(r3.warnings.some((w) => w.includes('fps_monitor')));
+});
+
+test('applyConfigPatch：合法字段合并、非法保持当前值并告警、全非法 applied 为空', () => {
+  const base = defaultConfig({});
+  assert.equal(base.ui_theme, 'dark-glass');
+  assert.equal(base.fps_monitor, false);
+  assert.equal(base.open_target, 'cli');
+
+  // 全部字段合法 → 全部应用
+  const r1 = applyConfigPatch(base, { ui_theme: 'cute-pet', fps_monitor: true, open_target: 'web' });
+  assert.equal(r1.config.ui_theme, 'cute-pet');
+  assert.equal(r1.config.fps_monitor, true);
+  assert.equal(r1.config.open_target, 'web');
+  assert.deepEqual(r1.applied, { ui_theme: 'cute-pet', fps_monitor: true, open_target: 'web' });
+  assert.deepEqual(r1.warnings, []);
+  // 原对象不被污染（默认值保持）
+  assert.equal(defaultConfig({}).ui_theme, 'dark-glass');
+
+  // 部分合法：非法 ui_theme 保持当前值并告警，合法 fps_monitor 照常应用
+  const r2 = applyConfigPatch(base, { ui_theme: 'bogus', fps_monitor: false } as unknown as UpdateConfigPayload);
+  assert.equal(r2.config.ui_theme, 'dark-glass', '非法 ui_theme 保持当前值（不回退默认）');
+  assert.equal(r2.config.fps_monitor, false);
+  assert.deepEqual(r2.applied, { fps_monitor: false }, 'bogus 不计入合法字段，但 fps_monitor 合法');
+  assert.ok(r2.warnings.some((w) => w.includes('ui_theme')));
+
+  // 全部字段非法 → applied 为空（调用方回 protocol_error）
+  const r3 = applyConfigPatch(base, { open_target: 'browser', ui_theme: 'x' } as unknown as UpdateConfigPayload);
+  assert.deepEqual(r3.applied, {}, '全部字段非法 → applied 为空');
+  assert.equal(r3.config.open_target, 'cli');
+  assert.equal(r3.config.ui_theme, 'dark-glass');
+
+  // 空 patch → applied 为空且不改变配置
+  const r4 = applyConfigPatch(base, {});
+  assert.deepEqual(r4.applied, {}, '空 patch → applied 为空');
+  assert.deepEqual(r4.config, base, '空 patch 不改变配置');
+});
+
+test('saveConfig：保留未知字段、2 空格缩进写回、缺目录自动创建、非法 JSON 按空对象', () => {
+  const dir = tempDir();
+  // 文件与目录都不存在 → 自动创建目录后写回
+  const p = path.join(dir, 'sub', 'config.json');
+  assert.equal(saveConfig(p, { ui_theme: 'cute-pet', fps_monitor: true }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(p, 'utf8')), { ui_theme: 'cute-pet', fps_monitor: true });
+  const raw1 = fs.readFileSync(p, 'utf8');
+  assert.ok(raw1.includes('\n  "ui_theme"'), '应使用 2 空格缩进写回');
+  assert.ok(raw1.endsWith('\n'), '写回以换行结尾');
+
+  // 已有未知字段与已知字段：只覆盖 patch 字段，未知字段与其余已知字段保留
+  const p2 = path.join(dir, 'config.json');
+  fs.writeFileSync(p2, JSON.stringify({ brand: 'kimi', open_target: 'web', ui_theme: 'light-minimal' }), 'utf8');
+  assert.equal(saveConfig(p2, { ui_theme: 'dark-glass', fps_monitor: false }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(p2, 'utf8')), {
+    brand: 'kimi',
+    open_target: 'web',
+    ui_theme: 'dark-glass',
+    fps_monitor: false,
+  });
+
+  // 非法 JSON → 按空对象处理再写回
+  const p3 = path.join(dir, 'bad.json');
+  fs.writeFileSync(p3, 'not json', 'utf8');
+  assert.equal(saveConfig(p3, { fps_monitor: true }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(p3, 'utf8')), { fps_monitor: true });
+});
+
+test('saveConfig：写失败返回 false 不抛异常', () => {
+  const dir = tempDir();
+  assert.equal(saveConfig(dir, { ui_theme: 'light-minimal' }), false, '目标路径为目录时应返回 false');
 });

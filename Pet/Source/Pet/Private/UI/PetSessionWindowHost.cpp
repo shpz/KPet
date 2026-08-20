@@ -1,12 +1,18 @@
 #include "UI/PetSessionWindowHost.h"
 
 #include "Pet.h"
-#include "UI/PetSessionPanelWidget.h"
 
 #include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/GenericWindow.h"
 #include "Widgets/SNullWidget.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/SWindow.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 namespace
 {
@@ -118,16 +124,6 @@ bool FPetSessionWindowHost::IsGameThreadCall() const
 	return false;
 }
 
-bool FPetSessionWindowHost::Create(UPetSessionPanelWidget* PanelWidget)
-{
-	if (!PanelWidget)
-	{
-		return false;
-	}
-
-	return Create(PanelWidget->TakeWidget());
-}
-
 bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
 {
 	if (!IsGameThreadCall())
@@ -169,7 +165,7 @@ bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
 		.FocusWhenFirstShown(false)
 		.ActivationPolicy(EWindowActivationPolicy::Never)
 		.AdjustInitialSizeAndPositionForDPIScale(true)
-		.ClientSize(FVector2f(PanelDesignWidth, PanelDesignHeight));
+		.ClientSize(ClientSize);
 
 	// TakeWidget 只在创建时接入 Slate。Host 不保存会话数据，也不包装 Widget 的选择委托。
 	SessionContent = Content;
@@ -204,7 +200,7 @@ void FPetSessionWindowHost::Destroy()
 		return;
 	}
 
-	// 先停止显示，再断开 SObjectWidget，最后请求 Slate 销毁窗口，避免 UMG 被延迟 GC。
+	// 先停止显示，再断开 SObjectWidget，最后请求 Slate 销毁窗口，避免 Widget 被延迟 GC。
 	SessionWindow->SetOpacity(0.0f);
 	SessionWindow->HideWindow();
 	SessionWindow->SetContent(SNullWidget::NullWidget);
@@ -367,7 +363,7 @@ void FPetSessionWindowHost::ApplyWindowTransform(const bool bForceMove)
 		? ClampWindowPosition(UnclampedAnimatedPosition, TargetWorkArea, WindowSizeInSlateScreen)
 		: FVector2f::ZeroVector;
 
-	SessionWindow->SetOpacity(AnimationProgress);
+	ApplyWindowOpacity(AnimationProgress);
 	if (!bHasAnchor)
 	{
 		return;
@@ -384,17 +380,49 @@ void FPetSessionWindowHost::ApplyWindowTransform(const bool bForceMove)
 	}
 }
 
+void FPetSessionWindowHost::ApplyWindowOpacity(const float Opacity)
+{
+	if (!SessionWindow.IsValid())
+	{
+		return;
+	}
+
+	// 保持 SWindow 内部状态与平台层整窗 alpha 一致；Windows 下的色键由下方调用补上。
+	SessionWindow->SetOpacity(Opacity);
+
+#if PLATFORM_WINDOWS
+	// Slate 弹窗在 Windows 经不透明 swapchain 上屏：PerWindow 只提供整窗 alpha，
+	// 像素 alpha 被 DWM 忽略，透明页面（设置面板）卡片外区域因此渲染成黑框。
+	// 给分层窗口追加黑色色键（LWA_COLORKEY）：CEF 透明像素预乘后恰为纯黑，
+	// 由 DWM 抠除透出桌面；LWA_ALPHA 继续承担整窗淡入淡出。
+	// 代价：页面任何元素都不得使用纯黑 RGB(0,0,0)，且半透明像素按预乘色显示
+	// （卡片圆角与阴影呈暗化描边，而不是与桌面混合）。
+	const TSharedPtr<FGenericWindow>& NativeWindow = SessionWindow->GetNativeWindow();
+	if (NativeWindow.IsValid())
+	{
+		if (HWND HWnd = static_cast<HWND>(NativeWindow->GetOSWindowHandle()))
+		{
+			::SetLayeredWindowAttributes(
+				HWnd,
+				RGB(0, 0, 0),
+				static_cast<BYTE>(FMath::Clamp(FMath::TruncToInt(Opacity * 255.0f), 0, 255)),
+				LWA_COLORKEY | LWA_ALPHA);
+		}
+	}
+#endif
+}
+
 FVector2f FPetSessionWindowHost::ReadWindowSizeInSlateScreen() const
 {
 	if (!SessionWindow.IsValid())
 	{
-		return FVector2f(PanelDesignWidth, PanelDesignHeight);
+		return ClientSize;
 	}
 
 	const FVector2f WindowSize = SessionWindow->GetSizeInScreen();
 	return WindowSize.X > UE_SMALL_NUMBER && WindowSize.Y > UE_SMALL_NUMBER
 		? WindowSize
-		: FVector2f(PanelDesignWidth, PanelDesignHeight);
+		: ClientSize;
 }
 
 bool FPetSessionWindowHost::IsVisible() const

@@ -30,6 +30,10 @@ void UPetMessageChannelComponent::Start()
 	{
 		OnSessionsSnapshot.Broadcast(Sessions);
 	};
+	ControlClient->OnConfigSnapshot = [this](const FPetSettingsSnapshot& Snapshot)
+	{
+		OnConfigSnapshot.Broadcast(Snapshot);
+	};
 	ControlClient->OnSessionStart = [this](const FString& SessionId, const FString& Cwd, bool bResume)
 	{
 		OnSessionStart.Broadcast(SessionId, Cwd, bResume);
@@ -61,6 +65,7 @@ void UPetMessageChannelComponent::Stop()
 
 	ControlClient->OnPetState = nullptr;
 	ControlClient->OnSessionsSnapshot = nullptr;
+	ControlClient->OnConfigSnapshot = nullptr;
 	ControlClient->OnSessionStart = nullptr;
 	ControlClient->OnSessionEnd = nullptr;
 	ControlClient->OnSessionState = nullptr;
@@ -100,6 +105,14 @@ void UPetMessageChannelComponent::SendPetMoved(int32 X, int32 Y)
 	if (ControlClient)
 	{
 		ControlClient->SendPetMoved(X, Y);
+	}
+}
+
+void UPetMessageChannelComponent::SendUpdateConfig(const FPetConfigPatch& Patch)
+{
+	if (ControlClient)
+	{
+		ControlClient->SendUpdateConfig(Patch);
 	}
 }
 

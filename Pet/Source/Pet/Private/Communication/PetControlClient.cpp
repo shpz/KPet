@@ -1,6 +1,7 @@
 #include "Communication/PetControlClient.h"
 
 #include "Pet.h"
+#include "Communication/PetConfigProtocol.h"
 #include "Containers/StringConv.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -152,6 +153,25 @@ void FPetControlClient::SendPetMoved(int32 X, int32 Y)
 	Payload->SetStringField(TEXT("monitor_id"), MonitorId);
 	EnqueueEnvelope(TEXT("pet_moved"), Payload);
 	UE_LOG(LogPet, Log, TEXT("已发送 pet_moved (x=%d, y=%d, monitor=%s)"), X, Y, *MonitorId);
+}
+
+void FPetControlClient::SendUpdateConfig(const FPetConfigPatch& Patch)
+{
+	// 只组装补丁中已提供的字段；守护进程校验合并后写回并回推 config_snapshot。
+	const TSharedPtr<FJsonObject> Payload = PetConfigProtocol::BuildUpdateConfigPayload(Patch);
+	if (!EnqueueEnvelope(TEXT("update_config"), Payload))
+	{
+		return;
+	}
+	FString Fields;
+	const auto AppendField = [&Fields](const FString& Name, const FString& Value)
+	{
+		Fields += FString::Printf(TEXT("%s%s=%s"), Fields.IsEmpty() ? TEXT("") : TEXT(", "), *Name, *Value);
+	};
+	if (Patch.OpenTarget.IsSet()) { AppendField(TEXT("open_target"), Patch.OpenTarget.GetValue()); }
+	if (Patch.UiTheme.IsSet()) { AppendField(TEXT("ui_theme"), Patch.UiTheme.GetValue()); }
+	if (Patch.FpsMonitor.IsSet()) { AppendField(TEXT("fps_monitor"), Patch.FpsMonitor.GetValue() ? TEXT("true") : TEXT("false")); }
+	UE_LOG(LogPet, Log, TEXT("已发送 update_config: %s"), Fields.IsEmpty() ? TEXT("(空)") : *Fields);
 }
 
 bool FPetControlClient::SendClosePet()
@@ -389,8 +409,8 @@ bool FPetControlClient::SendHello()
 	const FString Msg = FString::Printf(
 		TEXT("{\"v\":1,\"type\":\"hello\",\"id\":\"%s\",\"ts\":\"%s\",\"session_id\":null,"
 			"\"payload\":{\"protocol_version\":1,\"role\":\"renderer\",\"pid\":%d,\"version\":\"%s\","
-			"\"capabilities\":[\"pet_state\",\"sessions_snapshot\",\"session_state\",\"task_start\",\"task_end\",\"tasks_snapshot\",\"notify\","
-			"\"open_tui\",\"heartbeat\",\"pet_moved\",\"close_pet\",\"shutdown\"]}}"),
+			"\"capabilities\":[\"pet_state\",\"sessions_snapshot\",\"config_snapshot\",\"session_state\",\"task_start\",\"task_end\",\"tasks_snapshot\",\"notify\","
+			"\"open_tui\",\"heartbeat\",\"pet_moved\",\"close_pet\",\"update_config\",\"shutdown\"]}}"),
 		*FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens),
 		*FDateTime::UtcNow().ToIso8601(),
 		Pid,
@@ -580,6 +600,21 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 			OnSessionsSnapshot(Sessions);
 		}
 	}
+	else if (Type == TEXT("config_snapshot"))
+	{
+		FPetSettingsSnapshot Snapshot;
+		if (!PetConfigProtocol::ParseConfigSnapshot(Payload, Snapshot))
+		{
+			RecordProtocolError(TEXT("config_snapshot 的 open_target/ui_theme/fps_monitor/open_web_url 字段非法"), Line);
+			return;
+		}
+		UE_LOG(LogPet, Log, TEXT("收到 config_snapshot: open_target=%s ui_theme=%s fps_monitor=%d open_web_url=%s"),
+			*Snapshot.OpenTarget, *Snapshot.UiTheme, Snapshot.bFpsMonitor ? 1 : 0, *Snapshot.OpenWebUrl);
+		if (OnConfigSnapshot)
+		{
+			OnConfigSnapshot(Snapshot);
+		}
+	}
 	else if (Type == TEXT("tasks_snapshot"))
 	{
 		const TArray<TSharedPtr<FJsonValue>>* Tasks = nullptr;
@@ -655,7 +690,7 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		UE_LOG(LogPet, Warning, TEXT("收到 protocol_error: %s"), *Description);
 	}
 	else if (Type == TEXT("heartbeat") || Type == TEXT("open_tui") || Type == TEXT("pet_moved") || Type == TEXT("close_pet") ||
-		Type == TEXT("host_event"))
+		Type == TEXT("update_config") || Type == TEXT("host_event"))
 	{
 		// 按 §4.3 这些类型不会发往渲染进程；收到仅记日志
 		UE_LOG(LogPet, Verbose, TEXT("收到 %s（本角色不应收到，忽略）"), *Type);

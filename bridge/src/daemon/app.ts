@@ -12,9 +12,12 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import { createEnvelope, validateEnvelope, type MessageEnvelope } from '../protocol/index.js';
 import {
+  applyConfigPatch,
   DAEMON_VERSION,
   type DaemonConfig,
+  getConfigPath,
   getLogFilePath,
+  saveConfig,
 } from './config.js';
 import { ControlSession, type ControlCallbacks } from './control.js';
 import { Logger } from './logger.js';
@@ -32,11 +35,14 @@ import {
 } from './session-catalog.js';
 import { getEventPipeName, getControlPipeName } from '../bridge/user.js';
 import {
+  MAX_RAW_EXCERPT_CHARS,
   PROTOCOL_VERSION,
   type HelloPayload,
   type HostEventPayload,
   type OpenTuiPayload,
   type ShutdownReason,
+  type UpdateConfigPayload,
+  truncate,
 } from '../protocol/types.js';
 import { clearStagingDir, getStagingDir } from '../bridge/staging.js';
 import {
@@ -97,10 +103,13 @@ export interface DaemonAppOptions {
   daemonLockPath?: string;
   /** 恢复中标记路径，缺省 %TEMP%/kimi-pet/pet.recovering。 */
   recoveryPath?: string;
+  /** 配置文件路径（update_config 持久化写回用），缺省 getConfigPath()。 */
+  configPath?: string;
 }
 
 export class DaemonApp {
-  readonly config: DaemonConfig;
+  /** 运行时配置；renderer→daemon 的 update_config 会整体替换启用合并后的新对象。 */
+  config: DaemonConfig;
   readonly logger: Logger;
   readonly state: PetStateMachine;
   readonly renderer: RendererSupervisor;
@@ -112,6 +121,8 @@ export class DaemonApp {
   private readonly suppressionPath: string;
   private readonly daemonLockPath: string;
   private readonly recoveryPath: string;
+  /** update_config 持久化写回的配置文件路径（缺省 KIMI_CODE_HOME/kimipet/config.json）。 */
+  private readonly configPath: string;
   /** 启动时已进入恢复批次；该实例必须在锁内回放后才启动 renderer。 */
   private recoveryOwner = false;
   /** 启动回放期只恢复状态，不允许 host event 的重试逻辑提前拉起 renderer。 */
@@ -145,6 +156,7 @@ export class DaemonApp {
     this.suppressionPath = opts.suppressionPath ?? getPetSuppressionPath();
     this.daemonLockPath = opts.daemonLockPath ?? getDaemonLockPath();
     this.recoveryPath = opts.recoveryPath ?? getPetRecoveryPath();
+    this.configPath = opts.configPath ?? getConfigPath();
     this.onExit = opts.onExit ?? (() => process.exit(0));
     this.exitGraceMs = opts.exitGraceMs ?? RENDERER_EXIT_GRACE_MS;
     this.openTuiFn = opts.openTuiFn ?? openTui;
@@ -353,6 +365,7 @@ export class DaemonApp {
       onHello: (payload) => this.onRendererHello(session, payload),
       onOpenTui: (payload) => this.onOpenTui(payload),
       onPetMoved: (payload) => this.petState.updateWindow(payload.x, payload.y, payload.monitor_id),
+      onUpdateConfig: (payload) => this.onUpdateConfig(payload),
       onClosePet: (payload) => this.onClosePet(payload),
       onClosed: () => {
         if (this.controlSession === session) this.controlSession = null;
@@ -404,8 +417,53 @@ export class DaemonApp {
     }
     session.send(createEnvelope('pet_state', { state: snap.state, reason: snap.reason }, {}));
     session.send(createEnvelope('tasks_snapshot', { tasks: snap.tasks }, {}));
+    this.pushConfigSnapshot(session);
     this.logger.info(
       `快照回放: ${sessionsSnapshot.length} 个目录会话（${snap.sessions.length} 个活跃）, pet_state=${snap.state}(${snap.reason}), ${snap.tasks.length} 个未完成任务`,
+    );
+  }
+
+  /** update_config（设置 WebUI 保存）：校验合并进内存配置 → 写回 config.json → 推送 config_snapshot。 */
+  private onUpdateConfig(payload: UpdateConfigPayload): void {
+    const { config, applied, warnings } = applyConfigPatch(this.config, payload);
+    for (const w of warnings) this.logger.warn(w);
+    if (Object.keys(applied).length === 0) {
+      // 无任何合法字段：按 §4.4 回 protocol_error，配置保持原样
+      this.countError(`update_config 无合法字段: ${JSON.stringify(payload)}`);
+      const cs = this.controlSession;
+      if (cs && !cs.isClosed) {
+        cs.send(
+          createEnvelope('protocol_error', {
+            description: 'update_config 至少需要一个合法字段',
+            raw_excerpt: truncate(JSON.stringify(payload), MAX_RAW_EXCERPT_CHARS),
+          }),
+        );
+      }
+      return;
+    }
+    this.config = config;
+    if (!saveConfig(this.configPath, applied)) {
+      this.logger.warn(`update_config 写回配置文件失败（${this.configPath}），仅本次运行时生效`);
+    } else {
+      this.logger.info(`update_config 已应用并持久化: ${JSON.stringify(applied)}`);
+    }
+    this.pushConfigSnapshot();
+  }
+
+  /** 下发全量配置快照（握手收尾与 update_config 生效后调用；未连接时跳过）。 */
+  private pushConfigSnapshot(session?: ControlSession): void {
+    const cs = session ?? this.controlSession;
+    if (!cs || cs.isClosed) {
+      this.logger.debug('渲染进程未连接，跳过 config_snapshot');
+      return;
+    }
+    cs.send(
+      createEnvelope('config_snapshot', {
+        open_target: this.config.open_target,
+        ui_theme: this.config.ui_theme,
+        fps_monitor: this.config.fps_monitor,
+        open_web_url: this.config.open_web_url,
+      }),
     );
   }
 

@@ -10,12 +10,19 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { LogLevel } from './logger.js';
+import type { UiThemeName, UpdateConfigPayload } from '../protocol/types.js';
 
 /** 守护进程自身版本（hello.version / 日志），与 bridge 工程版本保持一致。 */
 export const DAEMON_VERSION = '0.1.0';
 
 /** 点击会话后的打开目标（§7 open_target）：cli=唤起 kimi 终端，web=打开浏览器。 */
 export type OpenTarget = 'cli' | 'web';
+
+/** 设置 WebUI 主题（ui_theme）：dark-glass 玻璃拟态 / light-minimal 浅色极简 / cute-pet 萌宠。 */
+export type UiTheme = UiThemeName;
+
+/** ui_theme 的默认值。 */
+export const DEFAULT_UI_THEME: UiTheme = 'dark-glass';
 
 /**
  * web 打开目标的默认 URL 模板（§7 open_web_url）。
@@ -46,6 +53,10 @@ export interface DaemonConfig {
   open_target: OpenTarget;
   /** web 目标下的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；会话 id 为空时替换为空串。 */
   open_web_url: string;
+  /** 设置 WebUI 主题（ui_theme），默认 dark-glass。 */
+  ui_theme: UiTheme;
+  /** 设置 WebUI 是否显示 FPS 监控浮层（fps_monitor），默认关闭。 */
+  fps_monitor: boolean;
   session: {
     /** 会话无事件强制转闲的时长（分钟，§3.4 状态卡死兜底）。 */
     staleMinutes: number;
@@ -172,6 +183,16 @@ function readOpenWebUrl(obj: Record<string, unknown>, warnings: string[]): strin
   return DEFAULT_OPEN_WEB_URL;
 }
 
+/** 读取设置 WebUI 主题（ui_theme，风格与 readOpenTarget/readOpenWebUrl 一致）。 */
+function readUiTheme(obj: Record<string, unknown>, warnings: string[]): UiTheme {
+  const v = obj['ui_theme'];
+  if (v === 'dark-glass' || v === 'light-minimal' || v === 'cute-pet') return v;
+  if (v !== undefined) {
+    warnings.push('配置项 ui_theme 非法（需要 "dark-glass"、"light-minimal" 或 "cute-pet"），使用默认值 "dark-glass"');
+  }
+  return DEFAULT_UI_THEME;
+}
+
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 /** 读取日志级别（§7 log_level）。 */
@@ -196,6 +217,8 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
     wsl_distro: '',
     open_target: 'cli',
     open_web_url: DEFAULT_OPEN_WEB_URL,
+    ui_theme: DEFAULT_UI_THEME,
+    fps_monitor: false,
     session: { staleMinutes: 10, cleanupMinutes: 60 },
     log_level: 'info',
   };
@@ -274,8 +297,81 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, filePath: strin
     wsl_distro: readWslDistro(obj, warnings),
     open_target: readOpenTarget(obj, warnings),
     open_web_url: readOpenWebUrl(obj, warnings),
+    ui_theme: readUiTheme(obj, warnings),
+    fps_monitor: readBoolean(obj, 'fps_monitor', defaults.fps_monitor, warnings),
     session: { staleMinutes, cleanupMinutes },
     log_level: readLogLevel(obj, warnings),
   };
   return { config, warnings, source };
+}
+
+/** 运行时配置更新结果：config 为合并后的生效配置；applied 为实际合法的更新字段（供持久化）；warnings 为非法字段告警。 */
+export interface ApplyConfigPatchResult {
+  config: DaemonConfig;
+  applied: UpdateConfigPayload;
+  warnings: string[];
+}
+
+/**
+ * 把渲染进程 update_config 的部分配置合并进内存配置（设置 WebUI 配置下发）。
+ * - 每个已知字段单独校验：合法才覆盖；非法记告警并保持当前值（运行时不回退默认，避免误操作重置用户选择）；
+ * - 返回实际应用的字段子集（applied），调用方用它写回配置文件；applied 为空表示无任何合法字段（调用方回 protocol_error）。
+ */
+export function applyConfigPatch(base: DaemonConfig, patch: UpdateConfigPayload): ApplyConfigPatchResult {
+  const config = { ...base };
+  const applied: UpdateConfigPayload = {};
+  const warnings: string[] = [];
+
+  if (patch.open_target !== undefined) {
+    if (patch.open_target === 'cli' || patch.open_target === 'web') {
+      config.open_target = patch.open_target;
+      applied.open_target = patch.open_target;
+    } else {
+      warnings.push(`配置项 open_target 非法（需要 "cli" 或 "web"），保持当前值 ${config.open_target}`);
+    }
+  }
+  if (patch.ui_theme !== undefined) {
+    if (patch.ui_theme === 'dark-glass' || patch.ui_theme === 'light-minimal' || patch.ui_theme === 'cute-pet') {
+      config.ui_theme = patch.ui_theme;
+      applied.ui_theme = patch.ui_theme;
+    } else {
+      warnings.push(`配置项 ui_theme 非法（需要 "dark-glass"、"light-minimal" 或 "cute-pet"），保持当前值 ${config.ui_theme}`);
+    }
+  }
+  if (patch.fps_monitor !== undefined) {
+    if (typeof patch.fps_monitor === 'boolean') {
+      config.fps_monitor = patch.fps_monitor;
+      applied.fps_monitor = patch.fps_monitor;
+    } else {
+      warnings.push(`配置项 fps_monitor 非法（需要布尔值），保持当前值 ${config.fps_monitor}`);
+    }
+  }
+
+  return { config, applied, warnings };
+}
+
+/**
+ * 把运行时配置更新合并写回配置文件（设置 WebUI 持久化）。
+ * - 读原 JSON（不存在/非法/非对象时按空对象），保留所有未知字段（§4.4 字段级只增不改）；
+ * - 只合并本次实际合法应用的字段；2 空格缩进写回，缺目录时自动创建；
+ * - 返回是否写成功；任何失败都不抛异常，由调用方记日志（写失败不崩守护进程）。
+ */
+export function saveConfig(filePath: string, patch: UpdateConfigPayload): boolean {
+  let raw: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      raw = parsed as Record<string, unknown>;
+    }
+  } catch {
+    raw = {};
+  }
+  const merged = { ...raw, ...patch };
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
 }

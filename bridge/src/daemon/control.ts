@@ -18,6 +18,7 @@ import {
   type HelloPayload,
   type OpenTuiPayload,
   type PetMovedPayload,
+  type UpdateConfigPayload,
 } from '../protocol/types.js';
 import type { Logger } from './logger.js';
 import { attachLineFraming, FRAME_DELIMITER } from './pipes.js';
@@ -27,6 +28,8 @@ export interface ControlCallbacks {
   onHello(payload: HelloPayload): void;
   onOpenTui(payload: OpenTuiPayload): void;
   onPetMoved(payload: PetMovedPayload): void;
+  /** 设置 WebUI 保存；守护进程校验合并后写回配置并回推 config_snapshot。 */
+  onUpdateConfig(payload: UpdateConfigPayload): void;
   /** 渲染进程请求用户关闭；守护进程应先持久化抑制标记再退出。 */
   onClosePet(payload: ClosePetPayload): void;
   /** 连接关闭（对端断开/主动 close）后回调。 */
@@ -156,6 +159,9 @@ export class ControlSession {
         break;
       case 'pet_moved':
         this.callbacks.onPetMoved(env.payload as PetMovedPayload);
+        break;
+      case 'update_config':
+        this.callbacks.onUpdateConfig(env.payload as UpdateConfigPayload);
         break;
       case 'close_pet':
         this.callbacks.onClosePet(env.payload as ClosePetPayload);

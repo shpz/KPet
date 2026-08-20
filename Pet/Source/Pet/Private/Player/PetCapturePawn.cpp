@@ -8,12 +8,12 @@
 #include "Player/PetCameraManagerComponent.h"
 #include "Player/PetCharacterMotionComponent.h"
 #include "Player/PetSceneSlotComponent.h"
-#include "UI/PetSessionPanelWidget.h"
 #include "UI/PetSessionWebBridge.h"
 #include "UI/PetSessionWebPanel.h"
+#include "UI/PetSettingsWebBridge.h"
+#include "UI/PetSettingsWebPanel.h"
 #include "UI/PetSessionWindowHost.h"
 
-#include "Blueprint/UserWidget.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -21,7 +21,6 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformTime.h"
 #include "Layout/SlateRect.h"
-#include "Misc/ConfigCacheIni.h"
 
 #include "RHIGPUReadback.h"
 #include "RenderingThread.h"
@@ -173,7 +172,7 @@ void APetCapturePawn::BeginPlay()
 		WindowScreenPosition = PetWindow->GetScreenPosition();
 	}
 	ApplyCameraCursorImage();
-	InitializeSessionPanel();
+	InitializePanels();
 
 	ENQUEUE_RENDER_COMMAND(CreatePetReadback)(
 		[this](FRHICommandListImmediate&)
@@ -183,6 +182,7 @@ void APetCapturePawn::BeginPlay()
 
 	MessageChannelComponent->OnPetState.AddUObject(this, &APetCapturePawn::HandlePetState);
 	MessageChannelComponent->OnSessionsSnapshot.AddUObject(this, &APetCapturePawn::HandleSessionsSnapshot);
+	MessageChannelComponent->OnConfigSnapshot.AddUObject(this, &APetCapturePawn::HandleConfigSnapshot);
 	MessageChannelComponent->OnSessionStart.AddUObject(this, &APetCapturePawn::HandleSessionStart);
 	MessageChannelComponent->OnSessionEnd.AddUObject(this, &APetCapturePawn::HandleSessionEnd);
 	MessageChannelComponent->OnSessionState.AddUObject(this, &APetCapturePawn::HandleSessionState);
@@ -193,6 +193,11 @@ void APetCapturePawn::BeginPlay()
 		{
 			UE_LOG(LogPet, Log, TEXT("单击宠物 -> 排队切换会话面板"));
 			bSessionPanelTogglePending = true;
+		};
+		PetWindow->OnHotKey = [this]()
+		{
+			UE_LOG(LogPet, Log, TEXT("Ctrl+, 热键 -> 排队切换设置面板"));
+			bSettingsPanelTogglePending = true;
 		};
 		PetWindow->OnCloseRequested = [this]()
 		{
@@ -287,93 +292,88 @@ bool APetCapturePawn::ResolveRuntimeComponents()
 	return true;
 }
 
-void APetCapturePawn::InitializeSessionPanel()
+void APetCapturePawn::InitializePanels()
 {
-	// WebUI 开关来自 GGameIni 的 [Pet.SessionPanel] bUseWebUI；为 true 优先走 Web 路径，
-	// 创建失败回退 UMG 路径；为 false 直接走原有 UMG 路径，原逻辑不动。
-	bool bUseWebUI = false;
-	if (GConfig)
+	// ---- 会话面板（仅 WebUI 路径：创建失败只记日志，不再回退 UMG） ----
+	SessionWebPanel = MakeUnique<FPetSessionWebPanel>();
+	if (!SessionWebPanel->Create())
 	{
-		GConfig->GetBool(TEXT("Pet.SessionPanel"), TEXT("bUseWebUI"), bUseWebUI, GGameIni);
-	}
-
-	if (bUseWebUI)
-	{
-		SessionWebPanel = MakeUnique<FPetSessionWebPanel>();
-		if (!SessionWebPanel->Create())
-		{
-			UE_LOG(LogPet, Error, TEXT("创建 WebUI 会话面板失败；回退 UMG 路径"));
-			SessionWebPanel.Reset();
-		}
-		else
-		{
-			SessionWindowHost = new FPetSessionWindowHost();
-			if (!SessionWindowHost->Create(SessionWebPanel->GetContentWidget()))
-			{
-				UE_LOG(LogPet, Error, TEXT("创建 Slate 会话窗口失败；宠物本体将继续运行"));
-				delete SessionWindowHost;
-				SessionWindowHost = nullptr;
-				SessionWebPanel.Reset();
-				return;
-			}
-
-			if (UPetSessionWebBridge* Bridge = SessionWebPanel->GetBridge())
-			{
-				Bridge->OnSelectSession.AddUObject(this, &APetCapturePawn::HandleSessionSelected);
-				SessionWebCloseHandle = Bridge->OnCloseRequested.AddRaw(SessionWindowHost, &FPetSessionWindowHost::Close);
-			}
-
-			UpdateSessionPanelAnchor();
-			UE_LOG(LogPet, Log, TEXT("WebUI 会话面板已初始化"));
-			return;
-		}
-	}
-
-	if (SessionPanelWidgetClass.IsNull())
-	{
-		UE_LOG(LogPet, Error, TEXT("未配置会话面板 Widget 类；请在 BP_PetCapturePawn 中设置软类引用"));
+		UE_LOG(LogPet, Error, TEXT("创建 WebUI 会话面板失败；宠物本体将继续运行"));
+		SessionWebPanel.Reset();
 		return;
 	}
 
-	const TSubclassOf<UPetSessionPanelWidget> LoadedWidgetClass = SessionPanelWidgetClass.LoadSynchronous();
-	if (!LoadedWidgetClass)
-	{
-		UE_LOG(LogPet, Error, TEXT("加载会话面板 Widget 类失败；宠物本体将继续运行"));
-		return;
-	}
-
-	SessionPanelWidget = CreateWidget<UPetSessionPanelWidget>(GetWorld(), LoadedWidgetClass);
-	if (!SessionPanelWidget)
-	{
-		UE_LOG(LogPet, Error, TEXT("创建会话面板 Widget 失败；宠物本体将继续运行"));
-		return;
-	}
-
-	SessionPanelWidget->OnSessionSelected.AddUObject(this, &APetCapturePawn::HandleSessionSelected);
 	SessionWindowHost = new FPetSessionWindowHost();
-	if (!SessionWindowHost->Create(SessionPanelWidget))
+	if (!SessionWindowHost->Create(SessionWebPanel->GetContentWidget()))
 	{
 		UE_LOG(LogPet, Error, TEXT("创建 Slate 会话窗口失败；宠物本体将继续运行"));
 		delete SessionWindowHost;
 		SessionWindowHost = nullptr;
-		SessionPanelWidget->OnSessionSelected.RemoveAll(this);
-		SessionPanelWidget = nullptr;
+		SessionWebPanel.Reset();
 		return;
 	}
 
+	if (UPetSessionWebBridge* Bridge = SessionWebPanel->GetBridge())
+	{
+		Bridge->OnSelectSession.AddUObject(this, &APetCapturePawn::HandleSessionSelected);
+		Bridge->OnReportFps.AddUObject(this, &APetCapturePawn::HandleReportFps);
+		// × 按钮的关闭经 Pawn 处理，关闭时按栈语义弹栈恢复被压置的另一面板。
+		Bridge->OnCloseRequested.AddUObject(this, &APetCapturePawn::HandleCloseSession);
+	}
+
+	// ---- 设置面板（Ctrl+, 打开；尺寸按 settings.html 的 340px 宽卡片定） ----
+	SettingsWebPanel = MakeUnique<FPetSettingsWebPanel>();
+	if (!SettingsWebPanel->Create())
+	{
+		UE_LOG(LogPet, Error, TEXT("创建 WebUI 设置面板失败；宠物本体与 Ctrl+, 不可用"));
+		SettingsWebPanel.Reset();
+	}
+	else
+	{
+		SettingsWindowHost = new FPetSessionWindowHost();
+		// settings.html 卡片宽 340px + 四周 12px padding；高取 460 容纳全部设置项。
+		SettingsWindowHost->SetClientSize(FVector2f(380.0f, 460.0f));
+		if (!SettingsWindowHost->Create(SettingsWebPanel->GetContentWidget()))
+		{
+			UE_LOG(LogPet, Error, TEXT("创建 Slate 设置窗口失败；设置面板不可用"));
+			delete SettingsWindowHost;
+			SettingsWindowHost = nullptr;
+			SettingsWebPanel.Reset();
+		}
+		else if (UPetSettingsWebBridge* Bridge = SettingsWebPanel->GetBridge())
+		{
+			Bridge->OnSetOpenTarget.AddUObject(this, &APetCapturePawn::HandleSetOpenTarget);
+			Bridge->OnSetTheme.AddUObject(this, &APetCapturePawn::HandleSetTheme);
+			Bridge->OnSetFpsMonitor.AddUObject(this, &APetCapturePawn::HandleSetFpsMonitor);
+			Bridge->OnReportFps.AddUObject(this, &APetCapturePawn::HandleReportFps);
+			// × 按钮的关闭经 Pawn 处理，关闭时按栈语义弹栈恢复被压置的另一面板。
+			Bridge->OnCloseSettings.AddUObject(this, &APetCapturePawn::HandleCloseSettings);
+		}
+	}
+
 	UpdateSessionPanelAnchor();
-	UE_LOG(LogPet, Log, TEXT("Slate 与 UMG 会话面板已初始化"));
+	if (SettingsWindowHost)
+	{
+		UpdateSettingsPanelAnchor();
+	}
+	UE_LOG(LogPet, Log, TEXT("WebUI 会话面板%s已初始化"), SettingsWindowHost ? TEXT("与设置面板") : TEXT(""));
 }
 
-void APetCapturePawn::ShutdownSessionPanel()
+void APetCapturePawn::ShutdownPanels()
 {
-	bSessionPanelPresentationPending = false;
 	bSessionPanelTogglePending = false;
-
-	if (SessionPanelWidget)
+	bSettingsPanelTogglePending = false;
+	// 面板销毁前先置隐藏标志，阻止销毁 / 释放期间任何 JS 下发（页内 Bridge 反调在此之前摘除）。
+	if (SessionWebPanel)
 	{
-		SessionPanelWidget->OnSessionSelected.RemoveAll(this);
+		SessionWebPanel->SetPanelVisible(false);
 	}
+	if (SettingsWebPanel)
+	{
+		SettingsWebPanel->SetPanelVisible(false);
+	}
+	// 面板全部销毁后栈状态必须清空，避免残留导致下次打开行为异常。
+	PanelStack = PetPanelStack::Reset();
 
 	// 先解绑 Web 桥委托并释放面板，再销毁 Host：句柄解绑在前，避免 Host 销毁后
 	// 桥仍持有失效的裸指针委托。
@@ -382,11 +382,11 @@ void APetCapturePawn::ShutdownSessionPanel()
 		if (UPetSessionWebBridge* Bridge = SessionWebPanel->GetBridge())
 		{
 			Bridge->OnSelectSession.RemoveAll(this);
-			Bridge->OnCloseRequested.Remove(SessionWebCloseHandle);
+			Bridge->OnReportFps.RemoveAll(this);
+			Bridge->OnCloseRequested.RemoveAll(this);
 		}
 		SessionWebPanel.Reset();
 	}
-	SessionWebCloseHandle.Reset();
 
 	if (SessionWindowHost)
 	{
@@ -395,16 +395,29 @@ void APetCapturePawn::ShutdownSessionPanel()
 		SessionWindowHost = nullptr;
 	}
 
-	SessionPanelWidget = nullptr;
-}
-
-void APetCapturePawn::UpdateSessionPanelAnchor()
-{
-	if (!SessionWindowHost || !PetWindow)
+	if (SettingsWebPanel)
 	{
-		return;
+		if (UPetSettingsWebBridge* Bridge = SettingsWebPanel->GetBridge())
+		{
+			Bridge->OnSetOpenTarget.RemoveAll(this);
+			Bridge->OnSetTheme.RemoveAll(this);
+			Bridge->OnSetFpsMonitor.RemoveAll(this);
+			Bridge->OnReportFps.RemoveAll(this);
+			Bridge->OnCloseSettings.RemoveAll(this);
+		}
+		SettingsWebPanel.Reset();
 	}
 
+	if (SettingsWindowHost)
+	{
+		SettingsWindowHost->Destroy();
+		delete SettingsWindowHost;
+		SettingsWindowHost = nullptr;
+	}
+}
+
+FSlateRect APetCapturePawn::ComputePetBoundsInSlateScreen() const
+{
 	// PetLayeredWindow::GetScreenPosition() 返回 Win32 屏幕物理像素，RTSize 也是物理像素；
 	// Host 契约（方案 §6.4）只接受 Slate 屏幕坐标。引擎约定 Slate 屏幕坐标 = 物理像素 /
 	// DPIScale（SWindow 创建时 AdjustInitialSizeAndPositionForDPIScale 路径以 WindowPosition
@@ -416,12 +429,29 @@ void APetCapturePawn::UpdateSessionPanelAnchor()
 	const float PetDPIScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(
 		static_cast<float>(PetPositionPhysicalPixels.X),
 		static_cast<float>(PetPositionPhysicalPixels.Y));
-	const FSlateRect PetBoundsInSlateScreen(
+	return FSlateRect(
 		PetPositionPhysicalPixels.X / PetDPIScale,
 		PetPositionPhysicalPixels.Y / PetDPIScale,
 		(PetPositionPhysicalPixels.X + PetSizePhysicalPixels) / PetDPIScale,
 		(PetPositionPhysicalPixels.Y + PetSizePhysicalPixels) / PetDPIScale);
-	SessionWindowHost->UpdateAnchor(PetBoundsInSlateScreen);
+}
+
+void APetCapturePawn::UpdateSessionPanelAnchor()
+{
+	if (!SessionWindowHost || !PetWindow)
+	{
+		return;
+	}
+	SessionWindowHost->UpdateAnchor(ComputePetBoundsInSlateScreen());
+}
+
+void APetCapturePawn::UpdateSettingsPanelAnchor()
+{
+	if (!SettingsWindowHost || !PetWindow)
+	{
+		return;
+	}
+	SettingsWindowHost->UpdateAnchor(ComputePetBoundsInSlateScreen());
 }
 
 void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
@@ -436,10 +466,8 @@ void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
 	{
 		MessageChannelComponent->SendOpenTui(SessionId);
 	}
-	if (SessionWindowHost)
-	{
-		SessionWindowHost->Close();
-	}
+	// 选中会话后关闭会话面板；若设置面板被压栈则一并弹栈恢复。
+	HandleCloseSession();
 }
 
 void APetCapturePawn::HandlePetState(const FString& State, const FString& Reason)
@@ -477,30 +505,203 @@ void APetCapturePawn::HandlePetState(const FString& State, const FString& Reason
 
 void APetCapturePawn::HandleSessionsSnapshot(const TArray<FPetSessionInfo>& Sessions)
 {
-	RouteSessionData(
-		[&Sessions](FPetSessionWebPanel& Panel) { Panel.ApplySnapshot(Sessions); },
-		[&Sessions](UPetSessionPanelWidget& Widget) { Widget.ApplySnapshot(Sessions); });
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->ApplySnapshot(Sessions);
+	}
+}
+
+void APetCapturePawn::HandleConfigSnapshot(const FPetSettingsSnapshot& Snapshot)
+{
+	// 守护进程权威快照：整体对齐本地状态（设置面板乐观更新后以回推为准收敛）。
+	CurrentSettings = Snapshot;
+
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->SetTheme(Snapshot.UiTheme);
+		SessionWebPanel->SetFpsMonitor(Snapshot.bFpsMonitor);
+	}
+	// 快照始终进设置面板缓存：面板已打开时即时上屏，未打开时缓存到打开/加载完成再推。
+	if (SettingsWebPanel)
+	{
+		SettingsWebPanel->ApplySnapshot(Snapshot);
+	}
+	if (PetWindow)
+	{
+		PetWindow->SetFpsOverlayEnabled(Snapshot.bFpsMonitor);
+		PetWindow->SetFpsValues(WorldFps, WebFps);
+	}
+	UE_LOG(LogPet, Log, TEXT("已应用配置快照: open_target=%s ui_theme=%s fps_monitor=%d"),
+		*Snapshot.OpenTarget, *Snapshot.UiTheme, Snapshot.bFpsMonitor ? 1 : 0);
+}
+
+void APetCapturePawn::HandleSetOpenTarget(const FString& Target)
+{
+	// 乐观更新本地；快照回推后经 HandleConfigSnapshot 对齐（设置页本地已由 JS 自更）。
+	CurrentSettings.OpenTarget = Target;
+	if (MessageChannelComponent)
+	{
+		FPetConfigPatch Patch;
+		Patch.OpenTarget = Target;
+		MessageChannelComponent->SendUpdateConfig(Patch);
+	}
+}
+
+void APetCapturePawn::HandleSetTheme(const FString& ThemeId)
+{
+	CurrentSettings.UiTheme = ThemeId;
+	// 乐观应用会话面板主题，快照回推后再对齐，避免等待往返的视觉延迟。
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->SetTheme(ThemeId);
+	}
+	if (MessageChannelComponent)
+	{
+		FPetConfigPatch Patch;
+		Patch.UiTheme = ThemeId;
+		MessageChannelComponent->SendUpdateConfig(Patch);
+	}
+}
+
+void APetCapturePawn::HandleSetFpsMonitor(bool bEnabled)
+{
+	CurrentSettings.bFpsMonitor = bEnabled;
+	// 乐观同步：叠加层、会话面板上报开关即时切换；设置页已由 JS 自更。
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->SetFpsMonitor(bEnabled);
+	}
+	if (PetWindow)
+	{
+		PetWindow->SetFpsOverlayEnabled(bEnabled);
+		PetWindow->SetFpsValues(WorldFps, WebFps);
+	}
+	if (MessageChannelComponent)
+	{
+		FPetConfigPatch Patch;
+		Patch.FpsMonitor = bEnabled;
+		MessageChannelComponent->SendUpdateConfig(Patch);
+	}
+}
+
+void APetCapturePawn::ApplyPanelStackStep(const FPetPanelStackStep& Step)
+{
+	// 栈推进执行：先关闭被压栈的面板，再打开目标（含弹栈恢复）面板。
+	// 关闭/打开沿用各面板原有的锚点与快照惯例，保证动画衔接一致。
+	if (Step.Close == EPetPanel::Session && SessionWindowHost)
+	{
+		SessionWindowHost->Close();
+		if (SessionWebPanel)
+		{
+			// 压栈隐藏：CEF 已停帧，隐藏期 JS 一律不下发，恢复可见时经 SetPanelVisible 全量重放。
+			SessionWebPanel->SetPanelVisible(false);
+		}
+	}
+	else if (Step.Close == EPetPanel::Settings && SettingsWindowHost)
+	{
+		SettingsWindowHost->Close();
+		if (SettingsWebPanel)
+		{
+			SettingsWebPanel->SetPanelVisible(false);
+		}
+	}
+
+	if (Step.Open == EPetPanel::Session && SessionWindowHost && SessionWebPanel)
+	{
+		UpdateSessionPanelAnchor();
+		SessionWindowHost->Toggle();
+		// ShowWindow 已同步完成后置可见标志；页面就绪时推送全量状态。
+		SessionWebPanel->SetPanelVisible(true);
+	}
+	else if (Step.Open == EPetPanel::Settings && SettingsWindowHost && SettingsWebPanel)
+	{
+		UpdateSettingsPanelAnchor();
+		// 打开/恢复前推一次快照：此刻面板仍隐藏、ApplySnapshot 只入缓存不下发；
+		// Toggle 显示后 SetPanelVisible(true) 触发重放，保证页面（含 FPS 上报开关）与本地状态一致。
+		SettingsWebPanel->ApplySnapshot(CurrentSettings);
+		SettingsWindowHost->Toggle();
+		SettingsWebPanel->SetPanelVisible(true);
+	}
+}
+
+void APetCapturePawn::HandleCloseSettings()
+{
+	if (!SettingsWindowHost || !SettingsWebPanel)
+	{
+		return;
+	}
+	FPetPanelStackStep Step;
+	PanelStack = PetPanelStack::Close(PanelStack, EPetPanel::Settings, Step);
+	ApplyPanelStackStep(Step);
+}
+
+void APetCapturePawn::HandleCloseSession()
+{
+	if (!SessionWindowHost || !SessionWebPanel)
+	{
+		return;
+	}
+	FPetPanelStackStep Step;
+	PanelStack = PetPanelStack::Close(PanelStack, EPetPanel::Session, Step);
+	ApplyPanelStackStep(Step);
+}
+
+void APetCapturePawn::HandleReportFps(int32 Fps)
+{
+	// 会话面板与设置面板的 reportfps 都汇入同一"WebUI 帧率"，取最近上报值。
+	WebFps = Fps;
+	if (PetWindow)
+	{
+		PetWindow->SetFpsValues(WorldFps, WebFps);
+	}
+}
+
+void APetCapturePawn::ToggleSettingsPanel()
+{
+	if (!SettingsWindowHost || !SettingsWebPanel)
+	{
+		UE_LOG(LogPet, Warning, TEXT("设置面板资源未就绪，Ctrl+, 热键忽略"));
+		return;
+	}
+	FPetPanelStackStep Step;
+	PanelStack = PetPanelStack::Toggle(PanelStack, EPetPanel::Settings, Step);
+	ApplyPanelStackStep(Step);
+}
+
+void APetCapturePawn::ToggleSessionPanel()
+{
+	if (!SessionWindowHost || !SessionWebPanel)
+	{
+		UE_LOG(LogPet, Warning, TEXT("会话面板资源未就绪，保持宠物本体可用"));
+		return;
+	}
+	FPetPanelStackStep Step;
+	PanelStack = PetPanelStack::Toggle(PanelStack, EPetPanel::Session, Step);
+	ApplyPanelStackStep(Step);
 }
 
 void APetCapturePawn::HandleSessionStart(const FString& SessionId, const FString& Cwd, bool bResume)
 {
-	RouteSessionData(
-		[&SessionId, &Cwd](FPetSessionWebPanel& Panel) { Panel.AddOrUpdateSession(SessionId, FString(), Cwd, true); },
-		[&SessionId, &Cwd](UPetSessionPanelWidget& Widget) { Widget.AddOrUpdateSession(SessionId, FString(), Cwd, true); });
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->AddOrUpdateSession(SessionId, FString(), Cwd, true);
+	}
 }
 
 void APetCapturePawn::HandleSessionEnd(const FString& SessionId, const FString& Reason)
 {
-	RouteSessionData(
-		[&SessionId](FPetSessionWebPanel& Panel) { Panel.SetSessionActive(SessionId, false); },
-		[&SessionId](UPetSessionPanelWidget& Widget) { Widget.SetSessionActive(SessionId, false); });
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->SetSessionActive(SessionId, false);
+	}
 }
 
 void APetCapturePawn::HandleSessionState(const FString& SessionId, bool bWorking, bool bUnread)
 {
-	RouteSessionData(
-		[&SessionId, bWorking, bUnread](FPetSessionWebPanel& Panel) { Panel.UpdateSessionState(SessionId, bWorking, bUnread); },
-		[&SessionId, bWorking, bUnread](UPetSessionPanelWidget& Widget) { Widget.UpdateSessionState(SessionId, bWorking, bUnread); });
+	if (SessionWebPanel)
+	{
+		SessionWebPanel->UpdateSessionState(SessionId, bWorking, bUnread);
+	}
 }
 
 void APetCapturePawn::HandleShutdown(const FString& Reason)
@@ -545,8 +746,8 @@ void APetCapturePawn::HandleCloseRequested()
 
 	bCloseRequested = true;
 	bSessionPanelTogglePending = false;
-	bSessionPanelPresentationPending = false;
-	ShutdownSessionPanel();
+	bSettingsPanelTogglePending = false;
+	ShutdownPanels();
 	if (PetWindow)
 	{
 		PetWindow->Destroy();
@@ -580,38 +781,37 @@ void APetCapturePawn::Tick(float DeltaTime)
 		UE_LOG(LogPet, Warning, TEXT("等待守护进程 shutdown 超时，执行本地退出兜底"));
 		FPlatformMisc::RequestExit(false);
 	}
+
+	// 3D 世界帧率：以 Tick 次数近似每渲染帧计数，每秒结算一次并推送叠加层。
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (WorldFpsStatsStartTime <= 0.0)
+		{
+			WorldFpsStatsStartTime = Now;
+		}
+		++WorldFpsFramesInWindow;
+		const double Elapsed = Now - WorldFpsStatsStartTime;
+		if (Elapsed >= 1.0)
+		{
+			WorldFps = FMath::Max(0, FMath::RoundToInt(WorldFpsFramesInWindow / Elapsed));
+			WorldFpsFramesInWindow = 0;
+			WorldFpsStatsStartTime = Now;
+			if (PetWindow)
+			{
+				PetWindow->SetFpsValues(WorldFps, WebFps);
+			}
+		}
+	}
+
 	if (PetWindow)
 	{
 		WindowScreenPosition = PetWindow->GetScreenPosition();
 		PetWindow->Tick(DeltaTime);
 	}
-	if (bSessionPanelPresentationPending)
-	{
-		bSessionPanelPresentationPending = false;
-		ReplaySessionPanelPresentation();
-	}
 	if (bSessionPanelTogglePending)
 	{
 		bSessionPanelTogglePending = false;
-		// Web 路径不创建 UMG Widget（SessionPanelWidget 为空），可用任一资源作为
-		// 窗口切换守卫，避免 Web 模式下误报"资源未就绪"。
-		if (SessionWindowHost && (SessionPanelWidget || SessionWebPanel))
-		{
-			UpdateSessionPanelAnchor();
-			const bool bWasVisible = SessionWindowHost->IsVisible();
-			SessionWindowHost->Toggle();
-			if (!bWasVisible)
-			{
-				// 等到下一帧再重播：此时窗口已可见，ListView 条目也完成了 Slate 布局。
-				// Web 路径下 SessionPanelWidget 为空，ReplaySessionPanelPresentation
-				// 直接返回，UMG 专属动画自然跳过。
-				bSessionPanelPresentationPending = true;
-			}
-		}
-		else
-		{
-			UE_LOG(LogPet, Warning, TEXT("会话面板资源未就绪，保持宠物本体可用"));
-		}
+		ToggleSessionPanel();
 	}
 	if (SessionWindowHost)
 	{
@@ -620,10 +820,21 @@ void APetCapturePawn::Tick(float DeltaTime)
 			UpdateSessionPanelAnchor();
 		}
 		SessionWindowHost->TickWindowAnimation(DeltaTime);
-		if (SessionPanelWidget && SessionWindowHost->IsVisible())
+	}
+
+	// Ctrl+, 切换设置面板；显隐动画与锚点与会话面板一致。
+	if (bSettingsPanelTogglePending)
+	{
+		bSettingsPanelTogglePending = false;
+		ToggleSettingsPanel();
+	}
+	if (SettingsWindowHost)
+	{
+		if (SettingsWindowHost->IsVisible())
 		{
-			SessionPanelWidget->TickDetachedWindowAnimations(DeltaTime);
+			UpdateSettingsPanelAnchor();
 		}
+		SettingsWindowHost->TickWindowAnimation(DeltaTime);
 	}
 
 	if (!RenderTarget)
@@ -679,17 +890,6 @@ void APetCapturePawn::Tick(float DeltaTime)
 				}
 			}
 		});
-}
-
-void APetCapturePawn::ReplaySessionPanelPresentation()
-{
-	if (!SessionPanelWidget || !SessionWindowHost || !SessionWindowHost->IsVisible())
-	{
-		return;
-	}
-
-	SessionPanelWidget->PlayPanelContentAnimation();
-	SessionPanelWidget->ReplayVisibleRowAnimations();
 }
 
 void APetCapturePawn::AdjustCameraRotation(float DeltaX, float DeltaY)
@@ -763,6 +963,7 @@ void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		MessageChannelComponent->OnPetState.RemoveAll(this);
 		MessageChannelComponent->OnSessionsSnapshot.RemoveAll(this);
+		MessageChannelComponent->OnConfigSnapshot.RemoveAll(this);
 		MessageChannelComponent->OnSessionStart.RemoveAll(this);
 		MessageChannelComponent->OnSessionEnd.RemoveAll(this);
 		MessageChannelComponent->OnSessionState.RemoveAll(this);
@@ -772,7 +973,8 @@ void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	bSessionPanelTogglePending = false;
 	bCloseRequestPending = false;
-	ShutdownSessionPanel();
+	bSettingsPanelTogglePending = false;
+	ShutdownPanels();
 
 	delete PetWindow;
 	PetWindow = nullptr;

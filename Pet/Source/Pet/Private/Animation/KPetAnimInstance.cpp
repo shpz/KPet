@@ -1,7 +1,7 @@
 #include "Animation/KPetAnimInstance.h"
 
-#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Framework/Application/SlateApplication.h"
 #include "FunctionLibrary/PetHelperLibrary.h"
 #include "Player/PetCapturePawn.h"
 #include "Player/PetCharacterMotionComponent.h"
@@ -98,7 +98,11 @@ void UKPetAnimInstance::UpdateEyeLook(float DeltaSeconds)
 			const FVector2D EyeScreenPosition(
 				static_cast<double>(WindowPosition.X) + EyePixel.X,
 				static_cast<double>(WindowPosition.Y) + EyePixel.Y);
-			const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnPlatform();
+			// 原 UMG UWidgetLayoutLibrary::GetMousePositionOnPlatform() 即取 Slate 光标位置；
+			// 移除 UMG 依赖后改用等价 Slate API，坐标语义不变。
+			const FVector2D MousePosition = FSlateApplication::IsInitialized()
+				? FSlateApplication::Get().GetCursorPos()
+				: FVector2D::ZeroVector;
 			const float Range = FMath::Max(EyeLookRangePixels, 1.0f);
 			Target = FVector2D(
 				(MousePosition.X - EyeScreenPosition.X) / Range,

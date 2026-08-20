@@ -852,6 +852,117 @@ test('单实例（§4.1）：事件管道被占用 → 第二个实例抛 Single
   }
 });
 
+test('握手推送 config_snapshot：hello 快照收尾包含全量配置（设置 WebUI 初始化）', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-config-snapshot-test-'));
+  const configPath = path.join(markerBase, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ open_target: 'web' }), 'utf8');
+  const t = await startApp({}, { configPath }); // 守护进程使用传入的测试配置，文件仅作持久化目标
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    const snap = await r.waitFor('config_snapshot');
+    assert.deepEqual(snap.payload, {
+      open_target: 'cli',
+      ui_theme: 'dark-glass',
+      fps_monitor: false,
+      open_web_url: 'http://127.0.0.1:58627/',
+    }, '快照反映守护进程当前生效配置');
+    r.close();
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('update_config：应用合并、持久化写回（未知字段保留）、推送 config_snapshot、open_tui 读到新值', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-update-config-test-'));
+  const configPath = path.join(markerBase, 'kimipet', 'config.json');
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  // 预置文件带未知字段 brand + 旧已知配置，验证合并时只覆盖 patch 字段
+  fs.writeFileSync(configPath, JSON.stringify({ brand: 'kimi', open_target: 'web', ui_theme: 'light-minimal' }), 'utf8');
+  const opened: Array<{ target?: string; terminal: string; webUrl?: string; cwd: string; sessionId: string | null }> = [];
+  const t = await startApp({}, {
+    configPath,
+    openTuiFn: async (opts) => {
+      opened.push(opts);
+      return { terminal: opts.terminal, ok: true };
+    },
+  });
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    const boot = await r.waitFor('config_snapshot');
+    assert.deepEqual(boot.payload, {
+      open_target: 'cli',
+      ui_theme: 'dark-glass',
+      fps_monitor: false,
+      open_web_url: 'http://127.0.0.1:58627/',
+    }, '启动快照为默认值');
+
+    // 全部字段合法：合并 + 上报
+    r.send(createEnvelope('update_config', { open_target: 'web', ui_theme: 'cute-pet', fps_monitor: true }));
+    const snap = await r.waitFor('config_snapshot');
+    assert.deepEqual(snap.payload, {
+      open_target: 'web',
+      ui_theme: 'cute-pet',
+      fps_monitor: true,
+      open_web_url: 'http://127.0.0.1:58627/',
+    });
+
+    // 持久化：未知字段 brand 保留，open_target/ui_theme 覆盖，fps_monitor 新增
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), {
+      brand: 'kimi',
+      open_target: 'web',
+      ui_theme: 'cute-pet',
+      fps_monitor: true,
+    });
+    assert.ok(fs.readFileSync(configPath, 'utf8').includes('\n  "open_target"'), '2 空格缩进写回');
+
+    // open_tui 运行时读取更新后的 open_target（app.ts 运行时读取点）
+    await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"D:\\\\ws"}');
+    await r.waitFor('session_start');
+    r.send(createEnvelope('open_tui', { session_id: 's1', source: 'pet' }));
+    await waitUntil(() => opened.length === 1, 1000);
+    assert.deepEqual(opened[0], {
+      target: 'web', terminal: 'wt', webUrl: 'http://127.0.0.1:58627/', cwd: 'D:\\ws', sessionId: 's1', wslDistro: '',
+    }, 'open_tui 使用更新后的 open_target');
+    r.close();
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
+test('update_config 无合法字段：回 protocol_error、配置不变、不写文件、不推快照', { skip: !isWindows }, async () => {
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-update-config-bad-test-'));
+  const configPath = path.join(markerBase, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ open_target: 'cli', custom: 'x' }), 'utf8');
+  const t = await startApp({}, { configPath });
+  try {
+    const r = await FakeRenderer.connect(t.controlPipe);
+    r.hello();
+    const boot = await r.waitFor('config_snapshot');
+    assert.deepEqual(boot.payload, {
+      open_target: 'cli',
+      ui_theme: 'dark-glass',
+      fps_monitor: false,
+      open_web_url: 'http://127.0.0.1:58627/',
+    });
+
+    const before = fs.readFileSync(configPath, 'utf8');
+    // 模拟非法负载（JSON 解析后运行时值，绕过 TS 静态类型）
+    r.send(createEnvelope('update_config', { ui_theme: 'bogus', open_target: 'browser' } as never));
+    const err = await r.waitFor('protocol_error');
+    assert.equal((err.payload as { description: string }).description, 'update_config 至少需要一个合法字段');
+    assert.equal(fs.readFileSync(configPath, 'utf8'), before, '无合法字段不应写文件');
+    assert.equal(r.messages.some((m) => m.type === 'config_snapshot'), false, '无合法字段不应推送 config_snapshot');
+    r.close();
+  } finally {
+    await stopApp(t);
+    fs.rmSync(markerBase, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 工具
 // ---------------------------------------------------------------------------

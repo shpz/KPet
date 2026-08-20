@@ -59,6 +59,39 @@ interface SessionInfo {
   updated_at: number;
 }
 
+/** 守护进程侧设置配置（update_config 的合并目标 / config_snapshot 的全量来源，字段同 §7 与 bridge config.ts）。 */
+interface MockConfig {
+  open_target: "cli" | "web";
+  open_web_url: string;
+  ui_theme: "dark-glass" | "light-minimal" | "cute-pet";
+  fps_monitor: boolean;
+}
+
+/** config_snapshot / update_config 的合法取值白名单（与 PetConfigProtocol.cpp 一致）。 */
+const OPEN_TARGETS: readonly string[] = ["cli", "web"];
+const UI_THEMES: readonly string[] = ["dark-glass", "light-minimal", "cute-pet"];
+
+/** mock 初始配置（open_web_url 用空串即可：协议只校验其是字符串，open_target=cli 时设置页不展示）。 */
+let config: MockConfig = {
+  open_target: "cli",
+  open_web_url: "",
+  ui_theme: "dark-glass",
+  fps_monitor: false,
+};
+
+/** 向指定客户端回推全量 config_snapshot（真实守护进程在握手收尾与每次 update_config 后下发）。 */
+function pushConfigSnapshot(socket: net.Socket): void {
+  send(socket, "config_snapshot", {
+    open_target: config.open_target,
+    open_web_url: config.open_web_url,
+    ui_theme: config.ui_theme,
+    fps_monitor: config.fps_monitor,
+  });
+  console.log(
+    `[${ts()}] 已回推 config_snapshot: open_target=${config.open_target} ui_theme=${config.ui_theme} fps_monitor=${config.fps_monitor}`,
+  );
+}
+
 /** 收到的消息信封（§4.2）。 */
 interface IncomingMessage {
   type?: string;
@@ -151,6 +184,7 @@ function handleMessage(socket: net.Socket, line: string): void {
         capabilities: [
           "pet_state",
           "sessions_snapshot",
+          "config_snapshot",
           "session_state",
           "tasks_snapshot",
           "task_start",
@@ -203,6 +237,8 @@ function handleMessage(socket: net.Socket, line: string): void {
       }
       send(socket, "sessions_snapshot", { sessions });
       send(socket, "pet_state", { state: "Idle", reason: "mock:initial" });
+      // 握手收尾补发全量配置快照（§4.5-4/§7，与真实守护进程一致：设置 WebUI 初始化用）。
+      pushConfigSnapshot(socket);
       console.log(`[${ts()}] 已回 hello，并下发 ${sessions.length} 条会话演示数据与 pet_state: Idle`);
       if (verificationMode) console.log(`[${ts()}] VERIFY_CATALOG_SIZE=${sessions.length}`);
       if (verificationMode && !verificationStateTimer) {
@@ -244,6 +280,41 @@ function handleMessage(socket: net.Socket, line: string): void {
     case "pet_moved":
       console.log(`[${ts()}] 宠物位置: x=${p.x} y=${p.y} monitor_id=${p.monitor_id}`);
       break;
+    case "update_config": {
+      // 镜像真实守护进程（§7 / bridge daemon/app.ts onUpdateConfig）：逐字段校验合并进
+      // 内存配置；至少一个合法字段才生效，否则回 protocol_error（§4.4）。
+      // 生效后回推全量 config_snapshot——渲染端 HandleConfigSnapshot 因此会对（隐藏中的）
+      // 会话面板再次推 SetTheme + SetFpsMonitor，这一往返是复现设置面板压栈黑化的关键前置。
+      const rawTarget = p.open_target;
+      const rawTheme = p.ui_theme;
+      const rawFps = p.fps_monitor;
+      let applied = false;
+      if (rawTarget !== undefined && OPEN_TARGETS.includes(rawTarget as string)) {
+        config.open_target = rawTarget as MockConfig["open_target"];
+        applied = true;
+      }
+      if (rawTheme !== undefined && UI_THEMES.includes(rawTheme as string)) {
+        config.ui_theme = rawTheme as MockConfig["ui_theme"];
+        applied = true;
+      }
+      if (rawFps !== undefined && typeof rawFps === "boolean") {
+        config.fps_monitor = rawFps;
+        applied = true;
+      }
+      console.log(
+        `[${ts()}] 收到 update_config: open_target=${rawTarget ?? "-"} ui_theme=${rawTheme ?? "-"} fps_monitor=${rawFps ?? "-"} | 合并后 ui_theme=${config.ui_theme} fps_monitor=${config.fps_monitor}`,
+      );
+      if (!applied) {
+        send(socket, "protocol_error", {
+          description: "update_config 至少需要一个合法字段",
+          raw_excerpt: line.slice(0, 256),
+        });
+        console.log(`[${ts()}] update_config 无合法字段，回 protocol_error`);
+        break;
+      }
+      pushConfigSnapshot(socket);
+      break;
+    }
     case "protocol_error":
       console.log(`[${ts()}] 收到 protocol_error: ${p.description ?? ""}`);
       break;

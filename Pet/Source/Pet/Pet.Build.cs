@@ -12,8 +12,7 @@ public class Pet : ModuleRules
 		{
 			"Core",
 			"CoreUObject",
-			"Engine",
-			"UMG"
+			"Engine"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
@@ -36,7 +35,6 @@ public class Pet : ModuleRules
 			{
 				"MovieScene",
 				"MovieSceneTracks",
-				"UMGEditor",
 				"UnrealEd"
 			});
 		}

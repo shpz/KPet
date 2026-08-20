@@ -6,7 +6,6 @@
 class FActiveTimerHandle;
 class SWidget;
 class SWindow;
-class UPetSessionPanelWidget;
 enum class EActiveTimerReturnType : uint8;
 
 /** 窗口布局计算结果。所有字段均使用 Slate 屏幕坐标。 */
@@ -66,8 +65,13 @@ public:
 	~FPetSessionWindowHost();
 
 	bool Create(TSharedRef<SWidget> Content);
-	bool Create(UPetSessionPanelWidget* PanelWidget);
 	void Destroy();
+
+	/**
+	 * Create 之前设置窗口客户区尺寸（Slate 设计单位，DPI 由 AdjustInitialSizeAndPositionForDPIScale
+	 * 在平台层处理）。默认会话面板 360×234；设置面板用 380×460 承载 340px 宽卡片。
+	 */
+	void SetClientSize(const FVector2f& InClientSize) { ClientSize = InClientSize; }
 
 	void Toggle();
 	void Close();
@@ -77,8 +81,9 @@ public:
 	bool IsVisible() const;
 
 private:
-	static constexpr float PanelDesignWidth = 360.0f;
-	static constexpr float PanelDesignHeight = 234.0f;
+	/** 会话面板默认尺寸：360×234。 */
+	static constexpr float DefaultPanelWidth = 360.0f;
+	static constexpr float DefaultPanelHeight = 234.0f;
 	static constexpr float AnimationDuration = 0.18f;
 	static constexpr float SlideDistance = 18.0f;
 
@@ -88,6 +93,8 @@ private:
 	void StopContentActiveTimer();
 	EActiveTimerReturnType HandleContentActiveTimer(double CurrentTime, float DeltaTime);
 	void ApplyWindowTransform(bool bForceMove);
+	/** 设置窗口透明度；Windows 下附带黑色色键，让透明页面的卡片外区域透出桌面。 */
+	void ApplyWindowOpacity(float Opacity);
 	FVector2f ReadWindowSizeInSlateScreen() const;
 	bool IsGameThreadCall() const;
 
@@ -97,9 +104,12 @@ private:
 	EPetSessionWindowAnimationState AnimationState = EPetSessionWindowAnimationState::Hidden;
 	float AnimationProgress = 0.0f;
 
+	/** 窗口客户区尺寸（Slate 设计单位），Create 时写入 SWindow。 */
+	FVector2f ClientSize = FVector2f(DefaultPanelWidth, DefaultPanelHeight);
+
 	FVector2f TargetPosition = FVector2f::ZeroVector;
 	FSlateRect TargetWorkArea;
-	FVector2f WindowSizeInSlateScreen = FVector2f(PanelDesignWidth, PanelDesignHeight);
+	FVector2f WindowSizeInSlateScreen = FVector2f(DefaultPanelWidth, DefaultPanelHeight);
 	FVector2f LastMovedPosition = FVector2f::ZeroVector;
 	bool bHasAnchor = false;
 	bool bHasMovedPosition = false;

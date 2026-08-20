@@ -12,14 +12,161 @@
     /* 行高 = 行内容 56px + 行间距 4px；列表最多显示 8 行（不写死像素） */
     --row-h: 60px;
     --row-limit: 8;
+
+    /* ===== 主题变量（默认 dark-glass 深色玻璃：与既有配色一致） ===== */
+    /* 页面底色（窗口矩形四角即此色），面板圆角卡片画在其上 */
+    --bg: #14161e;
+
+    /* 文字层级 */
+    --text-1: #eaf0fa;            /* 主文字（行标题等） */
+    --text-1-active: #eef7ff;     /* 激活行标题（更亮） */
+    --panel-title: #e7edf8;       /* 面板标题 */
+    --text-2: #8a94ac;            /* 次要文字（计数、空态标题、关闭按钮） */
+    --text-faint: #7c869e;        /* 弱化文字（cwd） */
+    --text-faint-active: #93b4cc; /* 激活行 cwd */
+    --text-hint: #565f74;         /* 最弱文字（空态说明） */
+
+    /* 面板卡片 */
+    --panel-bg: linear-gradient(180deg, #1b212e 0%, #161b27 100%);
+    --panel-border: rgba(140, 170, 235, 0.16);
+    --panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+    /* 分隔与徽标 */
+    --divider: rgba(255, 255, 255, 0.07);    /* 头部下边框 */
+    --pill-bg: rgba(255, 255, 255, 0.06);    /* 计数胶囊底 */
+    --pill-border: rgba(255, 255, 255, 0.10);
+    --pill-text: #8a94ac;
+
+    /* 关闭按钮 hover */
+    --hover-bg: rgba(255, 255, 255, 0.08);
+    --hover-color: #eaf0fa;
+
+    /* 会话行 */
+    --row-bg: rgba(255, 255, 255, 0.03);
+    --row-border: rgba(255, 255, 255, 0.06);
+    --row-hover-bg: rgba(255, 255, 255, 0.06);
+    --row-hover-border: rgba(255, 255, 255, 0.12);
+    --row-active-bg: rgba(87, 214, 255, 0.10);
+    --row-active-border: rgba(87, 214, 255, 0.26);
+
+    /* 激活强调条 */
+    --accent-bar: linear-gradient(180deg, #6be3ff 0%, #3fa9f5 100%);
+    --accent-glow: rgba(87, 214, 255, 0.55);
+
+    /* 状态徽标 */
+    --busy: #57d6ff;                       /* 工作中三点 */
+    --unread: rgba(255, 90, 110, 0.92);    /* 未读圆点 */
+    --unread-glow: rgba(255, 90, 110, 0.60);
+
+    /* 滚动条 */
+    --scrollbar-color: rgba(255, 255, 255, 0.16);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+    --scrollbar-thumb-hover: rgba(87, 214, 255, 0.45);
+
+    /* 空状态 */
+    --empty-border: rgba(255, 255, 255, 0.14);
+    --empty-bg: rgba(255, 255, 255, 0.02);
+    --empty-icon: #4a5268;
+  }
+
+  /* ===== 主题：浅色极简（取色自 .pet/session-panel-b-light-minimal.html） ===== */
+  body[data-theme="light-minimal"] {
+    --bg: #eef3fa;
+    --text-1: #20242e;
+    --text-1-active: #2f5bc4;
+    --panel-title: #20242e;
+    --text-2: #5b6472;
+    --text-faint: #98a2b3;
+    --text-faint-active: #5b6472;
+    --text-hint: #98a2b3;
+
+    --panel-bg: #ffffff;
+    --panel-border: rgba(15, 23, 42, 0.07);
+    --panel-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px rgba(15, 23, 42, 0.10);
+
+    --divider: #eef1f5;
+    --pill-bg: #f2f4f8;
+    --pill-border: #eef1f5;
+    --pill-text: #5b6472;
+
+    --hover-bg: #e8effc;
+    --hover-color: #2f5bc4;
+
+    --row-bg: transparent;
+    --row-border: transparent;
+    --row-hover-bg: #f5f7fa;
+    --row-hover-border: transparent;
+    --row-active-bg: #eef4fe;
+    --row-active-border: transparent;
+
+    --accent-bar: linear-gradient(180deg, #3b6fe0 0%, #2f5bc4 100%);
+    --accent-glow: rgba(59, 111, 224, 0.35);
+
+    --busy: #7c93cc;
+    --unread: #e5484d;
+    --unread-glow: rgba(229, 72, 77, 0.14);
+
+    --scrollbar-color: #c9d1dd;
+    --scrollbar-thumb: #c9d1dd;
+    --scrollbar-thumb-hover: #aab6c8;
+
+    --empty-border: rgba(15, 23, 42, 0.12);
+    --empty-bg: #f6f8fb;
+    --empty-icon: #93a5c1;
+  }
+
+  /* ===== 主题：可爱宠物风（取色自 .pet/session-panel-c-cute-pet.html） ===== */
+  body[data-theme="cute-pet"] {
+    --bg: #fff6e8;
+    --text-1: #4c382b;
+    --text-1-active: #e56a3c;
+    --panel-title: #4c382b;
+    --text-2: #8a6a52;
+    --text-faint: #c2a48c;
+    --text-faint-active: #8a6a52;
+    --text-hint: #c2a48c;
+
+    --panel-bg: #fffdf7;
+    --panel-border: rgba(196, 140, 88, 0.22);
+    --panel-shadow: 0 2px 4px rgba(150, 96, 52, 0.10), 0 16px 40px rgba(150, 96, 52, 0.20);
+
+    --divider: #f6e8d8;
+    --pill-bg: #fde9d6;
+    --pill-border: #f6d3b4;
+    --pill-text: #d96b33;
+
+    --hover-bg: #fde9d6;
+    --hover-color: #e56a3c;
+
+    --row-bg: transparent;
+    --row-border: transparent;
+    --row-hover-bg: #fff5e8;
+    --row-hover-border: transparent;
+    --row-active-bg: rgba(245, 130, 79, 0.10);
+    --row-active-border: transparent;
+
+    --accent-bar: linear-gradient(180deg, #f5824f 0%, #ffb37e 100%);
+    --accent-glow: rgba(245, 130, 79, 0.40);
+
+    --busy: #f79a4e;
+    --unread: #e6533f;
+    --unread-glow: rgba(230, 83, 63, 0.16);
+
+    --scrollbar-color: #e6c9a8;
+    --scrollbar-thumb: #e6c9a8;
+    --scrollbar-thumb-hover: #d8b28c;
+
+    --empty-border: rgba(196, 140, 88, 0.22);
+    --empty-bg: #fff5e8;
+    --empty-icon: #d99b5f;
   }
 
   html, body { height: 100%; }
 
   body {
     /* 不透明深底色填满整个窗口：窗口是矩形的，圆角卡片画在底色上，四角与底色同色 */
-    background: #14161e;
-    color: #eaf0fa;
+    background: var(--bg);
+    color: var(--text-1);
     font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
     overflow: hidden;
     user-select: none;
@@ -28,16 +175,16 @@
   /* 点击关闭按钮后本地隐藏（无动画）；实际关闭由 C++ 控制，后续推送数据会自动恢复显示 */
   body.is-hidden { display: none; }
 
-  /* ============ 面板卡片（深色玻璃拟态） ============ */
+  /* ============ 面板卡片（三主题均可切换） ============ */
   .panel {
     height: 100%;
     display: flex;
     flex-direction: column;
     border-radius: 14px;
-    /* 比底色略亮的实色渐变，配 1px 细描边与顶边高光，保留原型 A 的玻璃质感 */
-    background: linear-gradient(180deg, #1b212e 0%, #161b27 100%);
-    border: 1px solid rgba(140, 170, 235, 0.16);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    /* 渐变 / 纯色 / 投影均由主题变量提供，保留各主题的卡片质感 */
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    box-shadow: var(--panel-shadow);
     overflow: hidden;
   }
 
@@ -47,16 +194,16 @@
     align-items: center;
     gap: 8px;
     padding: 12px 10px 12px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--divider);
   }
-  .panel-title { font-size: 14px; font-weight: 600; letter-spacing: 1px; color: #e7edf8; }
+  .panel-title { font-size: 14px; font-weight: 600; letter-spacing: 1px; color: var(--panel-title); }
   .panel-count {
     font-size: 11px;
-    color: #8a94ac;
+    color: var(--pill-text);
     padding: 1px 8px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: var(--pill-bg);
+    border: 1px solid var(--pill-border);
   }
 
   /* 关闭按钮（×）：只向 C++ 发请求，实际关闭由 C++ 控制 */
@@ -71,14 +218,14 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: #8a94ac;
+    color: var(--text-2);
     font: inherit;
     font-size: 16px;
     line-height: 1;
     cursor: pointer;
     transition: background .15s ease, color .15s ease;
   }
-  .btn-close:hover { background: rgba(255, 255, 255, 0.08); color: #eaf0fa; }
+  .btn-close:hover { background: var(--hover-bg); color: var(--hover-color); }
   .btn-close:active { transform: translateY(1px); }
 
   /* ============ 主体区：列表 / 空态互斥填充 ============ */
@@ -93,22 +240,27 @@
   .session-list {
     flex: 1;
     min-height: 0;
-    /* 自适应视口高度：flex 撑满剩余空间，最多显示 8 行，超出滚动（16px 为上下内边距） */
-    max-height: calc(var(--row-limit) * var(--row-h) + 16px);
-    padding: 8px;
+    /* 自适应视口高度：flex 撑满剩余空间，最多显示 8 行，超出滚动（20px 为上下内边距，底部多留 4px） */
+    max-height: calc(var(--row-limit) * var(--row-h) + 20px);
+    padding: 8px 8px 12px;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+    scrollbar-color: var(--scrollbar-color) transparent;
+  }
+  /* 内容溢出时底缘渐隐：被裁切的行软溶解而不是硬切在面板下边界（仅溢出时启用，见 renderList） */
+  .session-list.can-fade {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
   }
   /* 自定义滚动条（WebKit） */
   .session-list::-webkit-scrollbar { width: 6px; }
   .session-list::-webkit-scrollbar-track { background: transparent; }
   .session-list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--scrollbar-thumb);
     border-radius: 3px;
   }
-  .session-list::-webkit-scrollbar-thumb:hover { background: rgba(87, 214, 255, 0.45); }
+  .session-list::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
   /* 行 */
   .session-row {
@@ -123,8 +275,8 @@
     gap: 10px;
     padding: 0 12px 0 0;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--row-border);
+    background: var(--row-bg);
     color: inherit;
     cursor: pointer;
     position: relative;
@@ -132,12 +284,12 @@
   }
   .session-row:last-child { margin-bottom: 0; }
   .session-row:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.12);
+    background: var(--row-hover-bg);
+    border-color: var(--row-hover-border);
   }
   .session-row.is-active {
-    background: rgba(87, 214, 255, 0.10);
-    border-color: rgba(87, 214, 255, 0.26);
+    background: var(--row-active-bg);
+    border-color: var(--row-active-border);
   }
 
   /* 左侧激活强调条 */
@@ -147,8 +299,8 @@
     margin-left: 0;
     border-radius: 0 3px 3px 0;
     flex: none;
-    background: linear-gradient(180deg, #6be3ff 0%, #3fa9f5 100%);
-    box-shadow: 0 0 8px rgba(87, 214, 255, 0.55);
+    background: var(--accent-bar);
+    box-shadow: 0 0 8px var(--accent-glow);
     opacity: 0;
     transition: opacity .15s ease;
   }
@@ -158,23 +310,23 @@
   .row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
   .row-title {
     font-size: 14px;
-    color: #eaf0fa;
+    color: var(--text-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.3;
   }
-  .session-row.is-active .row-title { color: #eef7ff; font-weight: 600; }
+  .session-row.is-active .row-title { color: var(--text-1-active); font-weight: 600; }
   .row-cwd {
     font-family: Consolas, "Courier New", monospace;
     font-size: 11px;
-    color: #7c869e;
+    color: var(--text-faint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.3;
   }
-  .session-row.is-active .row-cwd { color: #93b4cc; }
+  .session-row.is-active .row-cwd { color: var(--text-faint-active); }
 
   /* 右侧徽标区 */
   .row-badges { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -185,7 +337,7 @@
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background: #57d6ff;
+    background: var(--busy);
     animation: dotBounce 1s ease-in-out infinite;
   }
   .badge-working i:nth-child(2) { animation-delay: .15s; }
@@ -200,8 +352,8 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: rgba(255, 90, 110, 0.92);
-    box-shadow: 0 0 6px rgba(255, 90, 110, 0.60);
+    background: var(--unread);
+    box-shadow: 0 0 6px var(--unread-glow);
   }
 
   /* 行入场动画（仅新增单条时使用） */
@@ -225,13 +377,13 @@
     align-items: center;
     gap: 10px;
     padding: 34px 16px;
-    border: 1px dashed rgba(255, 255, 255, 0.14);
+    border: 1px dashed var(--empty-border);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--empty-bg);
   }
-  .empty-icon { color: #4a5268; width: 44px; height: 44px; }
-  .empty-title { font-size: 14px; color: #8a94ac; letter-spacing: 2px; }
-  .empty-sub { font-size: 12px; color: #565f74; }
+  .empty-icon { color: var(--empty-icon); width: 44px; height: 44px; }
+  .empty-title { font-size: 14px; color: var(--text-2); letter-spacing: 2px; }
+  .empty-sub { font-size: 12px; color: var(--text-hint); }
 
   [hidden] { display: none !important; }
 
@@ -283,6 +435,8 @@
  *   removeSession(sessionId)        删除一条
  *   setActive(sessionId, bool)      设置激活态（true 时其余会话取消激活）
  *   updateState(sessionId, state)   局部更新 { working, unread }
+ *   setTheme(themeId)               切换主题（body[data-theme] 即时生效）
+ *   setFpsMonitor(enabled)          启停 FPS 上报
  *
  * 条目形状：{ sessionId, title, cwd, active, working, unread }
  * 全部方法幂等、防 undefined：C++ 可能在页面任意时机注入调用。
@@ -296,6 +450,9 @@ const btnClose = document.getElementById('btnClose');
 
 /* ---------- 数据存储：Map 以 sessionId 为键，保持插入顺序 ---------- */
 const sessions = new Map();
+
+/* ---------- 主题清单：与设置页共用同一套 themeId ---------- */
+const THEME_IDS = ['dark-glass', 'light-minimal', 'cute-pet'];
 
 /* ---------- 工具函数 ---------- */
 function truncatePath(p, maxLen) {
@@ -374,6 +531,44 @@ function callBridge(action, ...args) {
   }
 }
 
+/* ---------- FPS 上报器 ---------- */
+/* 与 settings.html 是同一段轻量脚本（各页内联一份）：requestAnimationFrame 计数，
+ * 每满 1 秒经本页桥上报一次整数 fps；页面加载后不自动启动，等 C++ 通知。 */
+window.KimiPetFps = (function () {
+  let running = false;
+  let rafId = 0;
+  let frames = 0;
+  let baseTs = 0;
+
+  function tick(now) {
+    frames++;
+    const elapsed = (now - baseTs) / 1000;
+    if (elapsed >= 1) {
+      callBridge('ReportFps', Math.round(frames / elapsed));
+      frames = 0;
+      baseTs = now;
+    }
+    if (running) rafId = requestAnimationFrame(tick);
+  }
+
+  return {
+    start() {
+      if (running) return;
+      running = true;
+      frames = 0;
+      baseTs = performance.now();
+      rafId = requestAnimationFrame(tick);
+    },
+    stop() {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
+      frames = 0;
+      baseTs = 0;
+    }
+  };
+})();
+
 /* ---------- 渲染 ---------- */
 function makeRow(item) {
   const row = document.createElement('button');
@@ -432,6 +627,8 @@ function renderList(animateSessionId) {
   });
   updateCount();
   syncEmptyState();
+  /* 内容超出可视高度才启用底缘渐隐，行数少时保持干净利落 */
+  listEl.classList.toggle('can-fade', listEl.scrollHeight > listEl.clientHeight + 1);
 }
 
 function updateCount() {
@@ -536,6 +733,24 @@ window.KimiPetPanel = {
     if (typeof state.unread === 'boolean') target.unread = state.unread;
     renderList();
     showPanel();
+  },
+
+  /* 切换主题：themeId ∈ 三主题，写入 body[data-theme] 即时生效；非法值忽略并告警 */
+  setTheme(themeId) {
+    if (THEME_IDS.indexOf(themeId) === -1) {
+      console.warn('[KimiPetPanel] 未知主题，忽略：', themeId);
+      return;
+    }
+    document.body.dataset.theme = themeId;
+  },
+
+  /* 启停 FPS 上报（由 C++ 通过 applySettings / setFpsMonitor 通知） */
+  setFpsMonitor(enabled) {
+    if (enabled) {
+      window.KimiPetFps.start();
+    } else {
+      window.KimiPetFps.stop();
+    }
   }
 };
 

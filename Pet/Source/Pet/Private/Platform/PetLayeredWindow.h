@@ -42,6 +42,10 @@ public:
 	/** 按住 ESC 开始的有效单击，请求关闭宠物；优先于 OnClick。 */
 	TFunction<void()> OnCloseRequested;
 
+	/** 光标停在宠物不透明像素上时按下 Ctrl+, 触发（WH_KEYBOARD_LL 观察，不拦截按键），
+	 *  用于切换设置面板。与 ESC/R 同一语义：只在「人正指着宠物」时响应，非全局热键。 */
+	TFunction<void()> OnHotKey;
+
 	/** 拖拽结束（§6.4，参数为窗口左上角屏幕坐标）。 */
 	TFunction<void(int32 X, int32 Y)> OnDragEnd;
 
@@ -51,11 +55,19 @@ public:
 	/** R 加滚轮产生的缩放增量，正数表示滚轮向上。 */
 	TFunction<void(float WheelDelta)> OnCameraZoom;
 
+	/** 开关 FPS 叠加层；开启后在 Present 上屏路径画到 DIB 右上角。 */
+	void SetFpsOverlayEnabled(bool bEnabled);
+
+	/** 更新叠加层数值；WebFps 传 -1 表示未知（显示 "--"，如页面未上报）。 */
+	void SetFpsValues(int32 WorldFps, int32 WebFps);
+
 private:
 	static LRESULT CALLBACK StaticWndProc(HWND Hwnd, UINT Msg, WPARAM WParam, LPARAM LParam);
 	static LRESULT CALLBACK StaticLowLevelMouseProc(int32 Code, WPARAM WParam, LPARAM LParam);
+	static LRESULT CALLBACK StaticLowLevelKeyboardProc(int32 Code, WPARAM WParam, LPARAM LParam);
 	LRESULT HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam);
 	void UpdateOnScreen();
+	void DrawFpsOverlay();
 	HCURSOR CreateCameraCursor();
 	void HandleCameraWheel(float WheelDelta);
 	bool IsOpaqueScreenPoint(const POINT& ScreenPoint) const;
@@ -84,6 +96,15 @@ private:
 	HHOOK MouseHook = nullptr;
 	uint64 WheelCameraCursorExpireTick = 0;
 	static PetLayeredWindow* MouseHookOwner;
+	HHOOK KeyboardHook = nullptr;
+	static PetLayeredWindow* KeyboardHookOwner;
+	bool bSettingsChordDown = false; // Ctrl+, 按住期间只触发一次，键松开才复位
+
+	// ---- FPS 叠加层（值变化时重建文本，Present 时逐像素画入 DIB） ----
+	bool bFpsOverlayEnabled = false;
+	int32 WorldFps = 0;
+	int32 WebFps = -1;
+	FString FpsOverlayText; // 拼好的 "3D:120 UI:30" 文本，避免每帧重建
 
 	int32 FrameCounter = 0;
 };

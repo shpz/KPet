@@ -5,6 +5,8 @@
 #include "UI/PetSessionWebBridge.h"
 
 #include "Dom/JsonObject.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
@@ -126,6 +128,56 @@ namespace
 		}
 		return FString::Printf(TEXT("\"%s\""), *Escaped);
 	}
+
+	/**
+	 * 禁用 CEF 加速绘制（共享纹理），强制走软件位图路径（OnPaint）。
+	 * 与设置面板共用同一处置：加速路径下 CEF 偶发回退软件 OnPaint，引擎随即
+	 * 释放纹理重建、仅按脏矩形部分上传，未初始化区域会显示为彩色重影；
+	 * 本面板虽不透明，但两面板共用进程级 CEF 配置，谁先创建浏览器都要先禁用。
+	 * CanSupportAcceleratedPaint 在创建首个浏览器窗口时静态缓存该命令行参数，
+	 * 必须在 SAssignNew(Browser, ...) 之前追加。
+	 */
+	void DisableCefAcceleratedPaint()
+	{
+		static bool bApplied = false;
+		if (!bApplied && !FParse::Param(FCommandLine::Get(), TEXT("nocefaccelpaint")))
+		{
+			FCommandLine::Append(TEXT(" -nocefaccelpaint"));
+			UE_LOG(LogPet, Log, TEXT("已禁用 CEF 加速绘制（-nocefaccelpaint），WebUI 面板改走软件位图路径以保证透明合成稳定"));
+		}
+		bApplied = true;
+	}
+
+	/**
+	 * 校验弹窗 swapchain 是否已走 blit 模型（关闭 ALLOW_TEARING）。
+	 * r.D3D11.UseAllowTearing 是 ECVF_ReadOnly 且在首个 FD3D11Viewport 构造时被锁存进
+	 * 静态变量（引擎 WindowsD3D11Viewport.cpp），运行时 CVar->Set() 无效，必须写进
+	 * DefaultEngine.ini 的 [SystemSettings]（GSystemSettings.Initialize 早于 RHIInit）在
+	 * RHI 初始化前生效。此处只回读有效值并记日志：值为 0 表示 blit 已生效（弹窗 Host
+	 * 的黑色色键 LWA_COLORKEY 可被 DWM 合成、透出桌面）；非 0 提示 ini 未生效、flip 交换链
+	 * 下 DWM 不保证色键合成，设置面板透明区域可能显示为黑框。
+	 * 与设置面板同一路由：两面板共用同一弹窗宿主，谁先创建都要先校验。
+	 */
+	void VerifyBlitSwapChainForLayeredWindows()
+	{
+		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.D3D11.UseAllowTearing")))
+		{
+			const int32 Value = CVar->GetInt();
+			if (Value == 0)
+			{
+				UE_LOG(LogPet, Log, TEXT("弹窗 blit swapchain 校验通过：r.D3D11.UseAllowTearing=0（DefaultEngine.ini [SystemSettings] 已生效）"));
+			}
+			else
+			{
+				UE_LOG(LogPet, Warning, TEXT("r.D3D11.UseAllowTearing=%d：ini 未生效或被运行时改写，弹窗可能走 flip 交换链，"
+					"DWM 不保证色键合成，设置面板透明区域可能显示为黑框"), Value);
+			}
+		}
+		else
+		{
+			UE_LOG(LogPet, Warning, TEXT("未找到 CVar r.D3D11.UseAllowTearing，无法校验弹窗 swapchain 模式"));
+		}
+	}
 }
 
 FPetSessionWebPanel::FPetSessionWebPanel()
@@ -151,12 +203,15 @@ bool FPetSessionWebPanel::Create()
 		return true;
 	}
 
+	DisableCefAcceleratedPaint();
+	VerifyBlitSwapChainForLayeredWindows();
+
 	// SWebBrowserView::Construct 只在 WebBrowser 模块已加载时才会创建 CEF 浏览器窗口，
 	// 否则 BrowserWindow 为空、控件永远黑屏且无任何回调。Build.cs 的模块依赖不会触发
 	// 运行时 StartupModule，必须在这里显式 Get()（即 LoadModuleChecked）完成加载与 CEF 初始化。
 	if (!IWebBrowserModule::Get().IsWebModuleAvailable())
 	{
-		UE_LOG(LogPet, Error, TEXT("WebBrowser 模块不可用（CEF 加载失败），回退 UMG 路径"));
+		UE_LOG(LogPet, Error, TEXT("WebBrowser 模块不可用（CEF 加载失败），会话面板不可用"));
 		return false;
 	}
 
@@ -198,16 +253,37 @@ void FPetSessionWebPanel::HandleLoadCompleted()
 {
 	bPageLoaded = true;
 	BindBridge();
-	ReplaySnapshot();
+	// 面板已可见时立即全量重放；隐藏（压栈）期间不下发，恢复可见时由
+	// SetPanelVisible(true) 经 PushFullStateToPage 补齐。
+	if (bPanelVisible)
+	{
+		PushFullStateToPage();
+	}
 	UE_LOG(LogPet, Log, TEXT("WebUI 会话面板页面加载完成，JS 桥与缓存快照已就绪"));
+}
+
+void FPetSessionWebPanel::PushFullStateToPage()
+{
+	ReplaySnapshot();
+	// 与快照同口径：主题 / FPS 设置补发一次，避免页面加载期间或隐藏期间丢设置。
+	if (!LastTheme.IsEmpty())
+	{
+		ExecutePanelScript(FString::Printf(
+			TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setTheme(%s); }"),
+			*QuoteJsString(LastTheme)));
+	}
+	// FPS 开关无条件按当前值补发：只推 true 会把「隐藏期被关掉」的状态漏成持续上报。
+	ExecutePanelScript(FString::Printf(
+		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setFpsMonitor(%s); }"),
+		bFpsMonitorEnabled ? TEXT("true") : TEXT("false")));
 }
 
 void FPetSessionWebPanel::HandleLoadError()
 {
 	// 说明加载失败的实际后果，便于现场排查：面板将保持空白、后续会话数据只入缓存
-	// 不会上屏、不会自动回退 UMG 面板（本类不实现回退逻辑）。
+	// 不会上屏（UMG 路径已移除，无回退路径）。
 	UE_LOG(LogPet, Error, TEXT("WebUI 会话面板页面加载失败（OnLoadError）：面板将保持空白，"
-		"后续会话数据仅入缓存不会上屏，且不会自动回退 UMG 面板"));
+		"后续会话数据仅入缓存不会上屏"));
 }
 
 void FPetSessionWebPanel::HandleConsoleMessage(
@@ -240,10 +316,14 @@ void FPetSessionWebPanel::ReplaySnapshot()
 
 void FPetSessionWebPanel::ExecutePanelScript(const FString& Script) const
 {
-	if (Browser.IsValid())
+	// 页面未就绪或面板隐藏（压栈）期间不下发 JS：隐藏期 CEF 被 WasHidden(true) 停帧，
+	// 此时注入的 DOM 变更会在恢复后按脏矩形重绘时损坏画面（圆角不透明 / 整板黑）。
+	// 缓存由各 Setter 照常维护，恢复可见时由 SetPanelVisible(true) 全量重放补齐。
+	if (!bPageLoaded || !bPanelVisible || !Browser.IsValid())
 	{
-		Browser->ExecuteJavascript(Script);
+		return;
 	}
+	Browser->ExecuteJavascript(Script);
 }
 
 void FPetSessionWebPanel::PublishChangesOnlyWhenReady(const FString& Script)
@@ -300,7 +380,7 @@ void FPetSessionWebPanel::AddOrUpdateSession(
 
 	if (FPetSessionInfo* Existing = FindSession(SessionId))
 	{
-		// 与 UMG 面板语义一致：轻量 session_start 更新保留已有 working/unread。
+		// 与历史面板语义一致：轻量 session_start 更新保留已有 working/unread。
 		Session.bWorking = Existing->bWorking;
 		Session.bUnread = Existing->bUnread;
 		*Existing = Session;
@@ -350,4 +430,36 @@ void FPetSessionWebPanel::UpdateSessionState(const FString& SessionId, bool bWor
 		*QuoteJsString(SessionId),
 		bWorking ? TEXT("true") : TEXT("false"),
 		bUnread ? TEXT("true") : TEXT("false")));
+}
+
+void FPetSessionWebPanel::SetTheme(const FString& ThemeId)
+{
+	if (ThemeId.IsEmpty())
+	{
+		return;
+	}
+	LastTheme = ThemeId;
+	// 页面未就绪时下拉丢弃；加载完成后由 HandleLoadCompleted 按 LastTheme 重放。
+	PublishChangesOnlyWhenReady(FString::Printf(
+		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setTheme(%s); }"),
+		*QuoteJsString(ThemeId)));
+}
+
+void FPetSessionWebPanel::SetFpsMonitor(bool bEnabled)
+{
+	bFpsMonitorEnabled = bEnabled;
+	PublishChangesOnlyWhenReady(FString::Printf(
+		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setFpsMonitor(%s); }"),
+		bEnabled ? TEXT("true") : TEXT("false")));
+}
+
+void FPetSessionWebPanel::SetPanelVisible(bool bVisible)
+{
+	bPanelVisible = bVisible;
+	// 恢复可见且页面已就绪时全量重放：隐藏期间可能累积了快照 / 主题 / FPS 更新，
+	// 一次补齐到页面（期间 CEF 停帧、JS 一概不下发）。
+	if (bVisible && bPageLoaded)
+	{
+		PushFullStateToPage();
+	}
 }
