@@ -1,5 +1,5 @@
 /**
- * 守护进程拉起防并发风暴测试：独占锁互斥、释放后可重抢、陈旧锁 TTL 接管（§3.3）。
+ * 守护进程拉起防并发风暴测试：独占锁互斥、释放后可重抢、陈旧锁 TTL 接管。
  * 不真正 spawn 进程，只测锁文件语义。
  */
 import assert from 'node:assert/strict';
@@ -197,7 +197,7 @@ test('acquireDaemonLock：父目录不存在时自动创建', () => {
   }
 });
 
-test('resolveDaemonPath：优先 KIMI_PLUGIN_ROOT，缺省相对 cwd() 推导（§3.1，win32）', () => {
+test('resolveDaemonPath：优先 KIMI_PLUGIN_ROOT，缺省相对 cwd() 推导（win32）', () => {
   const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' } as NodeJS.ProcessEnv;
   assert.equal(resolveDaemonPath(env, 'win32'), path.join('C:\\plugins\\kpet', 'bin', 'kpetd.exe'));
   assert.equal(resolveDaemonPath({}, 'win32'), path.join(process.cwd(), 'bin', 'kpetd.exe'));

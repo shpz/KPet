@@ -414,7 +414,7 @@ void APetCapturePawn::ShutdownPanels()
 FSlateRect APetCapturePawn::ComputePetBoundsInSlateScreen() const
 {
 	// PetLayeredWindow::GetScreenPosition() 返回 Win32 屏幕物理像素，RTSize 也是物理像素；
-	// Host 契约（方案 §6.4）只接受 Slate 屏幕坐标。引擎约定 Slate 屏幕坐标 = 物理像素 /
+	// Host 契约只接受 Slate 屏幕坐标。引擎约定 Slate 屏幕坐标 = 物理像素 /
 	// DPIScale（SWindow 创建时 AdjustInitialSizeAndPositionForDPIScale 路径以 WindowPosition
 	// *= DPIScale 转入平台层，SlateApplication::CalculatePopupWindowPosition 同样按
 	// InSize * DPIScale 进平台层、结果 / DPIScale 返回），因此先在坐标契约边界用宠物所在

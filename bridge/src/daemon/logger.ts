@@ -1,5 +1,5 @@
 /**
- * 守护进程日志（§2.3/§11 约定：用户配置目录 KIMI_CODE_HOME 下的 kpet/logs/kpetd.log，log_level 可配）。
+ * 守护进程日志（约定：用户配置目录 KIMI_CODE_HOME 下的 kpet/logs/kpetd.log，log_level 可配）。
  *
  * 关键事件（状态切换/渲染进程重启/快照回放/open_tui/退出）必须走 info 及以上级别；
  * 普通管道收发与内部细节走 debug，默认不落盘刷屏。

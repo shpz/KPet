@@ -1,5 +1,5 @@
 /**
- * pet_moved 持久化测试（docs/MVP设计.md §6.4：<基目录>/KPet/pet-state.json，基目录按平台解析见 docs/跨平台兼容方案-WSL与Mac.md §2.1.3，防抖 500ms 写入）。
+ * pet_moved 持久化测试（本地缓存 <基目录>/KPet/pet-state.json，基目录按平台解析，防抖 500ms 写入）。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -13,7 +13,7 @@ function tempFile(): string {
   return path.join(dir, 'pet-state.json');
 }
 
-test('updateWindow 防抖合并：500ms 内多次更新只落盘一次，保留最后值（§6.4 防抖 500ms）', async () => {
+test('updateWindow 防抖合并：500ms 内多次更新只落盘一次，保留最后值', async () => {
   const p = tempFile();
   try {
     const store = new PetStateStore(p, { debounceMs: 200 });
@@ -42,7 +42,7 @@ test('flush 强制落盘（守护进程退出前），未到防抖也写入', ()
   }
 });
 
-test('加载已有文件并合并 window（保留 pet 字段）；损坏文件回退默认（§6.4 不阻断启动）', () => {
+test('加载已有文件并合并 window（保留 pet 字段）；损坏文件回退默认（不阻断启动）', () => {
   const p = tempFile();
   try {
     fs.writeFileSync(
@@ -61,7 +61,7 @@ test('加载已有文件并合并 window（保留 pet 字段）；损坏文件�
   }
 });
 
-test('损坏/版本不符文件 → 整体回退默认，不阻断启动（§6.4）', () => {
+test('损坏/版本不符文件 → 整体回退默认，不阻断启动', () => {
   const p = tempFile();
   try {
     fs.writeFileSync(p, 'not json');
@@ -75,7 +75,7 @@ test('损坏/版本不符文件 → 整体回退默认，不阻断启动（§6.4
   }
 });
 
-test('非法坐标/类型 → 丢弃不写入（§4.3 pet_moved 字段防御）', () => {
+test('非法坐标/类型 → 丢弃不写入（pet_moved 字段防御）', () => {
   const p = tempFile();
   try {
     const store = new PetStateStore(p, { debounceMs: 0 });
@@ -87,29 +87,29 @@ test('非法坐标/类型 → 丢弃不写入（§4.3 pet_moved 字段防御）'
   }
 });
 
-test('getPetStatePath：显式基目录拼接 KPet/pet-state.json；空基目录返回空串（§6.4）', () => {
+test('getPetStatePath：显式基目录拼接 KPet/pet-state.json；空基目录返回空串', () => {
   assert.equal(getPetStatePath('C:\\Users\\x\\AppData\\Roaming'), path.join('C:\\Users\\x\\AppData\\Roaming', 'KPet', 'pet-state.json'));
   assert.equal(getPetStatePath(''), '');
 });
 
-test('resolvePetStateBaseDir：win32 用 APPDATA，未设返回空串（保持现状语义，§2.1.3）', () => {
+test('resolvePetStateBaseDir：win32 用 APPDATA，未设返回空串（保持现状语义）', () => {
   assert.equal(resolvePetStateBaseDir({ platform: 'win32', env: { APPDATA: 'C:\\Users\\x\\AppData\\Roaming' } }), 'C:\\Users\\x\\AppData\\Roaming');
   assert.equal(resolvePetStateBaseDir({ platform: 'win32', env: {} }), '');
 });
 
-test('resolvePetStateBaseDir：darwin 用 ~/Library/Application Support（§4.1 位置缓存）', () => {
+test('resolvePetStateBaseDir：darwin 用 ~/Library/Application Support（位置缓存）', () => {
   assert.equal(
     resolvePetStateBaseDir({ platform: 'darwin', env: {}, home: '/Users/x' }),
     path.join('/Users/x', 'Library', 'Application Support'),
   );
 });
 
-test('resolvePetStateBaseDir：其余平台用 XDG_DATA_HOME，未设回退 ~/.local/share（§2.1.3）', () => {
+test('resolvePetStateBaseDir：其余平台用 XDG_DATA_HOME，未设回退 ~/.local/share', () => {
   assert.equal(resolvePetStateBaseDir({ platform: 'linux', env: { XDG_DATA_HOME: '/data' } }), '/data');
   assert.equal(resolvePetStateBaseDir({ platform: 'linux', env: {}, home: '/home/x' }), path.join('/home/x', '.local', 'share'));
 });
 
-test('getPetStatePath 按平台基目录组合出最终路径（§2.1.3）', () => {
+test('getPetStatePath 按平台基目录组合出最终路径', () => {
   assert.equal(
     getPetStatePath(resolvePetStateBaseDir({ platform: 'darwin', env: {}, home: '/Users/x' })),
     path.join('/Users/x', 'Library', 'Application Support', 'KPet', 'pet-state.json'),

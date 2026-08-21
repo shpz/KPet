@@ -106,7 +106,7 @@ bool FPetConfigProtocolBuildUpdateConfigTest::RunTest(const FString& Parameters)
 		}
 	}
 
-	// 空补丁：payload 为空对象（守护进程会按 §4.4 回 protocol_error）。
+	// 空补丁：payload 为空对象（守护进程会回 protocol_error）。
 	{
 		const TSharedPtr<FJsonObject> Payload = PetConfigProtocol::BuildUpdateConfigPayload(FPetConfigPatch());
 		TestTrue(TEXT("空补丁产出空对象"), Payload.IsValid() && Payload->Values.Num() == 0);

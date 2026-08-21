@@ -21,7 +21,7 @@
 #include <Windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 
-/** 本进程软件版本（随 hello.version 上报，§4.3）。 */
+/** 本进程软件版本（随 hello.version 上报）。 */
 static const TCHAR* PetClientVersion = TEXT("0.1.0");
 
 namespace
@@ -105,7 +105,7 @@ void FPetControlClient::Tick()
 		HandleIncomingLine(Line);
 	}
 
-	// 心跳（§4.3：每 3 秒；断线期间不发）
+	// 心跳（每 3 秒；断线期间不发）
 	if (bConnected.load())
 	{
 		const double Now = FPlatformTime::Seconds();
@@ -134,7 +134,7 @@ void FPetControlClient::SendOpenTui(const FString& SessionId)
 
 void FPetControlClient::SendPetMoved(int32 X, int32 Y)
 {
-	// 显示器 id：取窗口位置所在显示器（§4.3 pet_moved / §5.7 多显示器）
+	// 显示器 id：取窗口位置所在显示器（pet_moved / 多显示器）
 	FString MonitorId = TEXT("unknown");
 	POINT Pt = { X, Y };
 	if (HMONITOR Mon = MonitorFromPoint(Pt, MONITOR_DEFAULTTONEAREST))
@@ -245,7 +245,7 @@ void FPetControlClient::WorkerLoop()
 
 bool FPetControlClient::TryConnect()
 {
-	// 渲染进程为客户端：CreateFile 打开服务端已创建的管道（§4.1）
+	// 渲染进程为客户端：CreateFile 打开服务端已创建的管道
 	HANDLE H = CreateFileW(*PipeName,
 		GENERIC_READ | GENERIC_WRITE,
 		0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
@@ -391,7 +391,7 @@ bool FPetControlClient::ReadAndWriteLoop()
 
 bool FPetControlClient::WriteLine(const FString& Line)
 {
-	// 同步写（本线程独占写操作）；UTF-8 编码 + '\n' 行分帧（全局约定：一条消息 = 一个 JSON 对象 + \n，§4.2）
+	// 同步写（本线程独占写操作）；UTF-8 编码 + '\n' 行分帧（全局约定：一条消息 = 一个 JSON 对象 + \n）
 	const FTCHARToUTF8 Utf8(*(Line + TEXT("\n")));
 	DWORD Written = 0;
 	if (!WriteFile(PipeHandle, Utf8.Get(), Utf8.Length(), &Written, nullptr))
@@ -404,7 +404,7 @@ bool FPetControlClient::WriteLine(const FString& Line)
 
 bool FPetControlClient::SendHello()
 {
-	// 工作线程直接发送（连接建立后首条，§4.3）；内容全为常量，无转义问题
+	// 工作线程直接发送（连接建立后首条）；内容全为常量，无转义问题
 	const int32 Pid = FPlatformProcess::GetCurrentProcessId();
 	const FString Msg = FString::Printf(
 		TEXT("{\"v\":1,\"type\":\"hello\",\"id\":\"%s\",\"ts\":\"%s\",\"session_id\":null,"
@@ -453,7 +453,7 @@ void FPetControlClient::ProcessLineBuffer()
 	}
 	if (LineBuffer.Num() > MaxLineBytes)
 	{
-		// 单条消息上限 64KB（§4.1）：超长且无换行，丢弃并记日志，不中断连接
+		// 单条消息上限 64KB：超长且无换行，丢弃并记日志，不中断连接
 		UE_LOG(LogPet, Warning, TEXT("控制管道收到超长行（>%d 字节）且无换行，丢弃 %d 字节"),
 			MaxLineBytes, LineBuffer.Num());
 		LineBuffer.Reset();
@@ -471,7 +471,7 @@ void FPetControlClient::ClosePipe()
 
 void FPetControlClient::HandleIncomingLine(const FString& Line)
 {
-	// 解析（游戏线程；Json 模块发布版可用，§4.1）
+	// 解析（游戏线程；Json 模块发布版可用）
 	TSharedPtr<FJsonObject> Envelope;
 	TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Line);
 	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
@@ -480,7 +480,7 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		return;
 	}
 
-	// 信封校验（§4.2 / §4.4：非法/缺信封字段跳过本条并回 protocol_error）
+	// 信封校验（非法/缺信封字段跳过本条并回 protocol_error）
 	int32 V = 0;
 	if (!Envelope->TryGetNumberField(TEXT("v"), V) || V != 1)
 	{
@@ -522,7 +522,7 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 	}
 	const TSharedPtr<FJsonObject>& Payload = *PayloadField;
 
-	// 消息分发（§4.3；未知类型忽略并记日志，§4.2 向前兼容）
+	// 消息分发（未知类型忽略并记日志，向前兼容）
 	if (Type == TEXT("hello"))
 	{
 		int32 ProtoVer = 0, Pid = 0;
@@ -546,7 +546,7 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 		FString Reason;
 		Payload->TryGetStringField(TEXT("reason"), Reason);
 		UE_LOG(LogPet, Log, TEXT("收到 pet_state: %s (reason=%s)"), *State, *Reason);
-		CurrentState = State; // 状态唯一入口（§2.2 D3）：断线期间冻结，不自行推导
+		CurrentState = State; // 状态唯一入口：断线期间冻结，不自行推导
 		if (OnPetState)
 		{
 			OnPetState(State, Reason);
@@ -692,12 +692,12 @@ void FPetControlClient::HandleIncomingLine(const FString& Line)
 	else if (Type == TEXT("heartbeat") || Type == TEXT("open_tui") || Type == TEXT("pet_moved") || Type == TEXT("close_pet") ||
 		Type == TEXT("update_config") || Type == TEXT("host_event"))
 	{
-		// 按 §4.3 这些类型不会发往渲染进程；收到仅记日志
+		// 这些类型不会发往渲染进程；收到仅记日志
 		UE_LOG(LogPet, Verbose, TEXT("收到 %s（本角色不应收到，忽略）"), *Type);
 	}
 	else
 	{
-		UE_LOG(LogPet, Log, TEXT("协议: 忽略未知消息类型 %s（向前兼容，§4.2）"), *Type);
+		UE_LOG(LogPet, Log, TEXT("协议: 忽略未知消息类型 %s（向前兼容）"), *Type);
 	}
 }
 
@@ -707,7 +707,7 @@ void FPetControlClient::RecordProtocolError(const FString& Description, const FS
 	SendProtocolError(Description, RawExcerpt);
 	if (++ProtocolErrorCount >= ProtocolErrorWarnCount)
 	{
-		UE_LOG(LogPet, Warning, TEXT("协议: 连续错误达 %d 条/分钟（不中断连接，§4.4）"), ProtocolErrorWarnCount);
+		UE_LOG(LogPet, Warning, TEXT("协议: 连续错误达 %d 条/分钟（不中断连接）"), ProtocolErrorWarnCount);
 		ProtocolErrorCount = 0;
 	}
 }
@@ -734,7 +734,7 @@ bool FPetControlClient::EnqueueEnvelope(const FString& Type, const TSharedPtr<FJ
 {
 	if (!bConnected.load())
 	{
-		// §6.5：断线时不重试轰炸，只记日志；心跳/位置等离线数据同样丢弃
+		// 断线时不重试轰炸，只记日志；心跳/位置等离线数据同样丢弃
 		UE_LOG(LogPet, Log, TEXT("控制管道未连接，丢弃待发消息 %s"), *Type);
 		return false;
 	}
@@ -747,7 +747,7 @@ bool FPetControlClient::EnqueueEnvelope(const FString& Type, const TSharedPtr<FJ
 	Envelope->SetField(TEXT("session_id"), MakeShared<FJsonValueNull>());
 	Envelope->SetObjectField(TEXT("payload"), Payload);
 
-	// 紧凑输出（无内部换行），保证 \n 行分帧不被消息内换行破坏（全局约定，§4.2）
+	// 紧凑输出（无内部换行），保证 \n 行分帧不被消息内换行破坏（全局约定）
 	// 注：UE 5.8 的 TJsonWriterFactory 默认是美化（多行）输出，必须显式指定紧凑策略
 	FString Out;
 	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =

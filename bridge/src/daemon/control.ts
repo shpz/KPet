@@ -1,12 +1,12 @@
 /**
- * 控制管道会话（§4.1 控制管道为 Windows 命名管道 \\.\pipe\KPet.PET.<用户名>，守护进程为服务端，渲染进程主动连入）。
+ * 控制管道会话（控制管道为 Windows 命名管道 \\.\pipe\KPet.PET.<用户名>，守护进程为服务端，渲染进程主动连入）。
  *
  * - 双向按行分帧（线上约定：JSON + \n）；
- * - 建连后首条必须是 hello（§4.3），由调用方在 onHello 中回 hello + 补发快照（§4.5-1/4）；
- *   首条不是 hello → 回 protocol_error 并断开（§4.4）；
- * - 主版本不一致 → 按较低版本降级并记日志（§4.4，MVP 双方均为 v1，降级无实际影响）；
- * - 非法 JSON / 缺信封字段：跳过该条、回 protocol_error（raw_excerpt 截断 256 字符）、错误计数 +1（§4.4）；
- * - 未知消息类型：忽略并记日志（§4.2 向前兼容）；
+ * - 建连后首条必须是 hello，由调用方在 onHello 中回 hello + 补发快照；
+ *   首条不是 hello → 回 protocol_error 并断开；
+ * - 主版本不一致 → 按较低版本降级并记日志（当前双方均为 v1，降级无实际影响）；
+ * - 非法 JSON / 缺信封字段：跳过该条、回 protocol_error（raw_excerpt 截断 256 字符）、错误计数 +1；
+ * - 未知消息类型：忽略并记日志（向前兼容）；
  * - 心跳：任意合法消息都视为存活（heartbeat 每 3s 一次），超时判定由调用方的周期检查完成。
  */
 import * as net from 'node:net';
@@ -38,7 +38,7 @@ export interface ControlCallbacks {
 
 export interface ControlSessionOptions {
   logger: Logger;
-  /** 非法消息回调：调用方统一计入错误计数（§4.4 连续超阈值告警）。 */
+  /** 非法消息回调：调用方统一计入错误计数（连续超阈值告警）。 */
   onProtocolError(description: string): void;
 }
 
@@ -141,7 +141,7 @@ export class ControlSession {
           return;
         }
         if (payload.protocol_version !== PROTOCOL_VERSION) {
-          // §4.4：主版本不一致按较低版本降级（MVP 双方均为 v1，全部消息通用）
+          // 主版本不一致按较低版本降级（当前双方均为 v1，全部消息通用）
           this.logger.warn(
             `协议版本协商: 渲染进程 v${payload.protocol_version}，本进程 v${PROTOCOL_VERSION}，按较低版本降级`,
           );
@@ -173,7 +173,7 @@ export class ControlSession {
         );
         break;
       default:
-        // 收到守护进程→渲染进程方向的消息类型：记日志忽略（§4.2）
+        // 收到守护进程→渲染进程方向的消息类型：记日志忽略（向前兼容）
         this.logger.debug(`收到意外消息类型 ${env.type}，忽略`);
         break;
     }
@@ -191,7 +191,7 @@ export class ControlSession {
   }
 }
 
-/** 摘录截断（§4.3 protocol_error.raw_excerpt：截断 256 字符）。 */
+/** 摘录截断（protocol_error.raw_excerpt：截断 256 字符）。 */
 function excerpt(line: string): string {
   return line.length > MAX_RAW_EXCERPT_CHARS ? line.slice(0, MAX_RAW_EXCERPT_CHARS) : line;
 }

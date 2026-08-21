@@ -2,6 +2,6 @@
 dist/
 dist-test/
 bin/
-# bin/ 仅忽略构建产物（bin/kpetd.exe）；packaging 下的源码脚本需入库（WSL relay 包装，跨平台兼容方案 §5 P1-7）
+# bin/ 仅忽略构建产物（bin/kpetd.exe）；packaging 下的源码脚本需入库（WSL relay 包装，跨平台兼容方案形态一）
 !packaging/kpet/bin/
 !packaging/kpet/bin/kpet-relay.sh

@@ -1,8 +1,8 @@
 /**
- * 终端唤起测试（docs/MVP设计.md §4.5-3）。
+ * 终端唤起测试。
  * 命令构造为纯函数直接断言；openTui 的 wt 回退路径注入 spawn 模拟 ENOENT；
  * web 目标注入 connect / spawn 模拟「服务已就绪 / 需经可见终端窗口拉起（wt 直拉、
- * wt 缺失回退 cmd）/ 双路径失败 / 超时 / 非回环 / URL 非法」等分支（§7）。
+ * wt 缺失回退 cmd）/ 双路径失败 / 超时 / 非回环 / URL 非法」等分支。
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -41,7 +41,7 @@ function fakeChild(behavior: 'ok' | 'enoent' | 'error'): EventEmitter {
   return child;
 }
 
-test('buildOpenTuiCommand：wt 模式（§4.5-3 主路径）', () => {
+test('buildOpenTuiCommand：wt 模式（主路径）', () => {
   const cmd = buildOpenTuiCommand({ terminal: 'wt', cwd: 'D:\\ws', sessionId: 'session_1' });
   assert.deepEqual(cmd, {
     file: 'wt.exe',
@@ -50,12 +50,12 @@ test('buildOpenTuiCommand：wt 模式（§4.5-3 主路径）', () => {
   });
 });
 
-test('buildOpenTuiCommand：会话 id 为空 → kimi --continue（§4.5-3 恢复最近会话）', () => {
+test('buildOpenTuiCommand：会话 id 为空 → kimi --continue（恢复最近会话）', () => {
   const cmd = buildOpenTuiCommand({ terminal: 'wt', cwd: 'D:\\ws', sessionId: null });
   assert.deepEqual(cmd.args.slice(4), ['kimi', '--continue']);
 });
 
-test('buildOpenTuiCommand：cmd 模式 → cmd /c start（§4.5-3 备选）', () => {
+test('buildOpenTuiCommand：cmd 模式 → cmd /c start（备选）', () => {
   const cmd = buildOpenTuiCommand({ terminal: 'cmd', cwd: 'D:\\ws', sessionId: 'session_2' });
   assert.deepEqual(cmd, {
     file: 'cmd.exe',
@@ -127,7 +127,7 @@ test('openTui：wt 成功 → ok + terminal=wt，且 windowsHide=false（SW_HIDE
   assert.equal(captured.opts?.windowsHide, false);
 });
 
-test('openTui：wt.exe 不存在（ENOENT）→ 回退 cmd /c start（§4.5-3 备选）', async () => {
+test('openTui：wt.exe 不存在（ENOENT）→ 回退 cmd /c start（备选）', async () => {
   const behaviors: Array<'enoent' | 'ok'> = ['enoent', 'ok'];
   const seen: Array<{ windowsHide: boolean }> = [];
   const spawnFn: SpawnFn = (_file, _args, opts) => {
@@ -217,7 +217,7 @@ test('buildStartWebServiceCommand：wt 模式 → 显式新建标签、刷新环
   });
 });
 
-test('buildStartWebServiceCommand：cmd 模式 → cmd /c start（§4.5-3 备选）', () => {
+test('buildStartWebServiceCommand：cmd 模式 → cmd /c start（备选）', () => {
   const cmd = buildStartWebServiceCommand({ terminal: 'cmd', cwd: 'D:\\ws', sessionId: null }, 58627);
   assert.deepEqual(cmd, {
     file: 'cmd.exe',
@@ -247,7 +247,7 @@ test('buildWslStartWebServiceFallbackCommand：wsl 回退 → cmd start wsl.exe 
   });
 });
 
-test('openTui：target=web → 打开浏览器，terminal=web（§7 open_target）', async () => {
+test('openTui：target=web → 打开浏览器，terminal=web（open_target）', async () => {
   let captured: { file: string; args: string[] } | null = null;
   const spawnFn: SpawnFn = (file, args) => {
     captured = { file, args };
@@ -541,7 +541,7 @@ test('openTui：target=web URL 非法 → 返回 ok=false 且不探测不拉起'
   assert.equal(spawned, 0);
 });
 
-// ---- web token 自动鉴权：回环 URL 拼 #token=（§7，实测裸 URL 停在「Server token required」）----
+// ---- web token 自动鉴权：回环 URL 拼 #token=（实测裸 URL 停在「Server token required」）----
 
 test('openTui：target=web 回环 + token 读取成功 → 浏览器 URL 末尾带 #token=（fragment 位于 query 之后）', async () => {
   const spawned: Array<{ file: string; args: string[] }> = [];

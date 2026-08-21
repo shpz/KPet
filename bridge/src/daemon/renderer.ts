@@ -1,9 +1,9 @@
 /**
- * 渲染进程守护（docs/MVP设计.md §2.3 / §4.5-4）。
+ * 渲染进程守护。
  *
  * - 由守护进程拉起；控制管道断开或心跳超时视为崩溃，按 1s/2s/4s/8s（封顶 8s）指数退避重启；
- * - 60 秒窗口内最多 restart_max_attempts 次（§4.5-4），超限停手，等下一个宿主事件再试一轮；
- * - renderer_path 不存在（MVP 联调阶段常见）：记日志但不退避刷屏，等下一个宿主事件重试；
+ * - 60 秒窗口内最多 restart_max_attempts 次，超限停手，等下一个宿主事件再试一轮；
+ * - renderer_path 不存在（开发联调阶段常见）：记日志但不退避刷屏，等下一个宿主事件重试；
  * - 重连后的快照回放由调用方完成（app.ts），本模块只管进程生命周期。
  *
  * spawn 函数可注入（测试用假子进程；生产用 node:child_process.spawn）。
@@ -13,14 +13,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Logger } from './logger.js';
 
-/** 退避序列：1s/2s/4s/8s，之后封顶 8s（§4.5-4）。 */
+/** 退避序列：1s/2s/4s/8s，之后封顶 8s。 */
 export function backoffDelayMs(round: number): number {
   return Math.min(1000 * 2 ** round, 8000);
 }
 
 export type SpawnFn = (command: string, args: string[], options: { cwd: string }) => ChildProcess;
 
-/** UE 渲染进程启动参数（docs/Slate与UMG会话面板方案.md §5.1）。 */
+/** UE 渲染进程启动参数。 */
 const RENDERER_ARGS = ['-NOSPLASH', '-windowed', '-ResX=16', '-ResY=16'] as const;
 
 export interface RendererSupervisorOptions {
@@ -31,7 +31,7 @@ export interface RendererSupervisorOptions {
   logger: Logger;
   spawnFn?: SpawnFn;
   now?: () => number;
-  /** 退避间隔计算（测试注入短间隔；缺省 1s/2s/4s/8s 封顶 8s，§4.5-4）。 */
+  /** 退避间隔计算（测试注入短间隔；缺省 1s/2s/4s/8s 封顶 8s）。 */
   backoffDelay?: (round: number) => number;
   /** 用户关闭标记检测；存在时不再重启，并通知守护进程进入 user 退出流程。 */
   isSuppressed?: () => boolean;
@@ -81,13 +81,13 @@ export class RendererSupervisor {
     return this.statusValue;
   }
 
-  /** 初始拉起（守护进程启动时，§4.5-1 冷启动）。 */
+  /** 初始拉起（守护进程启动时的冷启动）。 */
   start(): void {
     this.spawn();
   }
 
   /**
-   * 宿主事件到达（§4.5-4：超限停手 / renderer_path 缺失后，等下一个宿主事件再试一轮）。
+   * 宿主事件到达（超限停手 / renderer_path 缺失后，等下一个宿主事件再试一轮）。
    * 宿主事件意味着宿主活跃、环境恢复正常：清空重启窗口计数并重置退避轮次。
    * 进程正常运行中则仅刷新计数，不重复拉起。
    */
@@ -102,7 +102,7 @@ export class RendererSupervisor {
     }
   }
 
-  /** 控制管道断开 / 心跳超时 → 渲染进程失联（§4.5-4）。 */
+  /** 控制管道断开 / 心跳超时 → 渲染进程失联。 */
   onConnectionLost(): void {
     if (this.status === 'shutdown') return;
     if (this.isSuppressed()) {
@@ -150,13 +150,13 @@ export class RendererSupervisor {
     if (this.child || this.pendingTimer) return;
 
     if (!fs.existsSync(this.rendererPath)) {
-      // MVP 联调阶段渲染进程可能不存在：记日志，不退避刷屏，等宿主事件重试
+      // 开发联调阶段渲染进程可能不存在：记日志，不退避刷屏，等宿主事件重试
       this.statusValue = 'missing';
       this.logger.warn(`渲染进程不存在（${this.rendererPath}），等待宿主事件后重试`);
       return;
     }
 
-    // 窗口内限流：60 秒内最多 restart_max_attempts 次（§4.5-4）
+    // 窗口内限流：60 秒内最多 restart_max_attempts 次
     const now = this.now();
     this.attemptTimes = this.attemptTimes.filter((t) => now - t < this.restartWindowMs);
     if (this.attemptTimes.length >= this.restartMaxAttempts) {
@@ -232,7 +232,7 @@ export class RendererSupervisor {
       this.statusValue = 'missing';
       return;
     }
-    // 窗口内限流（§4.5-4）：60 秒内最多 restart_max_attempts 次，超限立即停手等宿主事件
+    // 窗口内限流：60 秒内最多 restart_max_attempts 次，超限立即停手等宿主事件
     const now = this.now();
     this.attemptTimes = this.attemptTimes.filter((t) => now - t < this.restartWindowMs);
     if (this.attemptTimes.length >= this.restartMaxAttempts) {

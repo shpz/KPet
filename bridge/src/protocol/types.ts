@@ -1,14 +1,14 @@
 /**
  * KPet 进程间通信协议 —— 消息类型与 payload 定义。
- * 严格对应 docs/MVP设计.md §4.3「协议消息表」。
+ * 与协议消息类型表一一对应。
  *
  * 方向缩写：转→守 = 转发器→守护进程（事件管道）；守→渲 / 渲→守 = 守护进程↔渲染进程（控制管道）。
  */
 
-/** 信封协议主版本，MVP 固定为 1（§4.2）。 */
+/** 信封协议主版本，当前固定为 1。 */
 export const PROTOCOL_VERSION = 1 as const;
 
-/** 消息类型全集（§4.3，按表内顺序）。 */
+/** 消息类型全集（按表内顺序）。 */
 export const MESSAGE_TYPES = [
   'host_event', // 转→守 | 每次事件钩子触发 | 唯一入站类型，守护进程内部解析映射
   'hello', // 双向 | 连接建立后首条 | 握手与版本协商
@@ -33,16 +33,16 @@ export const MESSAGE_TYPES = [
 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
-/** 判断字符串是否为协议已知的消息类型（§4.2：收到未知类型必须忽略并记日志）。 */
+/** 判断字符串是否为协议已知的消息类型（收到未知类型必须忽略并记日志）。 */
 export function isKnownType(type: string): type is MessageType {
   return (MESSAGE_TYPES as readonly string[]).includes(type);
 }
 
 // ---------------------------------------------------------------------------
-// 各消息 payload（字段与 §4.3 表一一对应）
+// 各消息 payload（字段与消息类型表一一对应）
 // ---------------------------------------------------------------------------
 
-/** host_event：宿主原始 JSON 文本整体透传（§3.4 字段取值防御策略，不解析不重排）。 */
+/** host_event：宿主原始 JSON 文本整体透传（字段取值防御策略，不解析不重排）。 */
 export interface HostEventPayload {
   _raw: string;
 }
@@ -91,12 +91,12 @@ export type TaskStatus = 'success' | 'failure';
 export interface TaskEndPayload {
   task_id: string;
   status: TaskStatus;
-  /** 取不到标题时由守护进程降级为通用文案（§3.4）。 */
+  /** 取不到标题时由守护进程降级为通用文案。 */
   title: string;
   summary?: string | null;
 }
 
-/** tasks_snapshot 中的单条任务（§4.3）。 */
+/** tasks_snapshot 中的单条任务。 */
 export interface TaskInfo {
   task_id: string;
   title: string;
@@ -137,7 +137,7 @@ export type NotifyLevel = 'info' | 'success' | 'error';
 export interface NotifyPayload {
   text: string;
   level: NotifyLevel;
-  /** 气泡停留时长（毫秒），缺省 5000（§6.6 bubble.durationMs）。 */
+  /** 气泡停留时长（毫秒），缺省 5000（bubble.durationMs）。 */
   ttl_ms?: number;
   task_id?: string | null;
 }
@@ -145,7 +145,7 @@ export interface NotifyPayload {
 export type OpenTuiSource = 'pet' | 'bubble';
 
 export interface OpenTuiPayload {
-  /** 目标会话，null/缺省 = 最近会话（§4.5-3）。 */
+  /** 目标会话，null/缺省 = 最近会话。 */
   session_id?: string | null;
   source: OpenTuiSource;
   task_id?: string | null;
@@ -154,7 +154,7 @@ export interface OpenTuiPayload {
 export interface HeartbeatPayload {
   pid: number;
   uptime_s: number;
-  /** 渲染进程只上报 Idle/Working（§6.7）。 */
+  /** 渲染进程只上报 Idle/Working。 */
   state: PetStateValue;
 }
 
@@ -192,7 +192,7 @@ export interface ShutdownPayload {
 
 export interface ProtocolErrorPayload {
   description: string;
-  /** 非法消息原文摘录，截断 256 字符（§4.3）。 */
+  /** 非法消息原文摘录，截断 256 字符。 */
   raw_excerpt: string;
 }
 
@@ -219,10 +219,10 @@ export interface PayloadMap {
   protocol_error: ProtocolErrorPayload;
 }
 
-/** 单条管道消息上限 64KB（§4.1 消息模式单条上限 / §4.2）。 */
+/** 单条管道消息上限 64KB（消息模式单条上限）。 */
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 
-/** protocol_error.raw_excerpt 的最大字符数（§4.3：截断 256 字符）。 */
+/** protocol_error.raw_excerpt 的最大字符数（截断 256 字符）。 */
 export const MAX_RAW_EXCERPT_CHARS = 256;
 
 /** 截断任意字符串到指定字符数（UTF-16 码元计），供 raw_excerpt 使用。 */

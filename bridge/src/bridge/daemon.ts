@@ -1,7 +1,7 @@
 /**
- * 守护进程拉起（§3.3：管道不存在时以分离方式拉起守护进程，不等待就绪）。
+ * 守护进程拉起（管道不存在时以分离方式拉起守护进程，不等待就绪）。
  *
- * 单 exe 合并（阶段五 P1）：kpetd（Windows 为 kpetd.exe）同时承载转发器与守护进程，按首参数分发
+ * 单 exe 合并：kpetd（Windows 为 kpetd.exe）同时承载转发器与守护进程，按首参数分发
  * （src/launcher/main.ts）；拉起守护进程时以 --daemon 分发，恢复 worker 以 --kpet-recover 分发。
  *
  * 防并发风暴：多个转发器同时发现管道不存在时，用独占锁文件保证只拉一次。
@@ -44,8 +44,8 @@ export const DAEMON_RECOVERY_ARG = '--kpet-recover';
  * 单 exe 合并后，守护进程与转发器同体：bun build --compile 产物下当前进程自身即守护进程，
  * 直接返回 argv[0]（跳过 bun/node 等开发运行时的宿主可执行文件）。
  * 开发模式（node/bun 直跑）保留原解析逻辑：
- * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/ 下的守护进程产物（Windows 为 kpetd.exe，其余平台 kpetd；宿主注入，§3.1）；
- * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录（§3.1），故取 cwd()/bin/ 下的守护进程产物（同上按平台取文件名）。
+ * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/ 下的守护进程产物（Windows 为 kpetd.exe，其余平台 kpetd；宿主注入）；
+ * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录，故取 cwd()/bin/ 下的守护进程产物（同上按平台取文件名）。
  *
  * platform 参数仅供测试注入；生产环境默认取 process.platform。
  */
@@ -451,10 +451,10 @@ function randomLockOwner(): string {
 }
 
 /**
- * 伪代码 §3.3 的 spawn_detached：管道不存在时分离拉起守护进程，立即返回。
- * - detached + stdio ignore + unref：守护进程不随转发器退出，无控制台窗口（§3.1 闪窗规避）
+ * 伪代码 spawn_detached：管道不存在时分离拉起守护进程，立即返回。
+ * - detached + stdio ignore + unref：守护进程不随转发器退出，无控制台窗口（闪窗规避）
  * - 带独占锁，防并发风暴；spawn 失败（可执行文件缺失）释放锁允许下个转发器重试
- * - 不等待守护进程就绪（启动期间的事件走暂存兜底，§3.4）
+ * - 不等待守护进程就绪（启动期间的事件走暂存兜底）
  */
 export interface SpawnDaemonOptions {
   /** 测试或多实例场景注入锁路径；生产环境使用默认路径。 */

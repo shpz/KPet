@@ -1,13 +1,13 @@
 /**
- * 转发器主程序（§3.3 伪代码），单 exe 分发后由 src/launcher/main.ts 按 --relay 调用。
+ * 转发器主程序，单 exe 分发后由 src/launcher/main.ts 按 --relay 调用。
  *
  * 宿主每发生一个事件拉起本进程一次，流程：
  *   read_all(stdin) → 非法 JSON 直接放行 → 包装 host_event 信封
  *   → 管道不存在则分离拉起守护进程（防并发风暴）
  *   → 连接 + 写入（200ms 超时）→ 失败写本地暂存
- *   → 任何情况 exit(0)（失败放行，§2.2 D4 / §3.1 宿主约定）
+ *   → 任何情况 exit(0)（失败放行，宿主约定）
  *
- * 消息按 §4.2 为单个 JSON 对象；node:net 的命名管道是字节流模式而非消息模式，
+ * 消息按协议约定为单个 JSON 对象；node:net 的命名管道是字节流模式而非消息模式，
  * 为让守护进程端可靠分帧，每条消息追加一个换行（JSON 文本流惯例，不影响消息模式收端）。
  */
 import * as fs from 'node:fs';
@@ -39,7 +39,7 @@ import {
 } from './daemon.js';
 import { clearStagingBeforeTimestamp, getStagingDir, writeStaging } from './staging.js';
 
-/** 事件管道连接 + 写入总超时（毫秒），§3.3：200ms。 */
+/** 事件管道连接 + 写入总超时（毫秒），200ms。 */
 export const PIPE_TIMEOUT_MS = 200;
 
 /** 探测管道存在性的超时（毫秒），不消耗主预算。 */
@@ -62,11 +62,11 @@ export interface RelayResult {
 
 /** 转发器核心逻辑的可注入依赖（测试用；生产环境全部缺省）。 */
 export interface RelayOptions {
-  /** 事件管道全名，缺省按当前用户名推导（§4.1）。 */
+  /** 事件管道全名，缺省按当前用户名推导。 */
   pipeName?: string;
-  /** 连接 + 写入总超时（毫秒），缺省 200ms（§3.3）。 */
+  /** 连接 + 写入总超时（毫秒），缺省 200ms。 */
   timeoutMs?: number;
-  /** 暂存目录，缺省系统临时目录下的 kpet-events/（§3.3）。 */
+  /** 暂存目录，缺省系统临时目录下的 kpet-events/。 */
   stagingDir?: string;
   /** 用户关闭抑制标记路径，缺省系统临时目录下的 kpet/pet.disabled。 */
   suppressionPath?: string;
@@ -86,8 +86,8 @@ export interface RelayOptions {
 }
 
 /**
- * 转发器核心流程（§3.3）：
- * 非法 JSON → 直接放行（返回 'invalid_json'，调用方以 0 退出），永不阻塞宿主（§2.2 D4）。
+ * 转发器核心流程：
+ * 非法 JSON → 直接放行（返回 'invalid_json'，调用方以 0 退出），永不阻塞宿主（失败放行）。
  */
 export async function relayHostEvent(raw: string, opts: RelayOptions = {}): Promise<RelayResult> {
   let parsed: unknown;
@@ -212,7 +212,7 @@ export async function relayEnvelope(envelope: MessageEnvelope, opts: RelayOption
       return { outcome: 'suppressed' };
     }
     if (!exists && opts.spawnDaemon !== false) {
-      spawnDaemonIfNeeded({ lockPath: daemonLockPath, suppressionPath }); // 分离拉起，不等待就绪；守护进程启动期间的事件走暂存兜底（§3.4）
+      spawnDaemonIfNeeded({ lockPath: daemonLockPath, suppressionPath }); // 分离拉起，不等待就绪；守护进程启动期间的事件走暂存兜底
     }
 
     const result = await write(pipeName, JSON.stringify(envelope) + FRAME_DELIMITER, timeoutMs);
@@ -297,7 +297,7 @@ function extractHostHook(envelope: MessageEnvelope): string | null {
   }
 }
 
-/** 读取 stdin 全部内容（宿主事件 JSON，§3.1）。 */
+/** 读取 stdin 全部内容（宿主事件 JSON）。 */
 export function readAllStdin(stream: NodeJS.ReadableStream = process.stdin): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -427,7 +427,7 @@ export async function runRecoveryFromArgv(): Promise<void> {
   });
 }
 
-/** 入口：任何情况都以 0 退出（失败放行，§2.2 D4 / §3.3）。 */
+/** 入口：任何情况都以 0 退出（失败放行）。 */
 export async function main(): Promise<void> {
   try {
     const raw = await readAllStdin();

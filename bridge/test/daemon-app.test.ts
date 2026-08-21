@@ -1,5 +1,5 @@
 /**
- * 守护进程集成测试（真实 Windows 命名管道，§4.1/§4.3/§4.5）：
+ * 守护进程集成测试（真实 Windows 命名管道）：
  * 模拟转发器写入事件管道 → 模拟渲染进程连入控制管道 → 断言收到 hello 回包、
  * pet_state / tasks_snapshot / task_start 等消息。
  *
@@ -199,7 +199,7 @@ async function stopApp(t: TestApp): Promise<void> {
   fs.rmSync(t.stagingDir, { recursive: true, force: true });
 }
 
-test('冷启动握手（§4.5-1）：hello 回包 + 快照（无会话 → pet_state:Idle）', { skip: !isWindows }, async () => {
+test('冷启动握手：hello 回包 + 快照（无会话 → pet_state:Idle）', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -217,7 +217,7 @@ test('冷启动握手（§4.5-1）：hello 回包 + 快照（无会话 → pet_s
   }
 });
 
-test('全链路（§3.4/§4.5-2）：转发器事件 → 渲染进程收到 session_start / pet_state Working / task_start / pet_state Idle', { skip: !isWindows }, async () => {
+test('全链路：转发器事件 → 渲染进程收到 session_start / pet_state Working / task_start / pet_state Idle', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -249,7 +249,7 @@ test('全链路（§3.4/§4.5-2）：转发器事件 → 渲染进程收到 sess
   }
 });
 
-test('重连快照（§4.5-4）：握手时补发活跃会话 + 当前 pet_state + 未完成任务', { skip: !isWindows }, async () => {
+test('重连快照：握手时补发活跃会话 + 当前 pet_state + 未完成任务', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {
     await writeHostEvent(t.eventPipe, '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"D:\\\\a"}');
@@ -399,7 +399,7 @@ test('open_target=web：open_tui 以 web 目标唤起并透传 URL 模板', { sk
   }
 });
 
-test('open_tui 唤起失败：补发 error 气泡，用户可感知（§4.5-3）', { skip: !isWindows }, async () => {
+test('open_tui 唤起失败：补发 error 气泡，用户可感知', { skip: !isWindows }, async () => {
   const t = await startApp({}, {
     openTuiFn: async (opts) => ({ terminal: opts.terminal, ok: false, error: 'wt.exe 不存在' }),
   });
@@ -420,7 +420,7 @@ test('open_tui 唤起失败：补发 error 气泡，用户可感知（§4.5-3）
   }
 });
 
-test('并发风暴（§3.3/R9）：30 条转发器并发写入全部处理，互不干扰', { skip: !isWindows }, async () => {
+test('并发风暴：30 条转发器并发写入全部处理，互不干扰', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -445,7 +445,7 @@ test('并发风暴（§3.3/R9）：30 条转发器并发写入全部处理，互
   }
 });
 
-test('非法帧容错（§4.4）：非法 JSON/非法信封/非 host_event 跳过并计数，后续合法事件不受影响', { skip: !isWindows }, async () => {
+test('非法帧容错：非法 JSON/非法信封/非 host_event 跳过并计数，后续合法事件不受影响', { skip: !isWindows }, async () => {
   const t = await startApp();
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -466,7 +466,7 @@ test('非法帧容错（§4.4）：非法 JSON/非法信封/非 host_event 跳�
   }
 });
 
-test('退出倒计时（§4.5-6）：最后一个 SessionEnd → host_grace_seconds → shutdown(host_gone) + onExit', { skip: !isWindows }, async () => {
+test('退出倒计时：最后一个 SessionEnd → host_grace_seconds → shutdown(host_gone) + onExit', { skip: !isWindows }, async () => {
   const t = await startApp({ host_grace_seconds: 1 });
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -486,7 +486,7 @@ test('退出倒计时（§4.5-6）：最后一个 SessionEnd → host_grace_seco
   }
 });
 
-test('退出倒计时取消（§4.5-6）：倒计时内新宿主事件到达 → 不退出', { skip: !isWindows }, async () => {
+test('退出倒计时取消：倒计时内新宿主事件到达 → 不退出', { skip: !isWindows }, async () => {
   const t = await startApp({ host_grace_seconds: 1 });
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -639,7 +639,7 @@ test('关闭恢复竞态：旧 daemon 延迟 close_pet 不得重写抑制标记�
   }
 });
 
-test('心跳超时判死（§4.5-4）：停发心跳 → 连接被关闭', { skip: !isWindows }, async () => {
+test('心跳超时判死：停发心跳 → 连接被关闭', { skip: !isWindows }, async () => {
   const t = await startApp({ heartbeat_timeout_ms: 600 });
   try {
     const r = await FakeRenderer.connect(t.controlPipe);
@@ -653,7 +653,7 @@ test('心跳超时判死（§4.5-4）：停发心跳 → 连接被关闭', { ski
   }
 });
 
-test('暂存回收（§3.3）：启动前落暂存文件 → 启动后按字典序重放并删除', { skip: !isWindows }, async () => {
+test('暂存回收：启动前落暂存文件 → 启动后按字典序重放并删除', { skip: !isWindows }, async () => {
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-'));
@@ -823,7 +823,7 @@ test('恢复 daemon：下一批恢复建立后，延迟 close_pet 不得覆盖�
   }
 });
 
-test('单实例（§4.1）：事件管道被占用 → 第二个实例抛 SingleInstanceError', { skip: !isWindows }, async () => {
+test('单实例：事件管道被占用 → 第二个实例抛 SingleInstanceError', { skip: !isWindows }, async () => {
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-'));

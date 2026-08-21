@@ -1,5 +1,5 @@
 /**
- * 启动时回收本地事件暂存（§3.3 兜底：转发器写管道失败时把信封落到系统临时目录下的 kpet-events/，
+ * 启动时回收本地事件暂存（兜底：转发器写管道失败时把信封落到系统临时目录下的 kpet-events/，
  * 守护进程启动后按字典序（= 时间序，见 bridge/src/bridge/staging.ts 的命名规则）重放并删除）。
  *
  * 只处理列表瞬间已存在的文件；重放期间新到的暂存文件留到下次启动（守护进程运行中转发器
@@ -52,7 +52,7 @@ export function replayStagingDir(
       logger?.warn(`暂存文件 ${file} 解析失败，丢弃`);
     }
     try {
-      fs.rmSync(p, { force: true }); // 重放后删除（§3.3）
+      fs.rmSync(p, { force: true }); // 重放后删除
     } catch {
       // 删除失败无妨：文件带时间戳前缀，不会重复重放造成副作用
     }

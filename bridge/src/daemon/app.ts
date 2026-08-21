@@ -1,10 +1,10 @@
 /**
  * 守护进程主体（kpetd）：把配置/状态机/两条管道/渲染进程守护/终端唤起/暂存回收组装在一起。
  *
- * 职责（§2.3）：建两条管道；事件汇总与状态推导；任务列表维护；事件缓存与补发（快照）；
- * 渲染进程启动/崩溃重启；收到 open_tui 打开终端；收尾退出（§4.5-6）。
+ * 职责：建两条管道；事件汇总与状态推导；任务列表维护；事件缓存与补发（快照）；
+ * 渲染进程启动/崩溃重启；收到 open_tui 打开终端；收尾退出。
  *
- * 单实例（§4.1）：Node 侧没有 Win32 命名互斥体 API，用事件管道名占用实现 —— 同名管道创建失败
+ * 单实例：Node 侧没有 Win32 命名互斥体 API，用事件管道名占用实现 —— 同名管道创建失败
  * （EADDRINUSE/EACCES）即视为已有实例，调用方直接退出。管道访问控制见 pipes.ts 文件头注释
  * （node:net 命名管道继承进程默认安全描述符，仅当前用户可访问）。
  */
@@ -61,14 +61,14 @@ import {
   type OwnedDaemonLock,
 } from '../bridge/daemon.js';
 
-/** 错误计数窗口（毫秒），§4.4：连续超阈值（10 条/分钟）记日志告警。 */
+/** 错误计数窗口（毫秒），连续超阈值（10 条/分钟）记日志告警。 */
 const ERROR_WINDOW_MS = 60_000;
 /** 错误告警阈值（条/窗口）。 */
 const ERROR_WARN_THRESHOLD = 10;
 /** 渲染进程收到 shutdown 后的强制结束宽限（毫秒）。 */
 const RENDERER_EXIT_GRACE_MS = 3000;
 
-/** 单实例冲突：事件管道已被占用 → 已有守护进程实例（§4.1）。 */
+/** 单实例冲突：事件管道已被占用 → 已有守护进程实例。 */
 export class SingleInstanceError extends Error {
   constructor(readonly pipeName: string, readonly code: string) {
     super(`已有守护进程实例（${pipeName}，${code}）`);
@@ -79,11 +79,11 @@ export class SingleInstanceError extends Error {
 export interface DaemonAppOptions {
   config: DaemonConfig;
   logger?: Logger;
-  /** 事件管道全名，缺省按当前用户名推导（§4.1）。 */
+  /** 事件管道全名，缺省按当前用户名推导。 */
   eventPipeName?: string;
-  /** 控制管道全名，缺省按当前用户名推导（§4.1）。 */
+  /** 控制管道全名，缺省按当前用户名推导。 */
   controlPipeName?: string;
-  /** 暂存目录，缺省 %TEMP%/kpet-events/（§3.3）。 */
+  /** 暂存目录，缺省 %TEMP%/kpet-events/。 */
   stagingDir?: string;
   /** 渲染进程 spawn 注入（测试用）。 */
   rendererSpawn?: SpawnFn;
@@ -183,7 +183,7 @@ export class DaemonApp {
 
   /** 建两条管道 → 拉起渲染进程 → 回收暂存 → 周期任务。事件管道被占用时抛 SingleInstanceError。 */
   async start(): Promise<void> {
-    // 1. 事件管道服务端（§4.1；占用失败 = 已有实例）
+    // 1. 事件管道服务端（占用失败 = 已有实例）
     this.eventServer = createLineFramedServer(this.eventPipeName, (line) => this.handleEventLine(line));
     await new Promise<void>((resolve, reject) => {
       this.eventServer!.once('error', (err) => {
@@ -197,7 +197,7 @@ export class DaemonApp {
       this.eventServer!.listen(this.eventPipeName, () => resolve());
     });
 
-    // 2. 控制管道服务端（§4.1，渲染进程主动连入）
+    // 2. 控制管道服务端（渲染进程主动连入）
     this.controlServer = net.createServer((socket) => this.onControlConnection(socket));
     await new Promise<void>((resolve, reject) => {
       this.controlServer!.once('error', reject);
@@ -252,7 +252,7 @@ export class DaemonApp {
     // 4. 先完成状态回放，再拉起 renderer，使其首次握手必然获得完整快照。
     this.renderer.start();
 
-    // 5. 周期任务：心跳超时判定（§4.5-4）/ 会话卡死兜底（§3.4）
+    // 5. 周期任务：心跳超时判定 / 会话卡死兜底
     this.housekeepingTimer = setInterval(() => this.housekeeping(), 1000);
     this.housekeepingTimer.unref?.();
   }
@@ -285,7 +285,7 @@ export class DaemonApp {
   // 事件管道
   // -------------------------------------------------------------------------
 
-  /** 一行 → 信封校验 → 只接受 host_event（§4.3 唯一入站类型）；非法跳过并计数（§4.4）。 */
+  /** 一行 → 信封校验 → 只接受 host_event（唯一入站类型）；非法跳过并计数。 */
   private handleEventLine(line: string): void {
     if (this.exiting || isPetSuppressed(this.suppressionPath)) {
       // Bridge 是正常入口，但守护进程自身也要防御绕过 Bridge 的旧事件，避免关闭后复活。
@@ -322,7 +322,7 @@ export class DaemonApp {
       this.logger.debug('守护进程正在退出，丢弃宿主事件');
       return;
     }
-    this.cancelCountdown(); // 倒计时内新宿主事件取消退出（§4.5-6）
+    this.cancelCountdown(); // 倒计时内新宿主事件取消退出
     // SessionEnd 会在状态机处理时删除会话；先保存已知 cwd，避免用户随后立刻
     // 从面板打开该会话时因 CLI 目录尚未落盘而退回用户主目录。
     const previousCwd = env.session_id ? this.state.getSessionCwd(env.session_id) : null;
@@ -336,7 +336,7 @@ export class DaemonApp {
       if (runtimeCwd) this.runtimeSessionCwds.set(result.sessionId, runtimeCwd);
     }
     // 启动回放只恢复状态，renderer 在全部回放完成后统一拉起；
-    // 实时宿主事件仍可在停手/缺失时触发新一轮尝试（§4.5-4）。
+    // 实时宿主事件仍可在停手/缺失时触发新一轮尝试。
     if (!this.replayingStaging) this.renderer.onHostEvent();
     for (const msg of result.out) this.sendToRenderer(msg);
     // 节流会话以状态机解析结果为准（信封 session_id 可能缺失，如异常转发器/旧暂存文件）
@@ -375,7 +375,7 @@ export class DaemonApp {
           this.requestShutdown('user');
           return;
         }
-        // 失联 → 渲染进程崩溃处理（§4.5-4）；已被新会话接管则忽略
+        // 失联 → 渲染进程崩溃处理；已被新会话接管则忽略
         if (!this.controlSession) this.renderer.onConnectionLost();
       },
     };
@@ -386,7 +386,7 @@ export class DaemonApp {
     this.controlSession = session;
   }
 
-  /** 握手：回 hello + 补发快照（§4.5-1/4：活跃会话 + 当前 pet_state + 未完成任务列表）。 */
+  /** 握手：回 hello + 补发快照（活跃会话 + 当前 pet_state + 未完成任务列表）。 */
   private onRendererHello(session: ControlSession, payload: HelloPayload): void {
     this.logger.info(
       `渲染进程握手 pid=${payload.pid} version=${payload.version} capabilities=${JSON.stringify(payload.capabilities ?? [])}`,
@@ -428,7 +428,7 @@ export class DaemonApp {
     const { config, applied, warnings } = applyConfigPatch(this.config, payload);
     for (const w of warnings) this.logger.warn(w);
     if (Object.keys(applied).length === 0) {
-      // 无任何合法字段：按 §4.4 回 protocol_error，配置保持原样
+      // 无任何合法字段：回 protocol_error，配置保持原样
       this.countError(`update_config 无合法字段: ${JSON.stringify(payload)}`);
       const cs = this.controlSession;
       if (cs && !cs.isClosed) {
@@ -467,7 +467,7 @@ export class DaemonApp {
     );
   }
 
-  /** open_tui（§4.5-3）：会话 id 为空 → 最近会话；cwd 取会话 cwd，取不到回退用户主目录。 */
+  /** open_tui：会话 id 为空 → 最近会话；cwd 取会话 cwd，取不到回退用户主目录。 */
   private onOpenTui(payload: OpenTuiPayload): void {
     if (!this.sessionCatalogLoaded) {
       this.sessionCatalogEntries = this.readSessionCatalogSafely();
@@ -499,13 +499,13 @@ export class DaemonApp {
       sessionId,
       // wsl_distro 配置项（空串 = 未指定 WSL 发行版）；terminal=wsl 时 buildOpenTuiCommand 用它
       // 把 Linux cwd 转成 \\wsl.localhost\<distro>\... 形态。此处直接透传配置，
-      // cwd 的转换在 terminal.ts 内部完成（跨平台兼容方案 §3.1）。
+      // cwd 的转换在 terminal.ts 内部完成（跨平台兼容方案）。
       wslDistro: this.config.wsl_distro,
     }).then((res) => {
       if (res.ok) {
         this.logger.info(`open_tui 唤起成功（${res.terminal}）`);
       } else {
-        // 失败不能只写日志让用户无感知：补发一条 error 气泡（§4.5-3 / §6.5 语义同源）。
+        // 失败不能只写日志让用户无感知：补发一条 error 气泡（语义同源）。
         this.logger.warn(`open_tui 唤起失败（${res.terminal}）: ${res.error ?? ''}`);
         this.sendToRenderer({
           type: 'notify',
@@ -544,7 +544,7 @@ export class DaemonApp {
     }
   }
 
-  /** 下发一条消息给渲染进程；未连接时丢弃（快照在握手时补发，§2.2 D1）。 */
+  /** 下发一条消息给渲染进程；未连接时丢弃（快照在握手时补发）。 */
   private sendToRenderer(msg: OutgoingMessage): void {
     const cs = this.controlSession;
     if (!cs || cs.isClosed) {
@@ -555,7 +555,7 @@ export class DaemonApp {
     cs.send(env);
   }
 
-  /** 200ms 合并窗口：同会话连续任务事件攒一批下发（§3.4 节流）。 */
+  /** 200ms 合并窗口：同会话连续任务事件攒一批下发（节流）。 */
   private scheduleThrottleFlush(sessionId: string): void {
     if (!this.state.hasPendingThrottle(sessionId)) return;
     if (this.throttleTimers.has(sessionId)) return;
@@ -567,7 +567,7 @@ export class DaemonApp {
   }
 
   // -------------------------------------------------------------------------
-  // 退出（§4.5-6）
+  // 退出
   // -------------------------------------------------------------------------
 
   /** 最后一个 SessionEnd → host_grace_seconds 倒计时；auto_quit_with_host=false 时保持常驻。 */
@@ -648,7 +648,7 @@ export class DaemonApp {
     void closeServer(eventServer);
     void closeServer(controlServer, false);
 
-    // 宽限后强制结束渲染进程并退出（§2.3：渲染进程随守护进程退出）
+    // 宽限后强制结束渲染进程并退出（渲染进程随守护进程退出）
     setTimeout(() => {
       this.renderer.forceKill();
       this.onExit(reason);
@@ -667,7 +667,7 @@ export class DaemonApp {
       this.requestShutdown('user');
       return;
     }
-    // 心跳超时判死（§4.5-4：heartbeat 3s，heartbeat_timeout_ms 10s；任意合法消息都刷新存活时间）
+    // 心跳超时判死（heartbeat 3s，heartbeat_timeout_ms 10s；任意合法消息都刷新存活时间）
     const cs = this.controlSession;
     if (cs && !cs.isClosed && this.config.heartbeat_timeout_ms > 0) {
       if (Date.now() - cs.lastRxAt > this.config.heartbeat_timeout_ms) {
@@ -675,7 +675,7 @@ export class DaemonApp {
         cs.close(); // close → onClosed → 渲染进程重启路径
       }
     }
-    // 会话卡死兜底（§3.4）：超时会话强制转闲，状态切换消息下发
+    // 会话卡死兜底：超时会话强制转闲，状态切换消息下发
     const staleMessages = this.state.markStaleSessions();
     for (const msg of staleMessages) this.sendToRenderer(msg);
     if (staleMessages.some((msg) => msg.type === 'session_end') && this.state.activeSessions === 0) {
@@ -683,7 +683,7 @@ export class DaemonApp {
     }
   }
 
-  /** 错误计数（§4.4）：非法消息跳过 + 计数 +1；连续超阈值（10 条/分钟）告警，不中断连接。 */
+  /** 错误计数：非法消息跳过 + 计数 +1；连续超阈值（10 条/分钟）告警，不中断连接。 */
   private countError(description: string): void {
     const now = Date.now();
     this.errorTimes = this.errorTimes.filter((t) => now - t < ERROR_WINDOW_MS);

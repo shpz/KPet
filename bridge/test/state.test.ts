@@ -1,5 +1,5 @@
 /**
- * 状态机测试（docs/MVP设计.md §3.4 宿主事件 → 宠物语义映射表，逐条覆盖）。
+ * 状态机测试（宿主事件 → 宠物语义映射表，逐条覆盖）。
  * 纯逻辑单测：注入时钟与任务 id 生成器，不碰管道/定时器。
  */
 import assert from 'node:assert/strict';
@@ -27,7 +27,7 @@ function makeMachine(staleMinutes = 10) {
   };
 }
 
-/** 事件原始 JSON 构造器（§3.1 基础字段 hook_event_name/session_id/cwd）。 */
+/** 事件原始 JSON 构造器（基础字段 hook_event_name/session_id/cwd）。 */
 function ev(hook: string, sessionId: string, extra: Record<string, unknown> = {}, cwd = 'D:\\ws'): string {
   return JSON.stringify({ hook_event_name: hook, session_id: sessionId, cwd, ...extra });
 }
@@ -109,7 +109,7 @@ test('PreToolUse：生成任务 id 下发 task_start（标题取 tool_input.comm
   assert.equal(snap.tasks[0]!.title, 'npm test');
 });
 
-test('PreToolUse 无命令文本：标题取工具名（§3.4 任务标题取工具名/命令文本）', () => {
+test('PreToolUse 无命令文本：标题取工具名', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   machine.processHostEvent(ev('PreToolUse', 's1', { tool_name: 'bash' }));
@@ -117,7 +117,7 @@ test('PreToolUse 无命令文本：标题取工具名（§3.4 任务标题取工
   assert.equal((byType(out, 'task_start')[0] as { payload: { title: string } }).payload.title, 'bash');
 });
 
-test('PreToolUse 无命令也无工具名：标题降级「正在工作…」（§3.4 字段取值防御）', () => {
+test('PreToolUse 无命令也无工具名：标题降级「正在工作…」（字段取值防御）', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   machine.processHostEvent(ev('PreToolUse', 's1'));
@@ -142,7 +142,7 @@ test('PostToolUse：同会话同工具任务 → task_end(success)，任务从�
     summary: 'ok',
   });
   assert.equal(machine.getSnapshot().tasks.length, 0, '完成后任务表为空');
-  assert.equal(byType(r.out, 'notify').length, 0, '成功不另发 notify（§3.4 表格）');
+  assert.equal(byType(r.out, 'notify').length, 0, '成功不另发 notify');
 });
 
 test('PostToolUseFailure：task_end(failure) + notify(error) 另发', () => {
@@ -160,7 +160,7 @@ test('PostToolUseFailure：task_end(failure) + notify(error) 另发', () => {
   assert.equal((notify[0] as { payload: { text: string } }).payload.text, '任务失败：npm test');
 });
 
-test('SubagentStart/SubagentStop：视同 task_start/task_end（工具名=子代理名，§3.4）', () => {
+test('SubagentStart/SubagentStop：视同 task_start/task_end（工具名=子代理名）', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   machine.processHostEvent(ev('SubagentStart', 's1', { subagent_name: 'explorer' }));
@@ -206,7 +206,7 @@ test('StopFailure：转 Idle + notify(error)「任务出错」，不弹完成气
   assert.deepEqual(byType(r.out, 'session_state')[0]!.payload, { working: false, unread: true });
 });
 
-test('Interrupt：转 Idle，不弹完成气泡（§3.4）', () => {
+test('Interrupt：转 Idle，不弹完成气泡', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   const r = machine.processHostEvent(ev('Interrupt', 's1'));
@@ -274,7 +274,7 @@ test('SessionEnd 非最后一个：删除空闲会话后仍有忙会话 → 保�
   assert.equal(machine.activeSessions, 1);
 });
 
-test('多会话汇总：任一会话忙 → Working，全部闲 → Idle（§3.4 汇总规则）', () => {
+test('多会话汇总：任一会话忙 → Working，全部闲 → Idle', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('SessionStart', 's1'));
   machine.processHostEvent(ev('SessionStart', 's2'));
@@ -334,7 +334,7 @@ test('迟到的首次 SessionStart：公告会话但保留此前工作状态与�
   assert.equal(machine.state, 'Working');
 });
 
-test('未知 hook_event_name：忽略不报错（§4.2 向前兼容）', () => {
+test('未知 hook_event_name：忽略不报错（向前兼容）', () => {
   const { machine } = makeMachine();
   const r = machine.processHostEvent(ev('PermissionRequest', 's1'));
   assert.equal(r.ok, true);
@@ -342,7 +342,7 @@ test('未知 hook_event_name：忽略不报错（§4.2 向前兼容）', () => {
   assert.equal(machine.state, 'Idle');
 });
 
-test('非法输入：非法 JSON/非对象/缺 hook_event_name/缺 session_id → ok=false（§4.4 错误计数由调用方做）', () => {
+test('非法输入：非法 JSON/非对象/缺 hook_event_name/缺 session_id → ok=false（错误计数由调用方做）', () => {
   const { machine } = makeMachine();
   assert.equal(machine.processHostEvent('not json').ok, false);
   assert.equal(machine.processHostEvent('[1,2]').ok, false);
@@ -351,7 +351,7 @@ test('非法输入：非法 JSON/非对象/缺 hook_event_name/缺 session_id �
   assert.equal(machine.activeSessions, 0, '非法事件不产生会话');
 });
 
-test('卡死兜底（§3.4）：忙会话超过 staleMinutes 无事件 → 强制转 Idle 但保留活跃会话', () => {
+test('卡死兜底：忙会话超过 staleMinutes 无事件 → 强制转 Idle 但保留活跃会话', () => {
   const { machine, advance } = makeMachine(10);
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   assert.equal(machine.state, 'Working');
@@ -394,7 +394,7 @@ test('长期异常会话清理：超过 cleanup 时长才回收活跃会话', ()
   assert.equal(machine.activeSessions, 0);
 });
 
-test('节流合并（§3.4）：同会话 200ms 窗口内连续任务事件攒一批下发', () => {
+test('节流合并：同会话 200ms 窗口内连续任务事件攒一批下发', () => {
   const { machine, advance } = makeMachine();
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
   machine.processHostEvent(ev('PreToolUse', 's1', { tool_name: 'bash', tool_input: { command: 'a' } }));
@@ -435,7 +435,7 @@ test('不同会话的节流互不干扰：各自独立窗口', () => {
   assert.equal(byType(out2, 'task_start').length, 1);
 });
 
-test('快照内容（§4.5-4）：活跃会话 + 当前 pet_state + 未完成任务列表', () => {
+test('快照内容：活跃会话 + 当前 pet_state + 未完成任务列表', () => {
   const { machine } = makeMachine();
   machine.processHostEvent(ev('SessionStart', 's1', {}, 'D:\\a'));
   machine.processHostEvent(ev('UserPromptSubmit', 's1'));
@@ -509,6 +509,6 @@ test('TaskStart 无 PreToolUse 前置也置忙（防御：task 事件本身意�
   assert.equal((byType(r.out, 'pet_state')[0] as { payload: { reason: string } }).payload.reason, 'tool_use');
 });
 
-test('TASK_THROTTLE_MS 常量 = 200ms（§3.4）', () => {
+test('TASK_THROTTLE_MS 常量 = 200ms', () => {
   assert.equal(TASK_THROTTLE_MS, 200);
 });

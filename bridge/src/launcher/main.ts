@@ -1,5 +1,5 @@
 /**
- * 单 exe 双模式分发入口 kpetd（Windows 为 kpetd.exe，阶段五 P1）。
+ * 单 exe 双模式分发入口 kpetd（Windows 为 kpetd.exe）。
  *
  * 合并前转发器（kpet-bridge，Windows 为 kpet-bridge.exe）与守护进程（kpetd，Windows 为 kpetd.exe）
  * 是两个 bun --compile 产物；合并后两者共用本入口，按第一个参数分发：

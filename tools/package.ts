@@ -22,7 +22,7 @@
  *   A. bridge 子工程：npm --prefix bridge run build（tsc）→ bun build --compile --windows-hide-console
  *      （dist/launcher/main.js → bin/kpetd.exe）
  *   B. renderer：默认 RunUAT.bat BuildCookRun 打包 UE（Win64、Shipping；打包前 taskkill UnrealEditor.exe），
- *      完成后在 StagedBuilds 里定位游戏 exe 所在的整个目录（即 docs/MVP设计.md §3.2 的 renderer/ 本体）；
+ *      完成后在 StagedBuilds 里定位游戏 exe 所在的整个目录（即 renderer/ 本体）；
  *      --skip-renderer / --renderer 可跳过 UE 构建
  *   C. 组装 <out>/kpet/{kimi.plugin.json, kimi.plugin.wsl.json, bin/, renderer/}；renderer 拷贝后兜底删除
  *      *.pdb、D3D12 两个 DLL、NVaftermath DLL（逐项打印日志）
@@ -44,7 +44,7 @@ const UE_ENGINE = "C:\\Program Files\\Epic Games\\UE_5.8";
 const RUN_UAT = join(UE_ENGINE, "Engine", "Build", "BatchFiles", "RunUAT.bat");
 const ROOT_PKG = join(ROOT, "package.json");
 const MANIFEST = join(BRIDGE, "packaging", "kpet", "kimi.plugin.json");
-/** WSL 宿主清单：command 走 bin/kpet-relay.sh（跨平台兼容方案 §5 P1-7，随包分发供 WSL 宿主改名使用）。 */
+/** WSL 宿主清单：command 走 bin/kpet-relay.sh（跨平台兼容方案，随包分发供 WSL 宿主改名使用）。 */
 const MANIFEST_WSL = join(BRIDGE, "packaging", "kpet", "kimi.plugin.wsl.json");
 /** 跨平台部署脚本（随包分发，在目标平台上跑 deploy.sh / deploy.ps1 自动准备对应平台清单与安装指引）。 */
 const DEPLOY_SH = join(BRIDGE, "packaging", "kpet", "deploy.sh");
@@ -52,7 +52,7 @@ const DEPLOY_PS1 = join(BRIDGE, "packaging", "kpet", "deploy.ps1");
 /** WSL relay 脚本：POSIX sh，WSL 内经 interop 直启 Windows 侧 kpetd.exe。 */
 const RELAY_SCRIPT = join(BRIDGE, "packaging", "kpet", "bin", "kpet-relay.sh");
 const STAGE_ROOT = join(ROOT, "Pet", "Saved", "StagedBuilds");
-/** UE 渲染进程可执行名：工程目标名是 Pet（产物 Pet.exe）；设计文档 §3.2 写作 KPet.exe，两种都认。 */
+/** UE 渲染进程可执行名：工程目标名是 Pet（产物 Pet.exe）；设计文档写作 KPet.exe，两种都认。 */
 const GAME_EXE_NAMES = new Set(["pet.exe", "kpet.exe"]);
 /** D3D12 两个 DLL：当前为 SM5-only + 强制 DX11（方案 A），运行时均不加载但会被引擎无条件暂存，
  *  随包删除。注意：若未来回退 D3D12 RHI，D3D12Core.dll 必须保留，删除逻辑须同步移除。 */
@@ -160,12 +160,12 @@ function dirSize(dir: string): number {
   return total;
 }
 
-/** A1. bridge tsc 构建（先跑，快速失败）。 */
+/** bridge tsc 构建（先跑，快速失败）。 */
 function buildBridgeTsc(): void {
   run("cmd.exe", ["/c", "npm", "--prefix", BRIDGE, "run", "build"], "bridge: npm run build (tsc)");
 }
 
-/** A2. bun build --compile 出无控制台窗口的单 exe（--windows-hide-console 需 Bun >= 1.1.27，§3.1 闪窗收口）。 */
+/** bun build --compile 出无控制台窗口的单 exe（--windows-hide-console 需 Bun >= 1.1.27，闪窗收口）。 */
 function compileExe(entryJs: string, outExe: string): void {
   run(
     "bun",

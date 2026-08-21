@@ -1,5 +1,5 @@
 /**
- * 本地事件暂存（§3.3 兜底：管道写入失败时写系统临时目录下的 kpet-events/，守护进程启动后回收）。
+ * 本地事件暂存（兜底：管道写入失败时写系统临时目录下的 kpet-events/，守护进程启动后回收）。
  */
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { MessageEnvelope } from '../protocol/index.js';
 
-/** 事件暂存目录名（相对系统临时目录），§3.3：系统临时目录/kpet-events/。 */
+/** 事件暂存目录名（相对系统临时目录）：kpet-events/。 */
 export const STAGING_DIR_NAME = 'kpet-events';
 
 /** 随机串截取长度（文件名后缀）。 */
@@ -31,9 +31,9 @@ export function getStagingDir(tmpDir: string = os.tmpdir()): string {
 }
 
 /**
- * 把信封写入本地暂存文件兜底（§3.3）。
+ * 把信封写入本地暂存文件兜底。
  * 目录不存在则递归创建；单文件单事件，内容为信封的完整 JSON。
- * 任何失败（磁盘只读等）静默返回 null，绝不抛出 —— 转发器任何情况以 0 退出（§2.2 D4）。
+ * 任何失败（磁盘只读等）静默返回 null，绝不抛出 —— 转发器任何情况以 0 退出。
  *
  * @returns 写入的文件路径；失败返回 null。
  */

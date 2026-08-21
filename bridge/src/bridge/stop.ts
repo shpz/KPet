@@ -28,7 +28,7 @@ export type StopDaemonResult = 'not_running' | 'stopped' | 'timeout';
 
 /** 停止守护进程核心逻辑的可注入依赖（测试用；生产环境全部缺省）。 */
 export interface StopDaemonOptions {
-  /** 事件管道全名，缺省按当前用户名推导（§4.1）。 */
+  /** 事件管道全名，缺省按当前用户名推导。 */
   pipeName?: string;
   /** 用户关闭抑制标记路径，缺省系统临时目录下的 kpet/pet.disabled。 */
   suppressionPath?: string;

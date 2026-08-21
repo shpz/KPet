@@ -1,5 +1,5 @@
 #!/bin/sh
-# KPet 插件 WSL 宿主 relay 启动脚本（跨平台兼容方案 §5 P1-7，形态一：CLI 在 WSL、守护进程在 Windows）。
+# KPet 插件 WSL 宿主 relay 启动脚本（跨平台兼容方案形态一：CLI 在 WSL、守护进程在 Windows）。
 # WSL 的 bash 无法直接执行 Windows 清单里的 `.\bin\kpetd.exe --relay`（反斜杠与 .exe 均不适用于 Linux）；
 # 本脚本定位 Windows 侧 kpetd.exe 并经 interop 启动：stdin（宿主事件）随 exec 原样继承，
 # 参数由清单（kimi.plugin.wsl.json）给出（--relay），脚本只透传 "$@"，不注入默认值；

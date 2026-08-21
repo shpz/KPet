@@ -1,5 +1,5 @@
 /**
- * WSL ↔ Windows 路径转换测试（跨平台兼容方案 §3.1 形态一）。
+ * WSL ↔ Windows 路径转换测试（跨平台兼容方案形态一）。
  * 纯字符串转换，覆盖盘符挂载（/mnt/<盘符>）、WSL 原生 ext4（/home/...）、
  * 反向 UNC（\\wsl.localhost\<distro>\ 与 \\wsl$\<distro>\）与幂等/降级返回。
  */

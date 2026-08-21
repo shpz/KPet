@@ -268,7 +268,7 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 
 ## 5. 分阶段落地建议（按「改动小 / 收益大」优先级）
 
-> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 206/206 通过；WSL 真机已实测并修复两处问题：relay 脚本 CRLF 导致 dash 语法错误（已转 LF 并加 `.gitattributes`）、relay 脚本 exec `\\wsl.localhost` UNC 路径 ENOENT（已改为 Linux 路径直接 exec，实测 interop 可从 ext4 挂载点启动 PE）。WSL 端到端（插件安装、relay interop 拉起、守护进程拉起渲染端 Pet.exe）已在 Ubuntu-24.04 实测通过；`terminal: 'wsl'` 的 wt 直拉与 cmd 回退、`wsl-path.ts` 双向转换的真机路径仍待后续覆盖。随包新增跨平台部署脚本 `deploy.sh`/`deploy.ps1`（自动识别平台、就位对应清单，并在打印 `/plugins install` 指引前经 `kpetd.exe --stop`（WSL 经 relay 透传）优雅停止运行中的旧版守护进程与渲染进程，支撑「先停后装」的更新流程）。P2 起尚未动工。
+> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 231/231 通过；WSL 真机已实测并修复两处问题：relay 脚本 CRLF 导致 dash 语法错误（已转 LF 并加 `.gitattributes`）、relay 脚本 exec `\\wsl.localhost` UNC 路径 ENOENT（已改为 Linux 路径直接 exec，实测 interop 可从 ext4 挂载点启动 PE）。WSL 端到端（插件安装、relay interop 拉起、守护进程拉起渲染端 Pet.exe）已在 Ubuntu-24.04 实测通过；`terminal: 'wsl'` 的 wt 直拉与 cmd 回退、`wsl-path.ts` 双向转换的真机路径仍待后续覆盖。随包新增跨平台部署脚本 `deploy.sh`/`deploy.ps1`（自动识别平台、就位对应清单，并在打印 `/plugins install` 指引前经 `kpetd.exe --stop`（WSL 经 relay 透传）优雅停止运行中的旧版守护进程与渲染进程，支撑「先停后装」的更新流程）。P2 起尚未动工。
 
 **P0 —— 平台无关的清理（立即可做，风险极低，且是后续所有工作的地基）**
 
@@ -301,7 +301,7 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 
 ## 6. 风险与开放问题（未验证项，需后续确认）
 
-- **WSL 端到端未实测（P0/P1 已实现的全部内容）**：WSL 清单 `kimi.plugin.wsl.json` 的安装方式（覆盖为 `kimi.plugin.json`）、`bin/kpet-relay.sh` 经 interop 拉起 exe、`terminal: 'wsl'` 的 wt 直拉与 cmd 回退（含 `wsl.exe --cd` / `bash -lc` 参数打包行为）、`wsl-path.ts` 的双向转换，均只经过纯函数与注入式单测，未在真实 WSL 环境验证。
+- **WSL 端到端已部分实测（P0/P1 已实现的全部内容）**：WSL 清单 `kimi.plugin.wsl.json` 的安装方式（覆盖为 `kimi.plugin.json`）、`bin/kpet-relay.sh` 经 interop 拉起 exe、守护进程拉起渲染端 `Pet.exe` 已在 Ubuntu-24.04 实测通过，并据此修复了两处问题（relay 脚本 CRLF 导致 dash 语法错误、exec `\\wsl.localhost` UNC 路径 ENOENT）。仍未覆盖的真机路径：`terminal: 'wsl'` 的 wt 直拉与 cmd 回退（含 `wsl.exe --cd` / `bash -lc` 参数打包行为）、`wsl-path.ts` 的双向转换——目前仅由纯函数与注入式单测覆盖，待后续在真实 WSL 环境确认。
 
 - **WSL 命名管道可达性**：本文基于「Linux 进程不能直连 `\\.\pipe\...`」的常识判断，未在 WSL 环境实测；形态一建议用 interop 直启 Windows 转发器绕开此问题，但「interop 直启 exe 时 cwd 如何被翻译」仍需实测确认（影响 `relay` 读 stdin 与 `resolveDaemonPath` 的 `process.cwd()`，见 `bridge/src/bridge/daemon.ts:52`）。
 - **UE5 Mac 透明窗口 + 点击穿透**：`EWindowTransparency::PerWindow`（`PetSessionWindowHost.cpp:156`）在 Slate 侧支持透明，但「透明区点击穿透」与「无边框置顶」在 Mac 上的具体能力边界、以及 `NSWindow` 与 UE 游戏主窗口的关系，需要 PoC 验证。

@@ -1,5 +1,5 @@
 /**
- * 插件清单与 WSL relay 脚本一致性测试（跨平台兼容方案 §5 P1-7）。
+ * 插件清单与 WSL relay 脚本一致性测试（跨平台兼容方案）。
  * 保证 kimi.plugin.wsl.json 与 Windows 清单（kimi.plugin.json）钩子一一对应，仅 command 指向
  * bin/kpet-relay.sh；并校验 relay 脚本存在、为 LF 行尾（WSL 的 sh 不接受 CR）且包含关键路径解析逻辑。
  */

@@ -1,10 +1,10 @@
 /**
- * 守护进程配置（docs/MVP设计.md §7）。
+ * 守护进程配置。
  *
  * 读取 KIMI_CODE_HOME/kpet/config.json（KIMI_CODE_HOME 未设时回退 ~/.kimi-code）；
- * 文件不存在或字段缺失/类型非法时逐项回退默认值并给出告警（§4.4 字段级只增不改的配置侧同义）。
+ * 文件不存在或字段缺失/类型非法时逐项回退默认值并给出告警（字段级只增不改的配置侧同义）。
  *
- * 注意 §7 表格把 `session.staleMinutes` 写作带点键，读取时兼容「扁平带点键」与「嵌套对象」两种写法。
+ * 注意：配置表把 `session.staleMinutes` 写作带点键，读取时兼容「扁平带点键」与「嵌套对象」两种写法。
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -15,7 +15,7 @@ import type { UiThemeName, UpdateConfigPayload } from '../protocol/types.js';
 /** 守护进程自身版本（hello.version / 日志），与 bridge 工程版本保持一致。 */
 export const DAEMON_VERSION = '0.1.0';
 
-/** 点击会话后的打开目标（§7 open_target）：cli=唤起 kimi 终端，web=打开浏览器。 */
+/** 点击会话后的打开目标（open_target）：cli=唤起 kimi 终端，web=打开浏览器。 */
 export type OpenTarget = 'cli' | 'web';
 
 /** 设置 WebUI 主题（ui_theme）：dark-glass 玻璃拟态 / light-minimal 浅色极简 / cute-pet 萌宠。 */
@@ -25,40 +25,40 @@ export type UiTheme = UiThemeName;
 export const DEFAULT_UI_THEME: UiTheme = 'dark-glass';
 
 /**
- * web 打开目标的默认 URL 模板（§7 open_web_url）。
+ * web 打开目标的默认 URL 模板（open_web_url）。
  * 直接按会话恢复的 URL 格式未经官方文档验证，这里默认指向本地 kimi web 首页（`kimi web` 默认端口）。
  */
 export const DEFAULT_OPEN_WEB_URL = 'http://127.0.0.1:58627/';
 
 export interface DaemonConfig {
-  /** 渲染进程路径（§7；缺省按平台取 renderer/Pet.exe 或 renderer/Pet.app/...，见 resolveRendererPath）。 */
+  /** 渲染进程路径（缺省按平台取 renderer/Pet.exe 或 renderer/Pet.app/...，见 resolveRendererPath）。 */
   renderer_path: string;
   /** 心跳间隔（毫秒），渲染进程每 heartbeat_interval_ms 发一次 heartbeat。 */
   heartbeat_interval_ms: number;
-  /** 心跳超时（毫秒），超过视为渲染进程失联（§4.5-4）；0 = 不检测。 */
+  /** 心跳超时（毫秒），超过视为渲染进程失联；0 = 不检测。 */
   heartbeat_timeout_ms: number;
   /** 渲染进程崩溃重启：窗口内最大重启次数。 */
   restart_max_attempts: number;
   /** 重启计数窗口（秒）。 */
   restart_window_s: number;
-  /** 宿主全部退出后的退出倒计时（秒，§4.5-6）。 */
+  /** 宿主全部退出后的退出倒计时（秒）。 */
   host_grace_seconds: number;
   /** 倒计时结束是否自动退出（false 时守护进程常驻，等下一个宿主事件）。 */
   auto_quit_with_host: boolean;
-  /** 终端唤起方式：wt（Windows 终端）、cmd（传统控制台）或 wsl（WSL 终端，§P1 形态一）。 */
+  /** 终端唤起方式：wt（Windows 终端）、cmd（传统控制台）或 wsl（WSL 终端，形态一）。 */
   terminal: 'wt' | 'cmd' | 'wsl';
-  /** WSL 发行版名（§P1 形态一：WSL 路径转换与终端唤起用），缺省空串。 */
+  /** WSL 发行版名（形态一：WSL 路径转换与终端唤起用），缺省空串。 */
   wsl_distro: string;
-  /** 点击会话后的打开目标：cli（唤起 kimi 终端）或 web（打开浏览器，§7）。 */
+  /** 点击会话后的打开目标：cli（唤起 kimi 终端）或 web（打开浏览器）。 */
   open_target: OpenTarget;
-  /** web 目标下的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；会话 id 为空时替换为空串。 */
+  /** web 目标下的 URL 模板（open_web_url），支持 {session_id} 占位符；会话 id 为空时替换为空串。 */
   open_web_url: string;
   /** 设置 WebUI 主题（ui_theme），默认 dark-glass。 */
   ui_theme: UiTheme;
   /** 设置 WebUI 是否显示 FPS 监控浮层（fps_monitor），默认关闭。 */
   fps_monitor: boolean;
   session: {
-    /** 会话无事件强制转闲的时长（分钟，§3.4 状态卡死兜底）。 */
+    /** 会话无事件强制转闲的时长（分钟，状态卡死兜底）。 */
     staleMinutes: number;
     /** 会话长期无事件才清理的时长（分钟）；应明显大于 staleMinutes。 */
     cleanupMinutes: number;
@@ -66,10 +66,10 @@ export interface DaemonConfig {
   log_level: LogLevel;
 }
 
-/** KIMI_CODE_HOME 未设时回退的用户配置目录名（§3.1：Windows 默认 C:\Users\<用户名>\.kimi-code）。 */
+/** KIMI_CODE_HOME 未设时回退的用户配置目录名（Windows 默认 C:\Users\<用户名>\.kimi-code）。 */
 const KIMI_CODE_DIR = '.kimi-code';
 
-/** 展开字符串中的 %VAR%、$VAR 与 ${VAR} 环境变量引用（§7 默认 renderer_path 依赖环境变量）。未定义的变量替换为空串。 */
+/** 展开字符串中的 %VAR%、$VAR 与 ${VAR} 环境变量引用（默认 renderer_path 依赖环境变量）。未定义的变量替换为空串。 */
 export function expandEnvVars(raw: string, env: NodeJS.ProcessEnv = process.env): string {
   return raw
     .replace(/%([^%]+)%/g, (_, name: string) => env[name] ?? '')
@@ -149,7 +149,7 @@ function readBoolean(obj: Record<string, unknown>, key: string, fallback: boolea
   return fallback;
 }
 
-/** 读取终端方式（§7 terminal）。 */
+/** 读取终端方式（terminal）。 */
 function readTerminal(obj: Record<string, unknown>, warnings: string[]): 'wt' | 'cmd' | 'wsl' {
   const v = obj['terminal'];
   if (v === 'wt' || v === 'cmd' || v === 'wsl') return v;
@@ -157,7 +157,7 @@ function readTerminal(obj: Record<string, unknown>, warnings: string[]): 'wt' | 
   return 'wt';
 }
 
-/** 读取 WSL 发行版名（§P1 形态一：WSL 路径转换与终端唤起用）。 */
+/** 读取 WSL 发行版名（形态一：WSL 路径转换与终端唤起用）。 */
 function readWslDistro(obj: Record<string, unknown>, warnings: string[]): string {
   const v = obj['wsl_distro'];
   if (v === undefined) return '';
@@ -166,7 +166,7 @@ function readWslDistro(obj: Record<string, unknown>, warnings: string[]): string
   return '';
 }
 
-/** 读取打开目标（§7 open_target）。 */
+/** 读取打开目标（open_target）。 */
 function readOpenTarget(obj: Record<string, unknown>, warnings: string[]): OpenTarget {
   const v = obj['open_target'];
   if (v === 'cli' || v === 'web') return v;
@@ -174,7 +174,7 @@ function readOpenTarget(obj: Record<string, unknown>, warnings: string[]): OpenT
   return 'cli';
 }
 
-/** 读取 web 目标下的 URL 模板（§7 open_web_url）。 */
+/** 读取 web 目标下的 URL 模板（open_web_url）。 */
 function readOpenWebUrl(obj: Record<string, unknown>, warnings: string[]): string {
   const v = obj['open_web_url'];
   if (v === undefined) return DEFAULT_OPEN_WEB_URL;
@@ -195,7 +195,7 @@ function readUiTheme(obj: Record<string, unknown>, warnings: string[]): UiTheme 
 
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
-/** 读取日志级别（§7 log_level）。 */
+/** 读取日志级别（log_level）。 */
 function readLogLevel(obj: Record<string, unknown>, warnings: string[]): LogLevel {
   const v = obj['log_level'];
   if (typeof v === 'string' && (LOG_LEVELS as readonly string[]).includes(v)) return v as LogLevel;
@@ -203,7 +203,7 @@ function readLogLevel(obj: Record<string, unknown>, warnings: string[]): LogLeve
   return 'info';
 }
 
-/** §7 全部键 + 默认值。renderer_path 的默认值依赖环境与平台（KIMI_PLUGIN_ROOT）。 */
+/** 全部配置键 + 默认值。renderer_path 的默认值依赖环境与平台（KIMI_PLUGIN_ROOT）。 */
 export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfig {
   return {
     renderer_path: resolveRendererPath(undefined, env),
@@ -225,7 +225,7 @@ export function defaultConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfi
 }
 
 /**
- * 加载守护进程配置（§7）。
+ * 加载守护进程配置。
  * - 文件不存在/JSON 非法 → 整体使用默认值（warnings 说明原因）；
  * - 字段缺失/类型非法 → 逐项回退默认值；
  * - session.staleMinutes/session.cleanupMinutes 兼容「扁平带点键」与「嵌套 session 对象」两种写法。
@@ -352,7 +352,7 @@ export function applyConfigPatch(base: DaemonConfig, patch: UpdateConfigPayload)
 
 /**
  * 把运行时配置更新合并写回配置文件（设置 WebUI 持久化）。
- * - 读原 JSON（不存在/非法/非对象时按空对象），保留所有未知字段（§4.4 字段级只增不改）；
+ * - 读原 JSON（不存在/非法/非对象时按空对象），保留所有未知字段（字段级只增不改）；
  * - 只合并本次实际合法应用的字段；2 空格缩进写回，缺目录时自动创建；
  * - 返回是否写成功；任何失败都不抛异常，由调用方记日志（写失败不崩守护进程）。
  */

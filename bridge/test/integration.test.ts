@@ -1,8 +1,8 @@
 /**
- * 集成测试（Windows 命名管道，§4.1）：
+ * 集成测试（Windows 命名管道）：
  * - echo 管道：本地 net server 充当命名管道服务端，验证转发器送达的 host_event 信封完整正确
- * - 管道不存在 → 写本地暂存兜底（§3.3）
- * - 非法 JSON → 放行，不连管道、不写暂存（§2.2 D4 / §3.3）
+ * - 管道不存在 → 写本地暂存兜底
+ * - 非法 JSON → 放行，不连管道、不写暂存
  *
  * 非 Windows 平台跳过（命名管道为 Windows 特性）。
  */
@@ -93,7 +93,7 @@ test('集成：转发器经命名管道送达 host_event（_raw 透传原文）'
   assert.equal(env.payload._raw, raw, '_raw 与输入文本逐字符一致');
 });
 
-test('集成：管道不存在 → 写本地暂存兜底（§3.3）', { skip: !isWindows }, async () => {
+test('集成：管道不存在 → 写本地暂存兜底', { skip: !isWindows }, async () => {
   const stagingDir = tempDir();
   try {
     const raw = '{"hook_event_name":"Stop"}';
@@ -113,7 +113,7 @@ test('集成：管道不存在 → 写本地暂存兜底（§3.3）', { skip: !i
   }
 });
 
-test('集成：非法 JSON 直接放行，不连管道、不写暂存（§2.2 D4）', { skip: !isWindows }, async () => {
+test('集成：非法 JSON 直接放行，不连管道、不写暂存', { skip: !isWindows }, async () => {
   const stagingDir = tempDir();
   let probeCalled = false;
   try {
@@ -134,7 +134,7 @@ test('集成：非法 JSON 直接放行，不连管道、不写暂存（§2.2 D4
   }
 });
 
-test('集成：管道探测成功但写入失败 → 暂存兜底（§3.3）', { skip: !isWindows }, async () => {
+test('集成：管道探测成功但写入失败 → 暂存兜底', { skip: !isWindows }, async () => {
   const stagingDir = tempDir();
   let probeCalled = false;
   try {

@@ -4,9 +4,9 @@
  * - 收 hello / heartbeat / open_tui / pet_moved / protocol_error 等并打印
  * - 收到 hello 回 hello，并下发三条会话演示数据及初始 pet_state:Idle
  * - 此后每 10 秒交替下发 Working/Idle 和逐会话工作状态（验证状态与三点动画）
- * - Ctrl+C 退出；退出后重启可验证渲染进程断线重连（§4.5-5：每 5 秒重连）
+ * - Ctrl+C 退出；退出后重启可验证渲染进程断线重连（每 5 秒重连）
  *
- * 消息约定与 bridge/ 完全一致（§4.2）：UTF-8 JSON + '\n' 行分帧；未知类型忽略（§4.2 向前兼容）。
+ * 消息约定与 bridge/ 完全一致：UTF-8 JSON + '\n' 行分帧；未知类型忽略（向前兼容）。
  * 用法：node --experimental-strip-types tools/mock-daemon.ts
  */
 import * as net from "node:net";
@@ -59,7 +59,7 @@ interface SessionInfo {
   updated_at: number;
 }
 
-/** 守护进程侧设置配置（update_config 的合并目标 / config_snapshot 的全量来源，字段同 §7 与 bridge config.ts）。 */
+/** 守护进程侧设置配置（update_config 的合并目标 / config_snapshot 的全量来源，字段同 bridge config.ts）。 */
 interface MockConfig {
   open_target: "cli" | "web";
   open_web_url: string;
@@ -92,7 +92,7 @@ function pushConfigSnapshot(socket: net.Socket): void {
   );
 }
 
-/** 收到的消息信封（§4.2）。 */
+/** 收到的消息信封。 */
 interface IncomingMessage {
   type?: string;
   session_id?: string;
@@ -143,7 +143,7 @@ const server = net.createServer((socket) => {
   });
 });
 
-/** 按 §4.2 信封构造并发送一条消息（\n 行分帧）。 */
+/** 按协议信封构造并发送一条消息（\n 行分帧）。 */
 function send(
   socket: net.Socket,
   type: string,
@@ -175,7 +175,7 @@ function handleMessage(socket: net.Socket, line: string): void {
       console.log(
         `[${ts()}] 收到 hello: protocol_version=${p.protocol_version} role=${p.role} pid=${p.pid} version=${p.version} capabilities=[${(p.capabilities ?? []).join(", ")}]`,
       );
-      // 握手：回 hello + 下发初始状态（模拟 §4.5-1 补发 pet_state）
+      // 握手：回 hello + 下发初始状态（模拟补发 pet_state）
       send(socket, "hello", {
         protocol_version: 1,
         role: "daemon",
@@ -237,7 +237,7 @@ function handleMessage(socket: net.Socket, line: string): void {
       }
       send(socket, "sessions_snapshot", { sessions });
       send(socket, "pet_state", { state: "Idle", reason: "mock:initial" });
-      // 握手收尾补发全量配置快照（§4.5-4/§7，与真实守护进程一致：设置 WebUI 初始化用）。
+      // 握手收尾补发全量配置快照（与真实守护进程一致：设置 WebUI 初始化用）。
       pushConfigSnapshot(socket);
       console.log(`[${ts()}] 已回 hello，并下发 ${sessions.length} 条会话演示数据与 pet_state: Idle`);
       if (verificationMode) console.log(`[${ts()}] VERIFY_CATALOG_SIZE=${sessions.length}`);
@@ -281,8 +281,8 @@ function handleMessage(socket: net.Socket, line: string): void {
       console.log(`[${ts()}] 宠物位置: x=${p.x} y=${p.y} monitor_id=${p.monitor_id}`);
       break;
     case "update_config": {
-      // 镜像真实守护进程（§7 / bridge daemon/app.ts onUpdateConfig）：逐字段校验合并进
-      // 内存配置；至少一个合法字段才生效，否则回 protocol_error（§4.4）。
+      // 镜像真实守护进程（bridge daemon/app.ts onUpdateConfig）：逐字段校验合并进
+      // 内存配置；至少一个合法字段才生效，否则回 protocol_error。
       // 生效后回推全量 config_snapshot——渲染端 HandleConfigSnapshot 因此会对（隐藏中的）
       // 会话面板再次推 SetTheme + SetFpsMonitor，这一往返是复现设置面板压栈黑化的关键前置。
       const rawTarget = p.open_target;
@@ -319,7 +319,7 @@ function handleMessage(socket: net.Socket, line: string): void {
       console.log(`[${ts()}] 收到 protocol_error: ${p.description ?? ""}`);
       break;
     default:
-      console.log(`[${ts()}] 未知消息类型 ${msg.type}（忽略，§4.2 向前兼容）`);
+      console.log(`[${ts()}] 未知消息类型 ${msg.type}（忽略，向前兼容）`);
   }
 }
 

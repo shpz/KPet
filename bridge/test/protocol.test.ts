@@ -13,7 +13,7 @@ import {
   validateEnvelope,
 } from '../src/protocol/index.js';
 
-test('createEnvelope 构造合法信封（§4.2 字段齐全）', () => {
+test('createEnvelope 构造合法信封（字段齐全）', () => {
   const env = createEnvelope('task_start', { task_id: 't1', title: '运行测试', tool: 'Bash' });
   assert.equal(env.v, PROTOCOL_VERSION);
   assert.equal(env.type, 'task_start');
@@ -82,7 +82,7 @@ test('validateEnvelope：合法信封通过', () => {
   assert.equal(result.ok, true);
 });
 
-test('validateEnvelope：缺信封字段逐个报错（§4.4）', () => {
+test('validateEnvelope：缺信封字段逐个报错', () => {
   const bad = [
     [null, /必须是 JSON 对象/],
     ['str', /必须是 JSON 对象/],
@@ -100,14 +100,14 @@ test('validateEnvelope：缺信封字段逐个报错（§4.4）', () => {
   }
 });
 
-test('validateEnvelope：未知 type 结构合法（收方按 §4.2 忽略并记日志）', () => {
+test('validateEnvelope：未知 type 结构合法（收方按约定忽略并记日志）', () => {
   const input = { v: 1, type: 'future_msg', ts: '2026-07-30T00:00:00.000Z', session_id: null, payload: {} };
   const result = validateEnvelope(input);
   assert.equal(result.ok, true);
   assert.equal(isKnownType('future_msg'), false);
 });
 
-test('validateEnvelope：id 可选，缺省信封通过（§4.2 id 可选）', () => {
+test('validateEnvelope：id 可选，缺省信封通过', () => {
   const input = { v: 1, type: 'hello', ts: '2026-07-30T00:00:00.000Z', session_id: null, payload: { protocol_version: 1, role: 'daemon', pid: 1, version: 'x', capabilities: [] } };
   const result = validateEnvelope(input);
   assert.equal(result.ok, true);

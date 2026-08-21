@@ -1,5 +1,5 @@
 /**
- * 渲染进程监督测试（docs/MVP设计.md §4.5-4：1s/2s/4s/8s 指数退避、60s 窗口最多 5 次、
+ * 渲染进程监督测试（1s/2s/4s/8s 指数退避、60s 窗口最多 5 次、
  * renderer_path 缺失不退避刷屏、宿主事件重置）。
  * spawn 注入假子进程，时钟注入可控，纯事件驱动不依赖真实时间。
  */
@@ -90,11 +90,11 @@ function waitFor(cond: () => boolean, waitMs = 3000): Promise<void> {
   });
 }
 
-test('backoffDelayMs：1s/2s/4s/8s 指数序列，之后封顶 8s（§4.5-4）', () => {
+test('backoffDelayMs：1s/2s/4s/8s 指数序列，之后封顶 8s', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(backoffDelayMs), [1000, 2000, 4000, 8000, 8000, 8000]);
 });
 
-test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数（Slate 方案 §5.1）', async () => {
+test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
   const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
@@ -114,7 +114,7 @@ test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数
   }
 });
 
-test('冷启动拉起渲染进程（§4.5-1）；崩溃后按 1s/2s/4s 退避重启', async () => {
+test('冷启动拉起渲染进程；崩溃后按 1s/2s/4s 退避重启', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
   const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
@@ -142,7 +142,7 @@ test('冷启动拉起渲染进程（§4.5-1）；崩溃后按 1s/2s/4s 退避重
   }
 });
 
-test('60s 窗口内最多 5 次（restart_max_attempts），超限停手等宿主事件（§4.5-4）', async () => {
+test('60s 窗口内最多 5 次（restart_max_attempts），超限停手等宿主事件', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
   const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
@@ -170,7 +170,7 @@ test('60s 窗口内最多 5 次（restart_max_attempts），超限停手等宿�
   }
 });
 
-test('renderer_path 不存在：记日志不拉起、不退避刷屏，宿主事件后重试（MVP 联调兜底）', async () => {
+test('renderer_path 不存在：记日志不拉起、不退避刷屏，宿主事件后重试（联调兜底）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
   const exe = path.join(dir, 'KPet.exe'); // 不存在
   try {

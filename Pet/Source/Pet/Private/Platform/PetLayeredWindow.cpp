@@ -336,7 +336,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		}
 		bDragging = true;
 		bDragThresholdMet = false;
-		PressTick = NowMilliseconds(); // §6.5-1：按下只记录时间戳与锚点，不做任何动作
+		PressTick = NowMilliseconds(); // 按下只记录时间戳与锚点，不做任何动作
 		SetCapture(WindowHandle);
 		DragAnchorCursor.x = ClientX + Pos.x;
 		DragAnchorCursor.y = ClientY + Pos.y;
@@ -439,7 +439,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 			ReleaseCapture();
 			bSuppressClickUntilButtonUp = false;
 		}
-		// §6.5 单击判定：位移未超阈值（未进入拖拽）且按下时长 < 800ms → 单击；否则拖拽结束上报位置
+		// 单击判定：位移未超阈值（未进入拖拽）且按下时长 < 800ms → 单击；否则拖拽结束上报位置
 		if (ReleaseAction == EPetPointerReleaseAction::Close)
 		{
 			if (OnCloseRequested)
@@ -461,7 +461,7 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 				OnDragEnd(Pos.x, Pos.y);
 			}
 		}
-		// 长按（>800ms 无位移）：MVP 不绑定功能，松开不触发点击（§6.5-4）
+		// 长按（>800ms 无位移）：暂不绑定功能，松开不触发点击
 		return 0;
 	}
 	case WM_MOUSEWHEEL:

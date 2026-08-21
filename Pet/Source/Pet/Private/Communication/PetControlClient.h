@@ -11,12 +11,12 @@
 class FJsonObject;
 
 /**
- * 控制管道客户端（渲染进程侧，§4.1）：
+ * 控制管道客户端（渲染进程侧）：
  * - 客户端主动连入 \\.\pipe\KPet.PET.<用户名>（守护进程为服务端）；用户名过滤规则与 bridge/src/bridge/user.ts 一致
  * - 收发放在工作线程（FRunnable）：字节流按 \n 行分帧（全局约定：一条消息 = 一个 JSON 对象 + \n），
  *   完整行经 SPSC 队列转交游戏线程用引擎 Json 模块解析并分发
- * - 连接建立即发 hello；每 3 秒发 heartbeat（§4.3）；断线后每 5 秒重连，期间冻结当前状态、保持离线渲染（§4.5-5）
- * - pet_state 是状态唯一入口（§2.2 D3）：渲染进程只执行，不自行推导
+ * - 连接建立即发 hello；每 3 秒发 heartbeat；断线后每 5 秒重连，期间冻结当前状态、保持离线渲染
+ * - pet_state 是状态唯一入口：渲染进程只执行，不自行推导
  * - 回调（OnPetState / OnShutdown）全部在游戏线程触发
  */
 class FPetControlClient : public FRunnable
@@ -42,7 +42,7 @@ public:
 	/** 上报会话打开请求；SessionId 为空时恢复最近会话。 */
 	void SendOpenTui(const FString& SessionId = FString());
 
-	/** 上报拖拽结束（§6.4 → pet_moved，含所在显示器 id）。 */
+	/** 上报拖拽结束（pet_moved，含所在显示器 id）。 */
 	void SendPetMoved(int32 X, int32 Y);
 
 	/** 请求更新守护进程配置（update_config，字段缺省表示不修改）。 */
@@ -82,7 +82,7 @@ private:
 	void RecordProtocolError(const FString& Description, const FString& RawExcerpt);
 	void SendProtocolError(const FString& Description, const FString& RawExcerpt);
 	void SendHeartbeat();
-	/** 构造 §4.2 信封并入发送队列（未连接时丢弃并记日志，§6.5 不重试轰炸）。 */
+	/** 构造协议信封并入发送队列（未连接时丢弃并记日志，不重试轰炸）。 */
 	bool EnqueueEnvelope(const FString& Type, const TSharedPtr<FJsonObject>& Payload);
 
 	// ---- 工具 ----
@@ -106,15 +106,15 @@ private:
 	TArray<uint8> LineBuffer;
 
 	// 以下仅游戏线程访问
-	FString CurrentState = TEXT("Idle"); // 初始 Idle，断线期间冻结（§4.5-5）
+	FString CurrentState = TEXT("Idle"); // 初始 Idle，断线期间冻结
 	double StartSeconds = 0.0;
 	double LastHeartbeatTime = 0.0;
 	int32 ProtocolErrorCount = 0;
 
-	static constexpr double HeartbeatIntervalSec = 3.0;  // §4.3：每 3 秒
-	static constexpr int32 ReconnectDelayMs = 5000;      // §4.5-5：断线后每 5 秒重连
+	static constexpr double HeartbeatIntervalSec = 3.0;  // 每 3 秒
+	static constexpr int32 ReconnectDelayMs = 5000;      // 断线后每 5 秒重连
 	static constexpr int32 InitialConnectDelayMs = 1000; // 从未连上时更快重试（守护进程可能尚未启动）
-	static constexpr int32 MaxLineBytes = 64 * 1024;     // 单条消息上限（§4.1）
-	static constexpr int32 MaxRawExcerptChars = 256;     // §4.3：protocol_error.raw_excerpt 截断
-	static constexpr int32 ProtocolErrorWarnCount = 10;  // §4.4：1 分钟连续错误告警阈值
+	static constexpr int32 MaxLineBytes = 64 * 1024;     // 单条消息上限
+	static constexpr int32 MaxRawExcerptChars = 256;     // protocol_error.raw_excerpt 截断
+	static constexpr int32 ProtocolErrorWarnCount = 10;  // 1 分钟连续错误告警阈值
 };

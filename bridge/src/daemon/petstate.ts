@@ -1,6 +1,6 @@
 /**
- * 宠物位置持久化（§4.3 pet_moved：拖拽结束由渲染进程上报，守护进程统一写配置，避免多头写文件；
- * §6.4 本地缓存 <基目录>/KPet/pet-state.json，基目录按平台解析（见 §2.1.3），防抖 500ms 写入，进程退出前强制落盘）。
+ * 宠物位置持久化（pet_moved：拖拽结束由渲染进程上报，守护进程统一写配置，避免多头写文件；
+ * 本地缓存 <基目录>/KPet/pet-state.json，基目录按平台解析，防抖 500ms 写入，进程退出前强制落盘）。
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -15,7 +15,7 @@ export interface PetStateBaseDirOptions {
   home?: string;
 }
 
-/** 位置缓存基目录按平台解析（§2.1.3）：win32 用 APPDATA（未设返回空串，保持现状语义），darwin 用 ~/Library/Application Support，其余平台用 XDG_DATA_HOME（未设回退 ~/.local/share）。 */
+/** 位置缓存基目录按平台解析：win32 用 APPDATA（未设返回空串，保持现状语义），darwin 用 ~/Library/Application Support，其余平台用 XDG_DATA_HOME（未设回退 ~/.local/share）。 */
 export function resolvePetStateBaseDir(opts: PetStateBaseDirOptions = {}): string {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
@@ -30,12 +30,12 @@ export function resolvePetStateBaseDir(opts: PetStateBaseDirOptions = {}): strin
   return xdgDataHome.length > 0 ? xdgDataHome : path.join(opts.home ?? os.homedir(), '.local', 'share');
 }
 
-/** 位置缓存文件路径：<基目录>/KPet/pet-state.json（§6.4），基目录缺省按当前平台解析。 */
+/** 位置缓存文件路径：<基目录>/KPet/pet-state.json，基目录缺省按当前平台解析。 */
 export function getPetStatePath(baseDir: string = resolvePetStateBaseDir()): string {
   return baseDir.length > 0 ? path.join(baseDir, 'KPet', 'pet-state.json') : '';
 }
 
-/** §6.4 定义的缓存文件格式。pet 字段（yaw/pitch）由渲染进程自行维护，守护进程只合并 window。 */
+/** 缓存文件格式定义。pet 字段（yaw/pitch）由渲染进程自行维护，守护进程只合并 window。 */
 export interface PetStateFile {
   window?: { x: number; y: number; monitor_id: string };
   pet?: Record<string, unknown>;
@@ -43,7 +43,7 @@ export interface PetStateFile {
 }
 
 export interface PetStateStoreOptions {
-  /** 写入防抖（毫秒），缺省 500ms（§6.4）。 */
+  /** 写入防抖（毫秒），缺省 500ms。 */
   debounceMs?: number;
   now?: () => number;
 }
@@ -52,7 +52,7 @@ export interface PetStateStoreOptions {
  * pet_moved 持久化存储。
  * - 只合并 window 字段（x/y 必须为有限数字、monitor_id 必须为字符串，非法则丢弃）；
  * - 防抖写入；flush() 立即落盘（守护进程退出前调用）；
- * - 文件损坏/版本不符 → 整体回退默认，不阻断启动（§6.4）。
+ * - 文件损坏/版本不符 → 整体回退默认，不阻断启动。
  */
 export class PetStateStore {
   private readonly filePath: string;

@@ -1,14 +1,14 @@
 /**
- * 打开终端 / 浏览器（§4.5-3 点击回传：渲染进程发 open_tui → 守护进程按 open_target 打开目标）。
+ * 打开终端 / 浏览器（点击回传：渲染进程发 open_tui → 守护进程按 open_target 打开目标）。
  *
  * - open_target=cli 且 terminal=wt：`wt.exe -d <cwd> cmd /k kimi --session <会话id>`；wt.exe 不可用（spawn ENOENT）时
- *   回退 `cmd /c start`（§4.5-3 备选）；
+ *   回退 `cmd /c start`（备选）；
  * - open_target=cli 且 terminal=cmd：`cmd /c start "" cmd /k kimi --session <会话id>`；
- * - open_target=cli 且 terminal=wsl（跨平台方案 §3.1 形态一）：`wt.exe -d <Windows cwd> wsl.exe [-d <发行版>]
+ * - open_target=cli 且 terminal=wsl（跨平台方案形态一）：`wt.exe -d <Windows cwd> wsl.exe [-d <发行版>]
  *   --cd <Linux cwd> -- kimi --session <会话id>`；cwd 为 Linux 路径时先经 wslToWindowsPath 转成 Windows 路径
  *   给 wt -d（wsl.exe 的 --cd 保留 Linux 原路径）；wt.exe 不可用（spawn ENOENT）时回退
  *   `cmd /c start "" wsl.exe [-d <发行版>] --cd <Linux cwd> --exec bash -lc "kimi --session <会话id>"`；
- * - open_target=web：用系统默认浏览器打开 open_web_url 模板（§7，支持 {session_id} 占位符；
+ * - open_target=web：用系统默认浏览器打开 open_web_url 模板（支持 {session_id} 占位符；
  *   能否在 web 侧直接按会话恢复属未验证假设，见 config.ts 的 DEFAULT_OPEN_WEB_URL 注释）；
  * - open_target=web 且 URL 为回环地址（127.0.0.1 / localhost / ::1）时，开浏览器前先探测端口，
  *   未运行则经可见终端窗口拉起 `kimi web --no-open --port <port>`（terminal=wt 时 wt.exe 显式新建标签并刷新环境，
@@ -21,7 +21,7 @@
  *   终端窗口横幅复制 token 手动填）；URL 已有 fragment 先去掉再拼；非回环 URL 一律不拼
  *   token（防止 token 泄漏到远端）。安全红线：任何日志都不得输出带 token 的完整 URL
  *   （open_tui 日志不含 URL，保持如此，本文件不新增相关日志）；
- * - 会话 id 为空 → `kimi --continue` 恢复最近会话（§4.5-3）；
+ * - 会话 id 为空 → `kimi --continue` 恢复最近会话；
  * - 分离拉起（detached + unref）：cli 终端/浏览器不随守护进程生命周期退出；web 服务随可见
  *   终端窗口生命周期（关窗即停）；
  * - wt/wsl 分支均经 wt.exe 直拉，禁止 windowsHide：libuv 会将其译为 STARTF_USESHOWWINDOW + SW_HIDE
@@ -40,13 +40,13 @@ import { wslToWindowsPath } from './wsl-path.js';
 export interface OpenTuiOptions {
   /** 打开目标：cli=终端，web=浏览器。缺省 cli（向后兼容）。 */
   target?: OpenTarget;
-  /** cli 时的终端方式（§4.5-3）：wt=Windows Terminal，cmd=传统控制台，wsl=WSL 发行版终端（§3.1 形态一）。 */
+  /** cli 时的终端方式：wt=Windows Terminal，cmd=传统控制台，wsl=WSL 发行版终端（形态一）。 */
   terminal: 'wt' | 'cmd' | 'wsl';
   /** terminal=wsl 时使用的 WSL 发行版（wsl.exe -d <发行版>）；缺省/空串 = wsl.exe 默认发行版。 */
   wslDistro?: string;
-  /** web 时使用的 URL 模板（§7 open_web_url），支持 {session_id} 占位符；缺省本地 kimi web 首页。 */
+  /** web 时使用的 URL 模板（open_web_url），支持 {session_id} 占位符；缺省本地 kimi web 首页。 */
   webUrl?: string;
-  /** kimi 终端的工作目录（§4.5-3：-d <cwd>）。 */
+  /** kimi 终端的工作目录（-d <cwd>）。 */
   cwd: string;
   /** 目标会话；null = 最近会话（kimi --continue）。 */
   sessionId: string | null;
@@ -149,7 +149,7 @@ function defaultReadServerToken(): string | null {
 }
 
 /**
- * 构造拉起 kimi web 服务的可见终端命令（纯函数，可单测）。与 cli 路径同构（§4.5-3）：
+ * 构造拉起 kimi web 服务的可见终端命令（纯函数，可单测）。与 cli 路径同构：
  * wt 显式 new-tab，并以 --reloadEnvironment 刷新 Windows Terminal 已运行实例的环境后再
  * 执行 `cmd /k kimi web ...`；cmd 经 `cmd /c start` 中转新开窗口。
  * Windows Terminal 在携带 commandline 时默认继承其自身已缓存的环境，Kimi 安装后仍开着的
@@ -205,9 +205,9 @@ export type ConnectFn = (port: number, host: string) => Promise<boolean>;
 
 /** 回环端口探测超时（毫秒）：单次 connect 最多等这么久，避免不可达主机拖慢流程。 */
 const PROBE_TIMEOUT_MS = 500;
-/** 拉起 kimi web 后的轮询间隔（毫秒，§7）。 */
+/** 拉起 kimi web 后的轮询间隔（毫秒）。 */
 const WEB_POLL_MS = 250;
-/** 拉起 kimi web 后最长等待就绪时间（毫秒，§7）。 */
+/** 拉起 kimi web 后最长等待就绪时间（毫秒）。 */
 const WEB_WAIT_MS = 10_000;
 
 export interface OpenTuiResult {
@@ -218,9 +218,9 @@ export interface OpenTuiResult {
 }
 
 /**
- * 唤起终端或浏览器。cli 目标下 wt 拉起失败（未安装/不在 PATH）时回退 cmd /c start（§4.5-3 备选）。
- * web 目标下回环地址会先探测并自动拉起本地 kimi web 服务（§7）。全部失败返回 ok=false
- * （不重试轰炸，调用方记日志并向渲染进程补发失败气泡，§6.5 发送失败不重试的语义同源）。
+ * 唤起终端或浏览器。cli 目标下 wt 拉起失败（未安装/不在 PATH）时回退 cmd /c start（备选）。
+ * web 目标下回环地址会先探测并自动拉起本地 kimi web 服务。全部失败返回 ok=false
+ * （不重试轰炸，调用方记日志并向渲染进程补发失败气泡，发送失败不重试的语义同源）。
  * spawnFn / connectFn / webTiming / tokenReader 供测试注入；缺省使用真实 spawn / net.connect /
  * 默认轮询时序 / 真实读取 server.token。
  */
@@ -241,7 +241,7 @@ export function openTui(
   return openTerminal(opts, spawnFn);
 }
 
-/** cli 目标：wt 首拉（wt 或 wsl 分支都经 wt.exe），失败（ENOENT）回退 cmd（§4.5-3 备选）。 */
+/** cli 目标：wt 首拉（wt 或 wsl 分支都经 wt.exe），失败（ENOENT）回退 cmd（备选）。 */
 function openTerminal(opts: OpenTuiOptions, spawnFn: SpawnFn): Promise<OpenTuiResult> {
   return new Promise((resolve) => {
     const attempt = (terminal: 'wt' | 'cmd' | 'wsl', cmd: OpenTuiCommand): void => {
@@ -259,7 +259,7 @@ function openTerminal(opts: OpenTuiOptions, spawnFn: SpawnFn): Promise<OpenTuiRe
       child.once('error', (err) => {
         const code = (err as NodeJS.ErrnoException).code;
         if ((terminal === 'wt' || terminal === 'wsl') && code === 'ENOENT') {
-          // wt.exe 不可用：回退 cmd /c start（§4.5-3 备选）。wsl 模式回退为
+          // wt.exe 不可用：回退 cmd /c start（备选）。wsl 模式回退为
           // `cmd /c start "" wsl.exe ... --exec bash -lc "kimi ..."`（保留 wsl 语义，不再经
           // cmd /k 在 Windows 侧执行）；wt 模式维持原回退命令。启动目录由回退命令构造函数处理。
           attempt('cmd', terminal === 'wsl' ? buildWslFallbackCommand(opts) : buildOpenTuiCommand({ ...opts, terminal: 'cmd' }));
@@ -330,7 +330,7 @@ function defaultConnect(port: number, host: string): Promise<boolean> {
   });
 }
 
-/** web 目标：展开并解析 URL；回环地址先确保本地 web 服务可用并拼上 #token= 鉴权，非回环地址直接开浏览器（§7）。 */
+/** web 目标：展开并解析 URL；回环地址先确保本地 web 服务可用并拼上 #token= 鉴权，非回环地址直接开浏览器。 */
 function openWeb(
   opts: OpenTuiOptions,
   spawnFn: SpawnFn,
@@ -385,7 +385,7 @@ function ensureWebService(
 
 /**
  * 经可见终端窗口拉起 `kimi web --no-open --port <port>`（用户关窗即停止服务）：terminal=wt 时
- * wt.exe 直拉，wt 缺失（ENOENT）回退 `cmd /c start`（§4.5-3 备选）；两条路径都 spawn 失败才
+ * wt.exe 直拉，wt 缺失（ENOENT）回退 `cmd /c start`（备选）；两条路径都 spawn 失败才
  * 返回拉起失败错误。spawn 成功后轮询等待端口就绪。
  */
 function startWebService(
@@ -415,7 +415,7 @@ function startWebService(
         if (spawned) return; // spawn 成功后的进程错误不再影响（端口探测独立进行）
         const code = (err as NodeJS.ErrnoException).code;
         if (terminal === 'wt' && code === 'ENOENT') {
-          // wt.exe 未安装：回退 cmd /c start（§4.5-3 备选）
+          // wt.exe 未安装：回退 cmd /c start（备选）
           // terminal=wsl 时，回退路径也必须在 WSL 内执行 kimi web；否则 Windows PATH
           // 中找不到 kimi 后只会等到端口超时，浏览器不会启动。
           attempt(

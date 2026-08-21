@@ -1,5 +1,5 @@
 /**
- * WSL ↔ Windows 路径互转（跨平台兼容方案 §3.1：形态一「CLI 在 WSL、守护进程在 Windows」的路径转换层）。
+ * WSL ↔ Windows 路径互转（跨平台兼容方案形态一「CLI 在 WSL、守护进程在 Windows」的路径转换层）。
  *
  * 守护进程运行在 Windows，但形态一下宿主事件里的会话 cwd 可能是 Linux 路径：
  * - `/mnt/c/...`（drvfs 自动挂载盘）→ 对应 Windows 盘符路径；

@@ -1,11 +1,11 @@
 /**
- * 宠物状态机（docs/MVP设计.md §3.4 宿主事件 → 宠物语义映射表）。
+ * 宠物状态机（宿主事件 → 宠物语义映射表）。
  *
  * 纯逻辑模块，不碰管道/定时器/进程，时钟与时间窗由调用方注入 now，可完全单测。
  *
  * 规则：
  * - 按会话 id 维护活跃会话集合与任务表；任一会话忙 → Working，全部空闲 → Idle；
- * - 字段取值防御：除 hook_event_name/session_id/cwd 外不依赖任何宿主字段（§3.4）；
+ * - 字段取值防御：除 hook_event_name/session_id/cwd 外不依赖任何宿主字段；
  *   任务标题取工具名/命令文本，取不到降级「正在工作…」；事件原始 JSON 由调用方整体透传 _raw；
  * - 状态卡死兜底：忙会话超过 session.staleMinutes 无事件 → 强制转闲但保留活跃会话；
  * - 异常会话超过 session.cleanupMinutes 无事件才清理，默认 60 分钟；
@@ -32,18 +32,18 @@ import type {
   TaskStatus,
 } from '../protocol/types.js';
 
-/** 高频任务事件合并窗口（毫秒），§3.4：200ms。 */
+/** 高频任务事件合并窗口（毫秒），200ms。 */
 export const TASK_THROTTLE_MS = 200;
 
-/** 任务标题降级文案（§3.4：取不到工具名/命令文本时）。 */
+/** 任务标题降级文案（取不到工具名/命令文本时）。 */
 export const FALLBACK_TASK_TITLE = '正在工作…';
 
 /** 会话记录。 */
 export interface Session {
   sessionId: string;
-  /** 宿主事件 cwd（§3.1 基础字段），可能缺失。 */
+  /** 宿主事件 cwd（基础字段），可能缺失。 */
   cwd: string | null;
-  /** 是否为恢复会话（SessionStart matcher=resume，§3.2）。 */
+  /** 是否为恢复会话（SessionStart matcher=resume）。 */
   resume: boolean;
   /** 是否已经收到过该会话的 SessionStart；工作事件可能先于它抵达。 */
   hasSessionStart: boolean;
@@ -55,7 +55,7 @@ export interface Session {
   tasks: Map<string, TaskRecord>;
 }
 
-/** 未完成任务记录（§4.3 tasks_snapshot 数据源）。 */
+/** 未完成任务记录（tasks_snapshot 数据源）。 */
 export interface TaskRecord {
   taskId: string;
   title: string;
@@ -77,7 +77,7 @@ export type OutgoingMessage =
 /** 单条宿主事件的处理结果。 */
 export interface ProcessResult {
   ok: boolean;
-  /** ok=false 的原因（非法 JSON/缺必要字段），由调用方计入错误计数（§4.4）。 */
+  /** ok=false 的原因（非法 JSON/缺必要字段），由调用方计入错误计数。 */
   error?: string;
   /** 事件归属的会话 id（ok=true 时），调用方用它调度节流冲刷，不依赖信封字段。 */
   sessionId?: string;
@@ -85,11 +85,11 @@ export interface ProcessResult {
   out: OutgoingMessage[];
   /** 本次事件是否向某会话的节流缓冲追加了任务消息（调用方据此安排 200ms 冲刷定时器）。 */
   throttled: boolean;
-  /** 最后一个 SessionEnd 且无活跃会话 → 调用方应启动退出倒计时（§4.5-6）。 */
+  /** 最后一个 SessionEnd 且无活跃会话 → 调用方应启动退出倒计时。 */
   hostIdle: boolean;
 }
 
-/** 快照内容（§4.5-1/4 补发：活跃会话 + 当前 pet_state + 未完成任务列表）。 */
+/** 快照内容（补发：活跃会话 + 当前 pet_state + 未完成任务列表）。 */
 export interface SnapshotData {
   sessions: Array<{ sessionId: string; cwd: string | null; resume: boolean; busy: boolean; unread: boolean }>;
   state: PetStateValue;
@@ -108,11 +108,11 @@ interface PendingTaskMsg {
 }
 
 export interface StateMachineOptions {
-  /** 会话无事件强制转闲时长（毫秒），§3.4 卡死兜底。 */
+  /** 会话无事件强制转闲时长（毫秒），卡死兜底。 */
   staleMs: number;
   /** 长期无事件的异常会话清理时长（毫秒），必须大于 staleMs；缺省 staleMs 的 6 倍。 */
   cleanupMs?: number;
-  /** 任务事件合并窗口（毫秒），缺省 200ms（§3.4）。 */
+  /** 任务事件合并窗口（毫秒），缺省 200ms。 */
   throttleMs?: number;
   /** 任务 id 生成器，测试注入。 */
   genTaskId?: () => string;
@@ -128,7 +128,7 @@ function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-/** 取 PreToolUse 的命令文本（§3.1：tool_input.command）。 */
+/** 取 PreToolUse 的命令文本（tool_input.command）。 */
 function extractCommand(parsed: Record<string, unknown>): string | null {
   const ti = parsed['tool_input'];
   if (!isObject(ti)) return null;
@@ -140,7 +140,7 @@ function extractTool(parsed: Record<string, unknown>): string | null {
   return str(parsed['tool_name']) ?? str(parsed['tool']);
 }
 
-/** 取子代理名（subagent_name / name），§3.4：SubagentStart 视同 task_start，工具名=子代理名。 */
+/** 取子代理名（subagent_name / name）；SubagentStart 视同 task_start，工具名=子代理名。 */
 function extractSubagentName(parsed: Record<string, unknown>): string | null {
   return str(parsed['subagent_name']) ?? str(parsed['name']);
 }
@@ -157,7 +157,7 @@ function extractSummary(parsed: Record<string, unknown>): string | null {
 
 export class PetStateMachine {
   private readonly sessions = new Map<string, Session>();
-  /** 当前权威状态（§2.2 D3：守护进程是状态判定的唯一权威）。 */
+  /** 当前权威状态（守护进程是状态判定的唯一权威）。 */
   private currentState: PetStateValue = 'Idle';
   private stateReasonValue = 'boot';
   private readonly staleMs: number;
@@ -201,7 +201,7 @@ export class PetStateMachine {
     return false;
   }
 
-  /** 最近活跃会话（open_tui 会话 id 为空时用它恢复最近会话，§4.5-3）。 */
+  /** 最近活跃会话（open_tui 会话 id 为空时用它恢复最近会话）。 */
   mostRecentSession(): Session | null {
     let best: Session | null = null;
     for (const s of this.sessions.values()) {
@@ -214,7 +214,7 @@ export class PetStateMachine {
     return this.sessions.get(sessionId)?.cwd ?? null;
   }
 
-  /** 快照（§4.5-1/4 补发内容）。tasks 跨会话汇总，保持各会话内开始时间序。 */
+  /** 快照（补发内容）。tasks 跨会话汇总，保持各会话内开始时间序。 */
   getSnapshot(): SnapshotData {
     const tasks: TaskInfo[] = [];
     for (const s of this.sessions.values()) {
@@ -239,9 +239,9 @@ export class PetStateMachine {
   }
 
   /**
-   * 处理一条宿主事件原始 JSON（§3.4 映射表）。
-   * 非法 JSON / 非对象 / 缺 hook_event_name / 缺 session_id → {ok:false}，由调用方错误计数（§4.4）。
-   * 未知 hook_event_name → 忽略（{ok:true}，向前兼容 §4.2）。
+   * 处理一条宿主事件原始 JSON。
+   * 非法 JSON / 非对象 / 缺 hook_event_name / 缺 session_id → {ok:false}，由调用方错误计数。
+   * 未知 hook_event_name → 忽略（{ok:true}，向前兼容）。
    */
   processHostEvent(raw: string): ProcessResult {
     let parsed: unknown;
@@ -300,7 +300,7 @@ export class PetStateMachine {
         break;
 
       case 'UserPromptSubmit':
-        // 该会话标记为忙 → Working（比等 PreToolUse 更早，§3.4）
+        // 该会话标记为忙 → Working（比等 PreToolUse 更早）
         session.busy = true;
         session.unread = false;
         this.setWorking(out, 'user_prompt');
@@ -339,7 +339,7 @@ export class PetStateMachine {
           });
           throttled = true;
           if (status === 'failure') {
-            // 失败另发 notify（§3.4 表格）；成功不发，避免与 task_end 完成气泡重复
+            // 失败另发 notify；成功不发，避免与 task_end 完成气泡重复
             out.push({
               type: 'notify',
               session_id: sessionId,
@@ -367,7 +367,7 @@ export class PetStateMachine {
         break;
 
       case 'Interrupt':
-        // 该会话转闲，不弹完成气泡（§3.4）
+        // 该会话转闲，不弹完成气泡
         this.idleSession(session);
         this.recomputeIdle(out, 'interrupt');
         // Interrupt 不改变 unread：它表示中断，而不是新的 Agent 回复。
@@ -375,7 +375,7 @@ export class PetStateMachine {
         break;
 
       case 'Notification':
-        // task.completed 等完成通知：成功气泡，不改主状态（§3.4）
+        // task.completed 等完成通知：成功气泡，不改主状态
         out.push({
           type: 'notify',
           session_id: sessionId,
@@ -392,7 +392,7 @@ export class PetStateMachine {
         this.sessions.delete(sessionId);
         this.pending.delete(sessionId); // 丢弃已死会话的节流缓冲
         if (this.sessions.size === 0) {
-          // 无活跃会话 → Idle 并启动退出倒计时（§3.4 / §4.5-6）
+          // 无活跃会话 → Idle 并启动退出倒计时
           this.setIdle(out, 'session_end');
           hostIdle = true;
         } else {
@@ -403,7 +403,7 @@ export class PetStateMachine {
       }
 
       default:
-        // 未知事件类型：忽略并保持状态（§4.2 向前兼容），调用方 debug 日志
+        // 未知事件类型：忽略并保持状态（向前兼容），调用方 debug 日志
         break;
     }
 
@@ -411,7 +411,7 @@ export class PetStateMachine {
   }
 
   /**
-   * 卡死兜底（§3.4）：扫描所有会话，超过 staleMs 无事件的忙会话强制转闲但保留会话；
+   * 卡死兜底：扫描所有会话，超过 staleMs 无事件的忙会话强制转闲但保留会话；
    * 超过更长期 cleanupMs 才回收异常会话，避免正常空闲会话在短暂无事件时消失。
    * 返回因此产生的消息（pet_state/session_state/session_end）。调用方可在长期清理导致无活跃会话时启动退出倒计时。
    */
@@ -437,7 +437,7 @@ export class PetStateMachine {
   }
 
   /**
-   * 冲刷某会话的节流缓冲（§3.4 200ms 窗口合并）。
+   * 冲刷某会话的节流缓冲（200ms 窗口合并）。
    * force=true 由调用方定时器触发（窗口已到）；否则仅当窗口已过才冲刷（测试/兜底路径）。
    * 同窗内同任务 start+end 折叠为一条 task_end；返回待下发消息，缓冲清空。
    */
@@ -527,7 +527,7 @@ export class PetStateMachine {
     return s;
   }
 
-  /** 新增任务（§3.4 PreToolUse/SubagentStart：任务标题取命令文本/工具名，取不到降级通用文案）。 */
+  /** 新增任务（PreToolUse/SubagentStart：任务标题取命令文本/工具名，取不到降级通用文案）。 */
   private addTask(session: Session, parsed: Record<string, unknown>): TaskRecord {
     const tool = str(parsed['subagent_name']) ?? str(parsed['name']) ?? extractTool(parsed) ?? 'tool';
     const command = extractCommand(parsed);
@@ -564,7 +564,7 @@ export class PetStateMachine {
     return best;
   }
 
-  /** 会话转闲并静默清空未完成任务（不发 task_end，不弹完成气泡；§3.4 Interrupt 语义推广到全部转闲路径）。 */
+  /** 会话转闲并静默清空未完成任务（不发 task_end，不弹完成气泡；Interrupt 语义推广到全部转闲路径）。 */
   private idleSession(session: Session): void {
     session.busy = false;
     this.clearSessionTasks(session);
@@ -590,7 +590,7 @@ export class PetStateMachine {
     out.push({ type: 'pet_state', session_id: null, payload: { state: 'Idle', reason } });
   }
 
-  /** 会话转闲后重新判定主状态（§3.4：任一会话忙 → Working；全闲 → Idle）。 */
+  /** 会话转闲后重新判定主状态（任一会话忙 → Working；全闲 → Idle）。 */
   private recomputeIdle(out: OutgoingMessage[], reason: string): void {
     if (!this.hasBusySessions()) this.setIdle(out, reason);
   }
@@ -613,14 +613,14 @@ export class PetStateMachine {
   }
 }
 
-/** 恢复会话判定：matcher=resume（§3.2）或显式 resume 字段。 */
+/** 恢复会话判定：matcher=resume 或显式 resume 字段。 */
 function extractResume(parsed: Record<string, unknown>): boolean {
   if (parsed['resume'] === true) return true;
   const matcher = parsed['matcher'];
   return typeof matcher === 'string' && matcher.includes('resume');
 }
 
-/** Notification 文案取值（字段全集未公开，§3.1 待验证；仅尝试常见字段，取不到降级通用文案）。 */
+/** Notification 文案取值（字段全集未公开，待验证；仅尝试常见字段，取不到降级通用文案）。 */
 function extractNotificationText(parsed: Record<string, unknown>): string | null {
   const n = parsed['notification'];
   if (isObject(n)) {

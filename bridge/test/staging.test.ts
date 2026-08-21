@@ -1,5 +1,5 @@
 /**
- * 本地暂存写入单测（§3.3 兜底：%TEMP%/kpet-events/，文件名时间戳+随机，可排序回收）。
+ * 本地暂存写入单测（兜底：%TEMP%/kpet-events/，文件名时间戳+随机，可排序回收）。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

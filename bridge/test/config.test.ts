@@ -1,5 +1,5 @@
 /**
- * 守护进程配置测试（docs/MVP设计.md §7）。
+ * 守护进程配置测试。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -29,7 +29,7 @@ function writeConfig(dir: string, obj: unknown): string {
   return p;
 }
 
-test('默认配置：§7 全部键与默认值', () => {
+test('默认配置：全部键与默认值', () => {
   const cfg = defaultConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' });
   assert.equal(cfg.renderer_path, path.join('C:\\plugins\\kpet', 'renderer', 'Pet.exe'));
   assert.equal(cfg.heartbeat_interval_ms, 3000);
@@ -49,7 +49,7 @@ test('默认配置：§7 全部键与默认值', () => {
   assert.equal(cfg.log_level, 'info');
 });
 
-test('配置文件缺失 → 默认配置 + 告警（§7：不存在则用默认值）', () => {
+test('配置文件缺失 → 默认配置 + 告警（不存在则用默认值）', () => {
   const { config, warnings, source } = loadConfig({}, path.join(tempDir(), 'nope', 'config.json'));
   assert.equal(source, 'default');
   assert.equal(config.session.staleMinutes, 10);
@@ -97,7 +97,7 @@ test('类型非法逐项回退：字符串数字/负数/非法枚举 → 默认�
   assert.ok(warnings.length >= 6, `应有逐项告警，实际 ${warnings.length} 条`);
 });
 
-test('open_target / open_web_url：默认值、合法覆盖与非法回退（§7）', () => {
+test('open_target / open_web_url：默认值、合法覆盖与非法回退', () => {
   const dir = tempDir();
   const p1 = writeConfig(dir, { open_target: 'web', open_web_url: 'https://example.com/s/{session_id}' });
   const r1 = loadConfig({}, p1);

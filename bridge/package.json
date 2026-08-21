@@ -2,7 +2,7 @@
   "name": "kpet-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "KPet 转发器（kpet-bridge）与进程间通信协议包。对应 docs/MVP设计.md §3/§4",
+  "description": "KPet 转发器（kpet-bridge）与进程间通信协议包。",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
