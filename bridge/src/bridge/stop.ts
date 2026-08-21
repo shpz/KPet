@@ -30,7 +30,7 @@ export type StopDaemonResult = 'not_running' | 'stopped' | 'timeout';
 export interface StopDaemonOptions {
   /** 事件管道全名，缺省按当前用户名推导（§4.1）。 */
   pipeName?: string;
-  /** 用户关闭抑制标记路径，缺省系统临时目录下的 kimi-pet/pet.disabled。 */
+  /** 用户关闭抑制标记路径，缺省系统临时目录下的 kpet/pet.disabled。 */
   suppressionPath?: string;
   /** 探测事件管道存在性的函数；测试可注入可控返回序列。 */
   probe?: (pipe: string, timeoutMs?: number) => Promise<boolean>;

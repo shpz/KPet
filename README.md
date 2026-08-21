@@ -1,8 +1,8 @@
-# KimiPet
+# KPet
 
 一个会跟着 Kimi Code 一起上班的 3D 桌面宠物。
 
-KimiPet 会读取 Kimi Code CLI 的会话与工具事件，把终端里的工作过程变成桌面角色的动作和状态。它既是陪伴型桌宠，也是一个随手可用的 Kimi Code 会话入口。
+KPet 会读取 Kimi Code CLI 的会话与工具事件，把终端里的工作过程变成桌面角色的动作和状态。它既是陪伴型桌宠，也是一个随手可用的 Kimi Code 会话入口。
 
 ## 玩法与功能
 
@@ -53,7 +53,7 @@ KimiPet 会读取 Kimi Code CLI 的会话与工具事件，把终端里的工作
 
 ## 平台与部署
 
-KimiPet 面向 Windows 11，并与 Kimi Code CLI 集成，支持 Windows 原生与 WSL 两种部署形态。
+KPet 面向 Windows 11，并与 Kimi Code CLI 集成，支持 Windows 原生与 WSL 两种部署形态。
 
 ### Windows 11
 
@@ -83,4 +83,4 @@ sh deploy.sh
 
 本项目原创代码与文档基于 [MIT License](LICENSE) 开源。第三方组件与资产不自动包含在该许可中，其权利和许可归各自权利人所有。
 
-KimiPet 是社区项目，与 Kimi Code、Moonshot AI、Epic Games 或 Unreal Engine 官方不存在隶属或背书关系。相关名称和商标归各自权利人所有。
+KPet 是社区项目，与 Kimi Code、Moonshot AI、Epic Games 或 Unreal Engine 官方不存在隶属或背书关系。相关名称和商标归各自权利人所有。

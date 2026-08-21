@@ -406,7 +406,7 @@
     </header>
 
     <div class="panel-body">
-      <!-- 会话列表（初始为空，真实数据由 C++ 通过 KimiPetPanel API 推入） -->
+      <!-- 会话列表（初始为空，真实数据由 C++ 通过 KPetPanel API 推入） -->
       <div class="session-list" id="sessionList" role="listbox" aria-label="会话列表"></div>
 
       <!-- 空状态（列表为空时自动显示） -->
@@ -431,7 +431,7 @@
 /* ================================================================
  * 会话面板脚本（供 UE5 WebBrowser LoadString 加载）
  *
- * 对外契约：window.KimiPetPanel
+ * 对外契约：window.KPetPanel
  *   applySnapshot(items)            全量替换列表（items 为数组）
  *   addOrUpdate(item)               新增或原位更新一条
  *   removeSession(sessionId)        删除一条
@@ -497,12 +497,12 @@ function fallbackTitle(sessionId, cwd) {
 /* 规范化条目：字段缺失/类型异常时补默认值；无 sessionId 的条目忽略并告警 */
 function normalize(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
-    console.warn('[KimiPetPanel] 忽略非法会话条目：', item);
+    console.warn('[KPetPanel] 忽略非法会话条目：', item);
     return null;
   }
   const sessionId = item.sessionId == null ? '' : String(item.sessionId);
   if (!sessionId) {
-    console.warn('[KimiPetPanel] 会话条目缺少 sessionId，已忽略：', item);
+    console.warn('[KPetPanel] 会话条目缺少 sessionId，已忽略：', item);
     return null;
   }
   const cwd = item.cwd == null ? '' : String(item.cwd);
@@ -541,24 +541,24 @@ function callBridge(action, ...args) {
     const host = (typeof window !== 'undefined') ? window : undefined;
     const bridge = host && host.ue && host.ue.petbridge ? host.ue.petbridge : undefined;
     if (!bridge) {
-      console.warn('[KimiPetPanel] UE 桥（window.ue.petbridge）不存在，忽略动作：' + action + '，参数：', args);
+      console.warn('[KPetPanel] UE 桥（window.ue.petbridge）不存在，忽略动作：' + action + '，参数：', args);
       return;
     }
     const fn = findBridgeMethod(bridge, action);
     if (typeof fn === 'function') {
       fn.apply(bridge, args);
     } else {
-      console.warn('[KimiPetPanel] UE 桥未暴露方法：' + action);
+      console.warn('[KPetPanel] UE 桥未暴露方法：' + action);
     }
   } catch (err) {
-    console.warn('[KimiPetPanel] 调用 UE 桥失败：', err);
+    console.warn('[KPetPanel] 调用 UE 桥失败：', err);
   }
 }
 
 /* ---------- FPS 上报器 ---------- */
 /* 与 settings.html 是同一段轻量脚本（各页内联一份）：requestAnimationFrame 计数，
  * 每满 1 秒经本页桥上报一次整数 fps；页面加载后不自动启动，等 C++ 通知。 */
-window.KimiPetFps = (function () {
+window.KPetFps = (function () {
   let running = false;
   let rafId = 0;
   let frames = 0;
@@ -695,12 +695,12 @@ btnClose.addEventListener('click', () => {
 });
 
 /* ---------- 对外 API ---------- */
-window.KimiPetPanel = {
+window.KPetPanel = {
 
   /* 全量替换列表；非数组入参按空列表处理并告警（幂等） */
   applySnapshot(items) {
     if (!Array.isArray(items)) {
-      console.warn('[KimiPetPanel] applySnapshot 期望数组入参，实际为：', items);
+      console.warn('[KPetPanel] applySnapshot 期望数组入参，实际为：', items);
       items = [];
     }
     sessions.clear();
@@ -756,7 +756,7 @@ window.KimiPetPanel = {
   /* 切换主题：themeId ∈ 三主题，写入 body[data-theme] 即时生效；非法值忽略并告警 */
   setTheme(themeId) {
     if (THEME_IDS.indexOf(themeId) === -1) {
-      console.warn('[KimiPetPanel] 未知主题，忽略：', themeId);
+      console.warn('[KPetPanel] 未知主题，忽略：', themeId);
       return;
     }
     document.body.dataset.theme = themeId;
@@ -765,9 +765,9 @@ window.KimiPetPanel = {
   /* 启停 FPS 上报（由 C++ 通过 applySettings / setFpsMonitor 通知） */
   setFpsMonitor(enabled) {
     if (enabled) {
-      window.KimiPetFps.start();
+      window.KPetFps.start();
     } else {
-      window.KimiPetFps.stop();
+      window.KPetFps.stop();
     }
   },
 

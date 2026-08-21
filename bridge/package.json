@@ -1,15 +1,15 @@
 {
-  "name": "kimi-pet-bridge",
+  "name": "kpet-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "KimiPet 转发器（kimi-pet-bridge）与进程间通信协议包。对应 docs/MVP设计.md §3/§4",
+  "description": "KPet 转发器（kpet-bridge）与进程间通信协议包。对应 docs/MVP设计.md §3/§4",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:exe": "npm run build && node -e \"require('node:fs').mkdirSync('bin',{recursive:true})\" && bun build --compile --windows-hide-console dist/launcher/main.js --outfile bin/kimi-petd.exe",
+    "build:exe": "npm run build && node -e \"require('node:fs').mkdirSync('bin',{recursive:true})\" && bun build --compile --windows-hide-console dist/launcher/main.js --outfile bin/kpetd.exe",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build && npm run build:test && node --test --test-force-exit \"dist-test/test/*.test.js\"",
     "clean": "node -e \"const fs=require('node:fs');for(const d of ['dist','dist-test'])fs.rmSync(d,{recursive:true,force:true})\""

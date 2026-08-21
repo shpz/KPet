@@ -1,6 +1,6 @@
 **/node_modules/*
 
-# KimiPet 插件打包输出（仓库根 tools/package.ts --out 默认值）
+# KPet 插件打包输出（仓库根 tools/package.ts --out 默认值）
 dist-plugin/
 dist/
 

@@ -31,11 +31,11 @@ import {
 const isWindows = process.platform === 'win32';
 
 function tempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-test-'));
 }
 
 function uniquePipeName(): string {
-  return `\\\\.\\pipe\\KimiPet.Test.${process.pid}.${randomUUID().slice(0, 8)}`;
+  return `\\\\.\\pipe\\KPet.Test.${process.pid}.${randomUUID().slice(0, 8)}`;
 }
 
 /** 建一个命名管道服务端，收到一条完整消息后 resolve 消息文本。所有连接与定时器在收尾时清理，保证进程可退出。 */
@@ -160,7 +160,7 @@ test('集成：管道探测成功但写入失败 → 暂存兜底（§3.3）', {
 test('关闭竞态：入口检查后才出现抑制标记时不得继续写管道或暂存', async () => {
   const base = tempDir();
   const stagingDir = path.join(base, 'staging');
-  const suppressionPath = path.join(base, 'kimi-pet', 'pet.disabled');
+  const suppressionPath = path.join(base, 'kpet', 'pet.disabled');
   let writeCount = 0;
   try {
     const result = await relayHostEvent(
@@ -190,7 +190,7 @@ test('关闭竞态：入口检查后才出现抑制标记时不得继续写管�
 test('关闭竞态：暂存写入期间出现抑制标记时撤销本次旧事件文件', async () => {
   const base = tempDir();
   const stagingDir = path.join(base, 'staging');
-  const suppressionPath = path.join(base, 'kimi-pet', 'pet.disabled');
+  const suppressionPath = path.join(base, 'kpet', 'pet.disabled');
   try {
     const result = await relayHostEvent(
       '{"hook_event_name":"UserPromptSubmit","session_id":"old-session"}',
@@ -219,8 +219,8 @@ test('关闭竞态：暂存写入期间出现抑制标记时撤销本次旧事�
 test('关闭竞态：普通旧事件持锁期间并发 SessionStart，旧事件丢弃且只暂存 SessionStart', async () => {
   const base = tempDir();
   const stagingDir = path.join(base, 'staging');
-  const suppressionPath = path.join(base, 'kimi-pet', 'pet.disabled');
-  const recoveryPath = path.join(base, 'kimi-pet', 'pet.recovering');
+  const suppressionPath = path.join(base, 'kpet', 'pet.disabled');
+  const recoveryPath = path.join(base, 'kpet', 'pet.recovering');
   const sessionStarts: Array<ReturnType<typeof relayHostEvent>> = [];
   try {
     const oldEvent = await relayHostEvent(
@@ -261,8 +261,8 @@ test('关闭竞态：普通旧事件持锁期间并发 SessionStart，旧事件�
 
 test('正常转发并发：30 条 relay 的管道操作不被恢复登记锁串行化', async () => {
   const base = tempDir();
-  const suppressionPath = path.join(base, 'kimi-pet', 'pet.disabled');
-  const recoveryPath = path.join(base, 'kimi-pet', 'pet.recovering');
+  const suppressionPath = path.join(base, 'kpet', 'pet.disabled');
+  const recoveryPath = path.join(base, 'kpet', 'pet.recovering');
   let activeProbes = 0;
   let maxActiveProbes = 0;
   try {
@@ -292,8 +292,8 @@ test('正常转发并发：30 条 relay 的管道操作不被恢复登记锁串�
 test('转发器：用户关闭抑制期丢弃非 SessionStart 事件且不写暂存，SessionStart 消费标记恢复', async () => {
   const base = tempDir();
   const stagingDir = path.join(base, 'staging');
-  const suppressionPath = path.join(base, 'kimi-pet', 'pet.disabled');
-  const lockPath = path.join(base, 'kimi-pet', 'daemon.lock');
+  const suppressionPath = path.join(base, 'kpet', 'pet.disabled');
+  const lockPath = path.join(base, 'kpet', 'daemon.lock');
   let probeCount = 0;
   let writeCount = 0;
   let recoveryScheduled = false;
@@ -333,7 +333,7 @@ test('转发器：用户关闭抑制期丢弃非 SessionStart 事件且不写暂
         stagingDir,
         suppressionPath,
         daemonLockPath: lockPath,
-        recoveryPath: path.join(base, 'kimi-pet', 'pet.recovering'),
+        recoveryPath: path.join(base, 'kpet', 'pet.recovering'),
         recoveryWaitMs: 1,
         probe: async () => {
           probeCount++;

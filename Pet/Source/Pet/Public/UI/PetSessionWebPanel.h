@@ -14,7 +14,7 @@ enum class EWebBrowserConsoleLogSeverity;
  * WebUI 会话面板。
  *
  * 用 SWebBrowser 加载 Content/UI/Web/session-panel.html，把会话面板的
- * 数据 API 镜像为 C++ -> JS 调用（window.KimiPetPanel.*），并持有
+ * 数据 API 镜像为 C++ -> JS 调用（window.KPetPanel.*），并持有
  * UPetSessionWebBridge 供 JS -> C++ 回调。全部方法必须在游戏线程调用。
  *
  * 该面板只负责 Web 内容与数据收发，不创建 SWindow；窗口由

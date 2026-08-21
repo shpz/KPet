@@ -1,6 +1,6 @@
 /**
  * 宠物位置持久化（§4.3 pet_moved：拖拽结束由渲染进程上报，守护进程统一写配置，避免多头写文件；
- * §6.4 本地缓存 <基目录>/KimiPet/pet-state.json，基目录按平台解析（见 §2.1.3），防抖 500ms 写入，进程退出前强制落盘）。
+ * §6.4 本地缓存 <基目录>/KPet/pet-state.json，基目录按平台解析（见 §2.1.3），防抖 500ms 写入，进程退出前强制落盘）。
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -30,9 +30,9 @@ export function resolvePetStateBaseDir(opts: PetStateBaseDirOptions = {}): strin
   return xdgDataHome.length > 0 ? xdgDataHome : path.join(opts.home ?? os.homedir(), '.local', 'share');
 }
 
-/** 位置缓存文件路径：<基目录>/KimiPet/pet-state.json（§6.4），基目录缺省按当前平台解析。 */
+/** 位置缓存文件路径：<基目录>/KPet/pet-state.json（§6.4），基目录缺省按当前平台解析。 */
 export function getPetStatePath(baseDir: string = resolvePetStateBaseDir()): string {
-  return baseDir.length > 0 ? path.join(baseDir, 'KimiPet', 'pet-state.json') : '';
+  return baseDir.length > 0 ? path.join(baseDir, 'KPet', 'pet-state.json') : '';
 }
 
 /** §6.4 定义的缓存文件格式。pet 字段（yaw/pitch）由渲染进程自行维护，守护进程只合并 window。 */

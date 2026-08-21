@@ -1,5 +1,5 @@
 /**
- * mock-daemon：控制管道（\\.\pipe\KimiPet.PET.<用户名>）上的模拟守护进程。
+ * mock-daemon：控制管道（\\.\pipe\KPet.PET.<用户名>）上的模拟守护进程。
  * 用于在真实守护进程缺位时联调渲染进程（UE 侧 Pet 工程）：
  * - 收 hello / heartbeat / open_tui / pet_moved / protocol_error 等并打印
  * - 收到 hello 回 hello，并下发三条会话演示数据及初始 pet_state:Idle
@@ -32,7 +32,7 @@ function getUserName(): string {
   return process.env.USERNAME ?? process.env.USER ?? PIPE_USER_FALLBACK;
 }
 
-const PIPE_NAME = `\\\\.\\pipe\\KimiPet.PET.${sanitizePipeUser(getUserName())}`;
+const PIPE_NAME = `\\\\.\\pipe\\KPet.PET.${sanitizePipeUser(getUserName())}`;
 const ts = (): string => new Date().toISOString();
 const verificationMode = process.argv.includes("--verification-mode");
 

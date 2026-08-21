@@ -1,5 +1,5 @@
 /**
- * 守护进程主体（kimi-petd）：把配置/状态机/两条管道/渲染进程守护/终端唤起/暂存回收组装在一起。
+ * 守护进程主体（kpetd）：把配置/状态机/两条管道/渲染进程守护/终端唤起/暂存回收组装在一起。
  *
  * 职责（§2.3）：建两条管道；事件汇总与状态推导；任务列表维护；事件缓存与补发（快照）；
  * 渲染进程启动/崩溃重启；收到 open_tui 打开终端；收尾退出（§4.5-6）。
@@ -83,7 +83,7 @@ export interface DaemonAppOptions {
   eventPipeName?: string;
   /** 控制管道全名，缺省按当前用户名推导（§4.1）。 */
   controlPipeName?: string;
-  /** 暂存目录，缺省 %TEMP%/kimi-pet-events/（§3.3）。 */
+  /** 暂存目录，缺省 %TEMP%/kpet-events/（§3.3）。 */
   stagingDir?: string;
   /** 渲染进程 spawn 注入（测试用）。 */
   rendererSpawn?: SpawnFn;
@@ -97,11 +97,11 @@ export interface DaemonAppOptions {
   sessionCatalog?: SessionCatalogReader;
   /** 渲染进程收到 shutdown 后的强制结束宽限（毫秒），缺省 3000。 */
   exitGraceMs?: number;
-  /** 用户关闭抑制标记路径，缺省 %TEMP%/kimi-pet/pet.disabled。 */
+  /** 用户关闭抑制标记路径，缺省 %TEMP%/kpet/pet.disabled。 */
   suppressionPath?: string;
-  /** 拉起锁路径，缺省 %TEMP%/kimi-pet/daemon.lock。 */
+  /** 拉起锁路径，缺省 %TEMP%/kpet/daemon.lock。 */
   daemonLockPath?: string;
-  /** 恢复中标记路径，缺省 %TEMP%/kimi-pet/pet.recovering。 */
+  /** 恢复中标记路径，缺省 %TEMP%/kpet/pet.recovering。 */
   recoveryPath?: string;
   /** 配置文件路径（update_config 持久化写回用），缺省 getConfigPath()。 */
   configPath?: string;
@@ -121,7 +121,7 @@ export class DaemonApp {
   private readonly suppressionPath: string;
   private readonly daemonLockPath: string;
   private readonly recoveryPath: string;
-  /** update_config 持久化写回的配置文件路径（缺省 KIMI_CODE_HOME/kimipet/config.json）。 */
+  /** update_config 持久化写回的配置文件路径（缺省 KIMI_CODE_HOME/kpet/config.json）。 */
   private readonly configPath: string;
   /** 启动时已进入恢复批次；该实例必须在锁内回放后才启动 renderer。 */
   private recoveryOwner = false;

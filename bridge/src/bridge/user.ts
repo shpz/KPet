@@ -1,5 +1,5 @@
 /**
- * 用户名与管道名（§4.1：事件管道为 Windows 命名管道 \\.\pipe\KimiPet.H2D.<用户名>，管道名不允许 \）。
+ * 用户名与管道名（§4.1：事件管道为 Windows 命名管道 \\.\pipe\KPet.H2D.<用户名>，管道名不允许 \）。
  */
 import * as os from 'node:os';
 
@@ -36,14 +36,14 @@ export function getUserName(): string {
   return process.env.USERNAME ?? process.env.USER ?? PIPE_USER_FALLBACK;
 }
 
-/** 事件管道全名（Windows 命名管道）：\\.\pipe\KimiPet.H2D.<用户名>（§4.1）。 */
+/** 事件管道全名（Windows 命名管道）：\\.\pipe\KPet.H2D.<用户名>（§4.1）。 */
 export function getEventPipeName(username?: string): string {
   const user = sanitizePipeUser(username ?? getUserName());
-  return `\\\\.\\pipe\\KimiPet.H2D.${user}`;
+  return `\\\\.\\pipe\\KPet.H2D.${user}`;
 }
 
-/** 控制管道全名（Windows 命名管道）：\\.\pipe\KimiPet.PET.<用户名>（§4.1，守护进程 ↔ 渲染进程双向）。 */
+/** 控制管道全名（Windows 命名管道）：\\.\pipe\KPet.PET.<用户名>（§4.1，守护进程 ↔ 渲染进程双向）。 */
 export function getControlPipeName(username?: string): string {
   const user = sanitizePipeUser(username ?? getUserName());
-  return `\\\\.\\pipe\\KimiPet.PET.${user}`;
+  return `\\\\.\\pipe\\KPet.PET.${user}`;
 }

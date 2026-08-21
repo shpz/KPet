@@ -95,8 +95,8 @@ test('backoffDelayMs：1s/2s/4s/8s 指数序列，之后封顶 8s（§4.5-4）',
 });
 
 test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数（Slate 方案 §5.1）', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const h = makeHarness({ rendererPath: exe });
@@ -115,8 +115,8 @@ test('渲染进程启动参数移除 RenderOffScreen 并使用安全窗口参数
 });
 
 test('冷启动拉起渲染进程（§4.5-1）；崩溃后按 1s/2s/4s 退避重启', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const h = makeHarness({ rendererPath: exe });
@@ -143,8 +143,8 @@ test('冷启动拉起渲染进程（§4.5-1）；崩溃后按 1s/2s/4s 退避重
 });
 
 test('60s 窗口内最多 5 次（restart_max_attempts），超限停手等宿主事件（§4.5-4）', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const h = makeHarness({ rendererPath: exe, maxAttempts: 5, windowS: 60 });
@@ -171,8 +171,8 @@ test('60s 窗口内最多 5 次（restart_max_attempts），超限停手等宿�
 });
 
 test('renderer_path 不存在：记日志不拉起、不退避刷屏，宿主事件后重试（MVP 联调兜底）', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe'); // 不存在
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe'); // 不存在
   try {
     const h = makeHarness({ rendererPath: exe });
     h.supervisor.start();
@@ -196,8 +196,8 @@ test('renderer_path 不存在：记日志不拉起、不退避刷屏，宿主事
 });
 
 test('onConnectionLost：管道断开但进程仍在 → 强制结束走 exit 路径统一重启', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const h = makeHarness({ rendererPath: exe });
@@ -213,8 +213,8 @@ test('onConnectionLost：管道断开但进程仍在 → 强制结束走 exit �
 });
 
 test('shutdown 后不再重启（守护进程退出流程）', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const h = makeHarness({ rendererPath: exe });
@@ -231,8 +231,8 @@ test('shutdown 后不再重启（守护进程退出流程）', async () => {
 });
 
 test('退避重启期间命中关闭标记：不再 spawn 且只通知一次', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     const children: FakeChild[] = [];
@@ -280,8 +280,8 @@ test('退避重启期间命中关闭标记：不再 spawn 且只通知一次', a
 });
 
 test('spawn 和 scheduleRestart 入口命中关闭标记时统一关闭', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     let spawnCount = 0;
@@ -324,8 +324,8 @@ test('spawn 和 scheduleRestart 入口命中关闭标记时统一关闭', () => 
 });
 
 test('spawn 调用期间写入关闭标记：立即结束刚拉起的 renderer', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     let suppressed = false;
@@ -356,8 +356,8 @@ test('spawn 调用期间写入关闭标记：立即结束刚拉起的 renderer',
 });
 
 test('spawn 抛异常（同步失败）→ 视为缺失等宿主事件，不崩溃', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-renderer-test-'));
-  const exe = path.join(dir, 'KimiPet.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-renderer-test-'));
+  const exe = path.join(dir, 'KPet.exe');
   fs.writeFileSync(exe, '');
   try {
     let clock = 1_000_000;

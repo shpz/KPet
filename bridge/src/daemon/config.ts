@@ -1,7 +1,7 @@
 /**
  * 守护进程配置（docs/MVP设计.md §7）。
  *
- * 读取 KIMI_CODE_HOME/kimipet/config.json（KIMI_CODE_HOME 未设时回退 ~/.kimi-code）；
+ * 读取 KIMI_CODE_HOME/kpet/config.json（KIMI_CODE_HOME 未设时回退 ~/.kimi-code）；
  * 文件不存在或字段缺失/类型非法时逐项回退默认值并给出告警（§4.4 字段级只增不改的配置侧同义）。
  *
  * 注意 §7 表格把 `session.staleMinutes` 写作带点键，读取时兼容「扁平带点键」与「嵌套对象」两种写法。
@@ -77,26 +77,26 @@ export function expandEnvVars(raw: string, env: NodeJS.ProcessEnv = process.env)
     .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => env[name] ?? '');
 }
 
-/** 守护进程配置目录：KIMI_CODE_HOME/kimipet（KIMI_CODE_HOME 未设回退 ~/.kimi-code）。 */
-export function getKimipetHome(env: NodeJS.ProcessEnv = process.env): string {
+/** 守护进程配置目录：KIMI_CODE_HOME/kpet（KIMI_CODE_HOME 未设回退 ~/.kimi-code）。 */
+export function getKPetHome(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.KIMI_CODE_HOME;
-  if (home && home.length > 0) return path.join(home, 'kimipet');
-  return path.join(os.homedir(), KIMI_CODE_DIR, 'kimipet');
+  if (home && home.length > 0) return path.join(home, 'kpet');
+  return path.join(os.homedir(), KIMI_CODE_DIR, 'kpet');
 }
 
-/** 配置文件路径：KIMI_CODE_HOME/kimipet/config.json。 */
+/** 配置文件路径：KIMI_CODE_HOME/kpet/config.json。 */
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getKimipetHome(env), 'config.json');
+  return path.join(getKPetHome(env), 'config.json');
 }
 
-/** 日志目录：KIMI_CODE_HOME/kimipet/logs。 */
+/** 日志目录：KIMI_CODE_HOME/kpet/logs。 */
 export function getLogDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getKimipetHome(env), 'logs');
+  return path.join(getKPetHome(env), 'logs');
 }
 
-/** 日志文件路径：KIMI_CODE_HOME/kimipet/logs/kimi-petd.log。 */
+/** 日志文件路径：KIMI_CODE_HOME/kpet/logs/kpetd.log。 */
 export function getLogFilePath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getLogDir(env), 'kimi-petd.log');
+  return path.join(getLogDir(env), 'kpetd.log');
 }
 
 /** 解析渲染进程路径：显式配置 > 默认（KIMI_PLUGIN_ROOT 优先，其次 cwd() 开发兜底）；默认产物名按平台选择。 */

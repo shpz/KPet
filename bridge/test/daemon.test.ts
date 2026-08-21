@@ -28,7 +28,7 @@ import {
 } from '../src/bridge/daemon.js';
 
 function tempLockPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-lock-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-lock-test-'));
   return path.join(dir, 'daemon.lock');
 }
 
@@ -94,7 +94,7 @@ test('worker 锁令牌：旧持有者不得续租或清理新持有者的锁', (
 });
 
 test('恢复 worker：异步 spawn 失败时释放锁并在同一 hook 内重试', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-recovery-spawn-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-recovery-spawn-test-'));
   const recoveryPath = path.join(base, 'pet.recovering');
   const workerLockPath = path.join(base, 'pet.recovering.worker.lock');
   let attempts = 0;
@@ -115,7 +115,7 @@ test('恢复 worker：异步 spawn 失败时释放锁并在同一 hook 内重试
       recoveryPath,
       lockPath: path.join(base, 'daemon.lock'),
       suppressionPath: path.join(base, 'pet.disabled'),
-      daemonPath: path.join(base, 'kimi-petd.exe'),
+      daemonPath: path.join(base, 'kpetd.exe'),
       workerLockPath,
       spawnFn,
     });
@@ -128,7 +128,7 @@ test('恢复 worker：异步 spawn 失败时释放锁并在同一 hook 内重试
 });
 
 test('daemon 拉起竞态：spawn 调用期间出现抑制标记时结束子进程并接住异步错误', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-daemon-spawn-race-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-daemon-spawn-race-test-'));
   const lockPath = path.join(base, 'daemon.lock');
   const suppressionPath = path.join(base, 'pet.disabled');
   let killed = false;
@@ -148,7 +148,7 @@ test('daemon 拉起竞态：spawn 调用期间出现抑制标记时结束子进�
 
   try {
     assert.equal(spawnDaemonIfNeeded({
-      daemonPath: path.join(base, 'kimi-petd.exe'),
+      daemonPath: path.join(base, 'kpetd.exe'),
       lockPath,
       suppressionPath,
       spawnFn,
@@ -164,7 +164,7 @@ test('daemon 拉起竞态：spawn 调用期间出现抑制标记时结束子进�
 });
 
 test('在途投递租约：正常释放后消失，崩溃残留超过 TTL 后自动回收', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-delivery-lease-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-delivery-lease-test-'));
   const recoveryPath = path.join(base, 'pet.recovering');
   try {
     const first = acquireDeliveryLease(recoveryPath);
@@ -185,8 +185,8 @@ test('在途投递租约：正常释放后消失，崩溃残留超过 TTL 后自
 });
 
 test('acquireDaemonLock：父目录不存在时自动创建', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-lock-test-'));
-  const lock = path.join(base, 'kimi-pet', 'daemon.lock'); // 父目录不存在
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-lock-test-'));
+  const lock = path.join(base, 'kpet', 'daemon.lock'); // 父目录不存在
   try {
     const release = acquireDaemonLock(lock);
     assert.ok(release, '父目录不存在也应能拿到锁（自动创建目录）');
@@ -198,39 +198,39 @@ test('acquireDaemonLock：父目录不存在时自动创建', () => {
 });
 
 test('resolveDaemonPath：优先 KIMI_PLUGIN_ROOT，缺省相对 cwd() 推导（§3.1，win32）', () => {
-  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' } as NodeJS.ProcessEnv;
-  assert.equal(resolveDaemonPath(env, 'win32'), path.join('C:\\plugins\\kimi-pet', 'bin', 'kimi-petd.exe'));
-  assert.equal(resolveDaemonPath({}, 'win32'), path.join(process.cwd(), 'bin', 'kimi-petd.exe'));
+  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' } as NodeJS.ProcessEnv;
+  assert.equal(resolveDaemonPath(env, 'win32'), path.join('C:\\plugins\\kpet', 'bin', 'kpetd.exe'));
+  assert.equal(resolveDaemonPath({}, 'win32'), path.join(process.cwd(), 'bin', 'kpetd.exe'));
 });
 
-test('resolveDaemonPath：非 win32 平台产物名为 kimi-petd', () => {
-  const env = { KIMI_PLUGIN_ROOT: '/opt/kimi-pet' } as NodeJS.ProcessEnv;
-  assert.equal(resolveDaemonPath(env, 'linux'), path.join('/opt/kimi-pet', 'bin', 'kimi-petd'));
-  assert.equal(resolveDaemonPath({}, 'linux'), path.join(process.cwd(), 'bin', 'kimi-petd'));
-  assert.equal(resolveDaemonPath(env, 'darwin'), path.join('/opt/kimi-pet', 'bin', 'kimi-petd'));
+test('resolveDaemonPath：非 win32 平台产物名为 kpetd', () => {
+  const env = { KIMI_PLUGIN_ROOT: '/opt/kpet' } as NodeJS.ProcessEnv;
+  assert.equal(resolveDaemonPath(env, 'linux'), path.join('/opt/kpet', 'bin', 'kpetd'));
+  assert.equal(resolveDaemonPath({}, 'linux'), path.join(process.cwd(), 'bin', 'kpetd'));
+  assert.equal(resolveDaemonPath(env, 'darwin'), path.join('/opt/kpet', 'bin', 'kpetd'));
 });
 
-test('getDaemonExeName：win32 返回 kimi-petd.exe，其余平台返回 kimi-petd', () => {
-  assert.equal(getDaemonExeName('win32'), 'kimi-petd.exe');
-  assert.equal(getDaemonExeName('linux'), 'kimi-petd');
-  assert.equal(getDaemonExeName('darwin'), 'kimi-petd');
+test('getDaemonExeName：win32 返回 kpetd.exe，其余平台返回 kpetd', () => {
+  assert.equal(getDaemonExeName('win32'), 'kpetd.exe');
+  assert.equal(getDaemonExeName('linux'), 'kpetd');
+  assert.equal(getDaemonExeName('darwin'), 'kpetd');
 });
 
 test('isStandaloneExecutable：win32 只认非 bun/node 的 .exe 自身', () => {
-  assert.equal(isStandaloneExecutable('C:\\plugins\\kimi-pet\\bin\\kimi-petd.exe', 'win32'), true);
+  assert.equal(isStandaloneExecutable('C:\\plugins\\kpet\\bin\\kpetd.exe', 'win32'), true);
   assert.equal(isStandaloneExecutable('C:\\tools\\node.exe', 'win32'), false, 'node 开发宿主不算产物自身');
   assert.equal(isStandaloneExecutable('C:\\tools\\bun.exe', 'win32'), false, 'bun 开发宿主不算产物自身');
-  assert.equal(isStandaloneExecutable('C:\\plugins\\kimi-pet\\bin\\kimi-petd', 'win32'), false, 'win32 下无 .exe 后缀不算产物自身');
+  assert.equal(isStandaloneExecutable('C:\\plugins\\kpet\\bin\\kpetd', 'win32'), false, 'win32 下无 .exe 后缀不算产物自身');
 });
 
 test('isStandaloneExecutable：非 win32 按 basename 排除 bun/node 宿主', () => {
-  assert.equal(isStandaloneExecutable('/opt/kimi-pet/bin/kimi-petd', 'linux'), true);
-  assert.equal(isStandaloneExecutable('kimi-petd', 'linux'), true, '裸文件名（argv[0] 无路径）也按 basename 判定');
+  assert.equal(isStandaloneExecutable('/opt/kpet/bin/kpetd', 'linux'), true);
+  assert.equal(isStandaloneExecutable('kpetd', 'linux'), true, '裸文件名（argv[0] 无路径）也按 basename 判定');
   assert.equal(isStandaloneExecutable('/usr/local/bin/node', 'linux'), false, 'node 开发宿主不算产物自身');
   assert.equal(isStandaloneExecutable('/usr/local/bin/bun', 'darwin'), false, 'bun 开发宿主不算产物自身');
   assert.equal(isStandaloneExecutable('/usr/bin/node.exe', 'linux'), false, '带 .exe 后缀的 node 宿主同样排除');
 });
 
-test('getDaemonLockPath 默认路径：系统临时目录（Windows 为 %TEMP%）/kimi-pet/daemon.lock（独立于事件暂存目录）', () => {
-  assert.equal(getDaemonLockPath('C:\\Temp'), path.join('C:\\Temp', 'kimi-pet', 'daemon.lock'));
+test('getDaemonLockPath 默认路径：系统临时目录（Windows 为 %TEMP%）/kpet/daemon.lock（独立于事件暂存目录）', () => {
+  assert.equal(getDaemonLockPath('C:\\Temp'), path.join('C:\\Temp', 'kpet', 'daemon.lock'));
 });

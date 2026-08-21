@@ -12,7 +12,7 @@ class FJsonObject;
 
 /**
  * 控制管道客户端（渲染进程侧，§4.1）：
- * - 客户端主动连入 \\.\pipe\KimiPet.PET.<用户名>（守护进程为服务端）；用户名过滤规则与 bridge/src/bridge/user.ts 一致
+ * - 客户端主动连入 \\.\pipe\KPet.PET.<用户名>（守护进程为服务端）；用户名过滤规则与 bridge/src/bridge/user.ts 一致
  * - 收发放在工作线程（FRunnable）：字节流按 \n 行分帧（全局约定：一条消息 = 一个 JSON 对象 + \n），
  *   完整行经 SPSC 队列转交游戏线程用引擎 Json 模块解析并分发
  * - 连接建立即发 hello；每 3 秒发 heartbeat（§4.3）；断线后每 5 秒重连，期间冻结当前状态、保持离线渲染（§4.5-5）

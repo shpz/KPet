@@ -11,7 +11,7 @@ import {
   defaultConfig,
   expandEnvVars,
   getConfigPath,
-  getKimipetHome,
+  getKPetHome,
   getLogFilePath,
   loadConfig,
   resolveRendererPath,
@@ -20,7 +20,7 @@ import {
 import type { UpdateConfigPayload } from '../src/protocol/types.js';
 
 function tempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-config-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-config-test-'));
 }
 
 function writeConfig(dir: string, obj: unknown): string {
@@ -30,8 +30,8 @@ function writeConfig(dir: string, obj: unknown): string {
 }
 
 test('默认配置：§7 全部键与默认值', () => {
-  const cfg = defaultConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' });
-  assert.equal(cfg.renderer_path, path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
+  const cfg = defaultConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' });
+  assert.equal(cfg.renderer_path, path.join('C:\\plugins\\kpet', 'renderer', 'Pet.exe'));
   assert.equal(cfg.heartbeat_interval_ms, 3000);
   assert.equal(cfg.heartbeat_timeout_ms, 10_000);
   assert.equal(cfg.restart_max_attempts, 5);
@@ -157,8 +157,8 @@ test('session.staleMinutes/session.cleanupMinutes：嵌套对象与扁平带点�
 test('renderer_path 类型非法时逐项回退默认路径并告警', () => {
   const dir = tempDir();
   const p = writeConfig(dir, { renderer_path: { path: 'Pet.exe' } });
-  const { config, warnings } = loadConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' }, p);
-  assert.equal(config.renderer_path, path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
+  const { config, warnings } = loadConfig({ KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' }, p);
+  assert.equal(config.renderer_path, path.join('C:\\plugins\\kpet', 'renderer', 'Pet.exe'));
   assert.ok(warnings.some((warning) => warning.includes('renderer_path')));
 });
 
@@ -169,25 +169,25 @@ test('heartbeat_timeout_ms 允许 0（关闭心跳检测）', () => {
 });
 
 test('renderer_path：%KIMI_PLUGIN_ROOT% 环境展开；KIMI_PLUGIN_ROOT 未设时回退 cwd', () => {
-  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' };
-  assert.equal(resolveRendererPath(undefined, env), path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'));
-  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kimi-pet\\renderer\\Pet.exe');
+  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' };
+  assert.equal(resolveRendererPath(undefined, env), path.join('C:\\plugins\\kpet', 'renderer', 'Pet.exe'));
+  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kpet\\renderer\\Pet.exe');
   const noRoot = resolveRendererPath(undefined, {});
   assert.equal(noRoot, path.join(process.cwd(), 'renderer', 'Pet.exe'));
 });
 
-test('getKimipetHome / getConfigPath / getLogFilePath：KIMI_CODE_HOME 优先，缺省 ~/.kimi-code', () => {
-  assert.equal(getKimipetHome({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kimipet'));
-  assert.equal(getConfigPath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kimipet', 'config.json'));
-  assert.equal(getLogFilePath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kimipet', 'logs', 'kimi-petd.log'));
-  assert.equal(getKimipetHome({}), path.join(os.homedir(), '.kimi-code', 'kimipet'));
+test('getKPetHome / getConfigPath / getLogFilePath：KIMI_CODE_HOME 优先，缺省 ~/.kimi-code', () => {
+  assert.equal(getKPetHome({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kpet'));
+  assert.equal(getConfigPath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kpet', 'config.json'));
+  assert.equal(getLogFilePath({ KIMI_CODE_HOME: 'C:\\kc' }), path.join('C:\\kc', 'kpet', 'logs', 'kpetd.log'));
+  assert.equal(getKPetHome({}), path.join(os.homedir(), '.kimi-code', 'kpet'));
 });
 
 test('expandEnvVars：同时支持 %VAR%、$VAR 与 ${VAR}，未定义变量替换为空串', () => {
-  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet', HOME: '/home/kimi' };
-  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kimi-pet\\renderer\\Pet.exe');
-  assert.equal(expandEnvVars('$KIMI_PLUGIN_ROOT/renderer/Pet', env), 'C:\\plugins\\kimi-pet/renderer/Pet');
-  assert.equal(expandEnvVars('${KIMI_PLUGIN_ROOT}/renderer/Pet', env), 'C:\\plugins\\kimi-pet/renderer/Pet');
+  const env = { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet', HOME: '/home/kimi' };
+  assert.equal(expandEnvVars('%KIMI_PLUGIN_ROOT%\\renderer\\Pet.exe', env), 'C:\\plugins\\kpet\\renderer\\Pet.exe');
+  assert.equal(expandEnvVars('$KIMI_PLUGIN_ROOT/renderer/Pet', env), 'C:\\plugins\\kpet/renderer/Pet');
+  assert.equal(expandEnvVars('${KIMI_PLUGIN_ROOT}/renderer/Pet', env), 'C:\\plugins\\kpet/renderer/Pet');
   assert.equal(expandEnvVars('$HOME/.kimi-code', env), '/home/kimi/.kimi-code');
   assert.equal(expandEnvVars('${HOME}/.kimi-code', env), '/home/kimi/.kimi-code');
   assert.equal(expandEnvVars('$HOME_SUFFIX', env), '', '$VAR 按完整变量名匹配，未定义替换为空串');
@@ -196,7 +196,7 @@ test('expandEnvVars：同时支持 %VAR%、$VAR 与 ${VAR}，未定义变量替�
   assert.equal(expandEnvVars('%UNDEFINED_VAR%\\x', env), '\\x', '未定义 %VAR% 替换为空串');
   assert.equal(
     expandEnvVars('$KIMI_PLUGIN_ROOT/${KIMI_PLUGIN_ROOT}/%KIMI_PLUGIN_ROOT%', env),
-    'C:\\plugins\\kimi-pet/C:\\plugins\\kimi-pet/C:\\plugins\\kimi-pet',
+    'C:\\plugins\\kpet/C:\\plugins\\kpet/C:\\plugins\\kpet',
     '三种语法可混用',
   );
 });
@@ -204,12 +204,12 @@ test('expandEnvVars：同时支持 %VAR%、$VAR 与 ${VAR}，未定义变量替�
 test('resolveRendererPath：默认路径按平台选择，显式配置不受影响', () => {
   // 显式配置：任何平台下都原样走环境变量展开，不涉及平台分支
   assert.equal(
-    resolveRendererPath('$KIMI_PLUGIN_ROOT/renderer/Pet.exe', { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
-    '/plugins/kimi-pet/renderer/Pet.exe',
+    resolveRendererPath('$KIMI_PLUGIN_ROOT/renderer/Pet.exe', { KIMI_PLUGIN_ROOT: '/plugins/kpet' }),
+    '/plugins/kpet/renderer/Pet.exe',
   );
   assert.equal(
-    resolveRendererPath('${KIMI_PLUGIN_ROOT}\\renderer\\Pet', { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
-    '/plugins/kimi-pet\\renderer\\Pet',
+    resolveRendererPath('${KIMI_PLUGIN_ROOT}\\renderer\\Pet', { KIMI_PLUGIN_ROOT: '/plugins/kpet' }),
+    '/plugins/kpet\\renderer\\Pet',
   );
 
   const original = process.platform;
@@ -217,16 +217,16 @@ test('resolveRendererPath：默认路径按平台选择，显式配置不受影�
     // win32：Pet.exe
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     assert.equal(
-      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kimi-pet' }),
-      path.join('C:\\plugins\\kimi-pet', 'renderer', 'Pet.exe'),
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: 'C:\\plugins\\kpet' }),
+      path.join('C:\\plugins\\kpet', 'renderer', 'Pet.exe'),
     );
     assert.equal(resolveRendererPath(undefined, {}), path.join(process.cwd(), 'renderer', 'Pet.exe'));
 
     // darwin：Pet.app/Contents/MacOS/Pet
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     assert.equal(
-      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
-      path.join('/plugins/kimi-pet', 'renderer', 'Pet.app', 'Contents', 'MacOS', 'Pet'),
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kpet' }),
+      path.join('/plugins/kpet', 'renderer', 'Pet.app', 'Contents', 'MacOS', 'Pet'),
     );
     assert.equal(
       resolveRendererPath(undefined, {}),
@@ -236,8 +236,8 @@ test('resolveRendererPath：默认路径按平台选择，显式配置不受影�
     // 其他平台：Pet
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
     assert.equal(
-      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kimi-pet' }),
-      path.join('/plugins/kimi-pet', 'renderer', 'Pet'),
+      resolveRendererPath(undefined, { KIMI_PLUGIN_ROOT: '/plugins/kpet' }),
+      path.join('/plugins/kpet', 'renderer', 'Pet'),
     );
     assert.equal(resolveRendererPath(undefined, {}), path.join(process.cwd(), 'renderer', 'Pet'));
   } finally {

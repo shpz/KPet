@@ -1,12 +1,12 @@
 #!/bin/sh
-# KimiPet 插件部署脚本（POSIX 通用入口，配套 deploy.ps1 为 Windows 原生入口）。
+# KPet 插件部署脚本（POSIX 通用入口，配套 deploy.ps1 为 Windows 原生入口）。
 #
 # 设计目标：在什么操作系统就按该平台准备安装源，然后交给 kimi 的 /plugins install：
 #   - WSL（形态一：CLI 在 WSL、守护进程/渲染端仍在 Windows）：
 #       把 kimi.plugin.wsl.json 就位为 kimi.plugin.json（覆盖前备份），自愈 relay 脚本可执行位；
 #   - Windows：默认 kimi.plugin.json 即 Windows 版，本脚本提示改用 deploy.ps1；
 #   - macOS：暂不支持（尚无 macOS 构建产物，见 docs/跨平台兼容方案-WSL与Mac.md 第 4/5 节，TODO）。
-#   - 其他 Linux：KimiPet 为 Windows/WSL 形态一产品，不支持直接部署。
+#   - 其他 Linux：KPet 为 Windows/WSL 形态一产品，不支持直接部署。
 #
 # 用法（在解压后的插件根目录内运行）：
 #   sh deploy.sh      # 或先 chmod +x deploy.sh 后 ./deploy.sh
@@ -20,7 +20,7 @@ PLUGIN_ROOT=$SCRIPT_DIR
 
 say() { printf '%s\n' "$*"; }
 
-say "== KimiPet 部署 =="
+say "== KPet 部署 =="
 
 # 平台检测 ---------------------------------------------------------------
 detect_platform() {
@@ -59,12 +59,12 @@ case "$(detect_platform)" in
         exit 0
         ;;
     macos)
-        say "检测到 macOS。KimiPet 目前只有 Windows 构建产物（bin/kimi-petd.exe、renderer/Pet.exe），"
+        say "检测到 macOS。KPet 目前只有 Windows 构建产物（bin/kpetd.exe、renderer/Pet.exe），"
         say "暂不支持 macOS 部署（见 docs/跨平台兼容方案-WSL与Mac.md 第 4/5 节）。"
         exit 1
         ;;
     linux)
-        say "检测到普通 Linux（非 WSL）。KimiPet 为 Windows/WSL 形态一产品，不支持直接部署。"
+        say "检测到普通 Linux（非 WSL）。KPet 为 Windows/WSL 形态一产品，不支持直接部署。"
         exit 1
         ;;
     wsl)
@@ -75,12 +75,12 @@ esac
 say "检测到 WSL（形态一：CLI 在 WSL、守护进程/渲染端在 Windows）。"
 
 # 1. 产物自检
-if [ ! -f "$PLUGIN_ROOT/bin/kimi-petd.exe" ]; then
-    say "错误: 未找到 bin/kimi-petd.exe，包不完整（WSL 形态一要求包内含 Windows 守护进程）。" >&2
+if [ ! -f "$PLUGIN_ROOT/bin/kpetd.exe" ]; then
+    say "错误: 未找到 bin/kpetd.exe，包不完整（WSL 形态一要求包内含 Windows 守护进程）。" >&2
     exit 1
 fi
-if [ ! -f "$PLUGIN_ROOT/bin/kimi-pet-relay.sh" ]; then
-    say "错误: 未找到 bin/kimi-pet-relay.sh，包不完整。" >&2
+if [ ! -f "$PLUGIN_ROOT/bin/kpet-relay.sh" ]; then
+    say "错误: 未找到 bin/kpet-relay.sh，包不完整。" >&2
     exit 1
 fi
 if [ ! -f "$PLUGIN_ROOT/renderer/Pet.exe" ]; then
@@ -89,7 +89,7 @@ if [ ! -f "$PLUGIN_ROOT/renderer/Pet.exe" ]; then
 fi
 
 # 2. 自愈 relay 脚本执行位（zip 解压 / 跨文件系统拷贝会丢 POSIX 权限位）
-chmod +x "$PLUGIN_ROOT/bin/kimi-pet-relay.sh" 2>/dev/null || true
+chmod +x "$PLUGIN_ROOT/bin/kpet-relay.sh" 2>/dev/null || true
 
 # 3. 就位 WSL 清单：kimi.plugin.wsl.json -> kimi.plugin.json（覆盖前备份原 Windows 版）
 if [ ! -f "$PLUGIN_ROOT/kimi.plugin.wsl.json" ]; then
@@ -112,7 +112,7 @@ else
 fi
 
 # 4. 停止旧版守护进程（就位新清单前先让旧版退出；非致命，失败仅告警后继续）
-if ! sh "$PLUGIN_ROOT/bin/kimi-pet-relay.sh" --stop; then
+if ! sh "$PLUGIN_ROOT/bin/kpet-relay.sh" --stop; then
     say "警告: 旧版守护进程未能停止，请先手动关闭宠物再执行 /plugins install" >&2
 fi
 
@@ -121,5 +121,5 @@ say ""
 say "安装: 在 WSL 的 kimi 会话里执行"
 say "  /plugins install $PLUGIN_ROOT"
 say "然后 /reload 或开新会话生效。"
-say "说明: hook 会执行 bin/kimi-pet-relay.sh，经 WSL interop 直启 Windows 侧 bin/kimi-petd.exe；"
+say "说明: hook 会执行 bin/kpet-relay.sh，经 WSL interop 直启 Windows 侧 bin/kpetd.exe；"
 say "      守护进程首次拉起 renderer/Pet.exe，宠物显示在 Windows 桌面。"

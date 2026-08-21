@@ -54,8 +54,8 @@ interface PanelSessionState {
 interface TestPanelApi {
   applySnapshot(items: Array<Record<string, unknown>>): void;
   setActive(sessionId: string, active: boolean): void;
-  __kimiPetTestSnapshot(): PanelSessionState[];
-  __kimiPetTestSelect(sessionId: string): void;
+  __kpetTestSnapshot(): PanelSessionState[];
+  __kpetTestSelect(sessionId: string): void;
 }
 
 function loadSessionPanelForTest(): TestPanelApi {
@@ -84,19 +84,19 @@ function loadSessionPanelForTest(): TestPanelApi {
   const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   if (!script) throw new Error('未找到会话面板脚本');
   vm.runInNewContext(
-    `${script}\nwindow.KimiPetPanel.__kimiPetTestSnapshot = () => Array.from(sessions.values()).map((item) => ({ ...item }));\nwindow.KimiPetPanel.__kimiPetTestSelect = (sessionId) => { const item = sessions.get(String(sessionId)); if (item) selectSession(item); };`,
+    `${script}\nwindow.KPetPanel.__kpetTestSnapshot = () => Array.from(sessions.values()).map((item) => ({ ...item }));\nwindow.KPetPanel.__kpetTestSelect = (sessionId) => { const item = sessions.get(String(sessionId)); if (item) selectSession(item); };`,
     sandbox,
     { filename: SESSION_PANEL_PATH },
   );
-  return sandbox['KimiPetPanel'] as TestPanelApi;
+  return sandbox['KPetPanel'] as TestPanelApi;
 }
 
 function panelStates(panel: TestPanelApi): PanelSessionState[] {
-  return Array.from(panel.__kimiPetTestSnapshot(), ({ sessionId, active, working, unread }) => ({ sessionId, active, working, unread }));
+  return Array.from(panel.__kpetTestSnapshot(), ({ sessionId, active, working, unread }) => ({ sessionId, active, working, unread }));
 }
 
 function writeFixture(records: Array<{ sessionId: string; title: string; cwd: string; updatedAt: number; archived?: boolean }>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-session-catalog-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-session-catalog-'));
   const lines: string[] = [];
   for (const record of records) {
     const dir = path.join(root, record.sessionId);
@@ -125,7 +125,7 @@ test('会话面板：点击与结束只影响目标会话，多会话工作态�
     { sessionId: 's2', title: '会话二', cwd: 'D:\\two', active: true, working: true, unread: true },
   ]);
 
-  panel.__kimiPetTestSelect('s1');
+  panel.__kpetTestSelect('s1');
   assert.deepEqual(panelStates(panel), [
     { sessionId: 's1', active: true, working: true, unread: false },
     { sessionId: 's2', active: true, working: true, unread: true },
@@ -162,7 +162,7 @@ test('readSessionCatalog：读取 state、过滤非法和归档、去重并按�
 });
 
 test('readSessionCatalog：坏行、缺少 state 和错误字段不会阻断其他记录', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-session-catalog-invalid-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-session-catalog-invalid-'));
   const goodDir = path.join(root, 'good');
   fs.mkdirSync(goodDir);
   fs.writeFileSync(path.join(goodDir, 'state.json'), JSON.stringify({ title: '正常', cwd: 'D:\\good', updatedAt: 10, archived: false }));
@@ -187,7 +187,7 @@ test('readSessionCatalog：坏行、缺少 state 和错误字段不会阻断其�
 });
 
 test('readSessionCatalog：兼容旧版 state 缺少 cwd/archived，使用索引 workDir 和未归档默认值', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-session-catalog-legacy-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-session-catalog-legacy-'));
   const dir = path.join(root, 'legacy');
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ title: '旧版', updatedAt: '2026-08-10T00:00:00.000Z' }));
@@ -226,7 +226,7 @@ test('readSessionCatalog：先按工作目录折叠，再限制 50 条', () => {
     ...Array.from({ length: repeatedCount }, (_, index) => ({
       sessionId: `same-workspace-${index}`,
       title: `重复会话${index}`,
-      cwd: index % 2 === 0 ? 'D:/Workspace/KimiPet' : 'd:\\workspace\\kimipet\\',
+      cwd: index % 2 === 0 ? 'D:/Workspace/KPet' : 'd:\\workspace\\kpet\\',
       updatedAt: 10_000 - index,
     })),
     { sessionId: 'older-other-workspace', title: '较早的其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 1 },
@@ -236,7 +236,7 @@ test('readSessionCatalog：先按工作目录折叠，再限制 50 条', () => {
     const result = readSessionCatalog({ indexPath });
     assert.deepEqual(result, [
       {
-        sessionId: 'same-workspace-0', title: '重复会话0', cwd: 'D:/Workspace/KimiPet', updatedAt: 10_000,
+        sessionId: 'same-workspace-0', title: '重复会话0', cwd: 'D:/Workspace/KPet', updatedAt: 10_000,
       },
       {
         sessionId: 'older-other-workspace', title: '较早的其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 1,
@@ -274,14 +274,14 @@ test('mergeSessionSnapshots：合并历史与活跃状态，保持 active/workin
 
 test('mergeSessionSnapshots：同一工程的历史会话只保留最近一条', () => {
   const history: SessionCatalogEntry[] = [
-    { sessionId: 'recent', title: '最近会话', cwd: 'D:/Workspace/KimiPet', updatedAt: 300 },
-    { sessionId: 'older', title: '旧会话', cwd: 'd:\\workspace\\kimipet\\', updatedAt: 200 },
+    { sessionId: 'recent', title: '最近会话', cwd: 'D:/Workspace/KPet', updatedAt: 300 },
+    { sessionId: 'older', title: '旧会话', cwd: 'd:\\workspace\\kpet\\', updatedAt: 200 },
     { sessionId: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 100 },
   ];
 
   assert.deepEqual(mergeSessionSnapshots(history, []), [
     {
-      session_id: 'recent', title: '最近会话', cwd: 'D:/Workspace/KimiPet', active: false,
+      session_id: 'recent', title: '最近会话', cwd: 'D:/Workspace/KPet', active: false,
       working: false, unread: false, updated_at: 300,
     },
     {
@@ -293,21 +293,21 @@ test('mergeSessionSnapshots：同一工程的历史会话只保留最近一条',
 
 test('mergeSessionSnapshots：活跃会话不折叠，并覆盖同工程历史副本', () => {
   const history: SessionCatalogEntry[] = [
-    { sessionId: 'history', title: '历史副本', cwd: 'D:\\Workspace\\KimiPet', updatedAt: 100 },
+    { sessionId: 'history', title: '历史副本', cwd: 'D:\\Workspace\\KPet', updatedAt: 100 },
     { sessionId: 'other', title: '其他工程', cwd: 'D:\\Workspace\\Other', updatedAt: 90 },
   ];
   const active = [
-    { sessionId: 'active-one', cwd: 'D:/Workspace/KimiPet', busy: true, unread: false },
-    { sessionId: 'active-two', cwd: 'd:\\workspace\\kimipet\\', busy: false, unread: true },
+    { sessionId: 'active-one', cwd: 'D:/Workspace/KPet', busy: true, unread: false },
+    { sessionId: 'active-two', cwd: 'd:\\workspace\\kpet\\', busy: false, unread: true },
   ];
 
   assert.deepEqual(mergeSessionSnapshots(history, active), [
     {
-      session_id: 'active-one', title: '', cwd: 'D:/Workspace/KimiPet', active: true,
+      session_id: 'active-one', title: '', cwd: 'D:/Workspace/KPet', active: true,
       working: true, unread: false, updated_at: 0,
     },
     {
-      session_id: 'active-two', title: '', cwd: 'd:\\workspace\\kimipet\\', active: true,
+      session_id: 'active-two', title: '', cwd: 'd:\\workspace\\kpet\\', active: true,
       working: false, unread: true, updated_at: 0,
     },
     {

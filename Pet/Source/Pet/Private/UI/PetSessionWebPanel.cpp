@@ -242,7 +242,7 @@ bool FPetSessionWebPanel::Create()
 
 	// LoadString 通过请求拦截把 HTML 注入 DummyURL 的响应。DummyURL 不能真实可达，
 	// 也不用 .local（mDNS 保留后缀，拦截失效时 Chromium 解析会长时间挂起）。
-	Browser->LoadString(Html, TEXT("http://kimipet/panel"));
+	Browser->LoadString(Html, TEXT("http://kpet/panel"));
 	return true;
 }
 
@@ -272,16 +272,16 @@ void FPetSessionWebPanel::PushFullStateToPage()
 	if (!LastTheme.IsEmpty())
 	{
 		ExecutePanelScript(FString::Printf(
-			TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setTheme(%s); }"),
+			TEXT("if (window.KPetPanel) { window.KPetPanel.setTheme(%s); }"),
 			*QuoteJsString(LastTheme)));
 	}
 	// FPS 开关无条件按当前值补发：只推 true 会把「隐藏期被关掉」的状态漏成持续上报。
 	ExecutePanelScript(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setFpsMonitor(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.setFpsMonitor(%s); }"),
 		bFpsMonitorEnabled ? TEXT("true") : TEXT("false")));
 	// CEF 软件纹理新建或从 WasHidden 恢复时可能只上传脏矩形；页面侧用两帧整页
 	// 透明度变化强制完整重绘，宿主预热期间仍保持整窗透明，不会闪烁。
-	ExecutePanelScript(TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.refreshSurface(); }"));
+	ExecutePanelScript(TEXT("if (window.KPetPanel) { window.KPetPanel.refreshSurface(); }"));
 }
 
 void FPetSessionWebPanel::TryPushPendingFullState()
@@ -326,7 +326,7 @@ void FPetSessionWebPanel::ReplaySnapshot()
 	if (Browser.IsValid())
 	{
 		ExecutePanelScript(FString::Printf(
-			TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.applySnapshot(%s); }"),
+			TEXT("if (window.KPetPanel) { window.KPetPanel.applySnapshot(%s); }"),
 			*SessionsToJsArray(Sessions)));
 	}
 }
@@ -364,7 +364,7 @@ void FPetSessionWebPanel::ApplySnapshot(const TArray<FPetSessionInfo>& InSession
 {
 	Sessions = InSessions;
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.applySnapshot(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.applySnapshot(%s); }"),
 		*SessionsToJsArray(InSessions)));
 }
 
@@ -379,7 +379,7 @@ void FPetSessionWebPanel::AddOrUpdateSession(const FPetSessionInfo& Session)
 		Sessions.Add(Session);
 	}
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.addOrUpdate(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.addOrUpdate(%s); }"),
 		*SessionToJsObject(Session)));
 }
 
@@ -407,7 +407,7 @@ void FPetSessionWebPanel::AddOrUpdateSession(
 		Sessions.Add(Session);
 	}
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.addOrUpdate(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.addOrUpdate(%s); }"),
 		*SessionToJsObject(Session)));
 }
 
@@ -419,7 +419,7 @@ void FPetSessionWebPanel::RemoveSession(const FString& SessionId)
 			return Session.SessionId == SessionId;
 		});
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.removeSession(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.removeSession(%s); }"),
 		*QuoteJsString(SessionId)));
 }
 
@@ -430,7 +430,7 @@ void FPetSessionWebPanel::SetSessionActive(const FString& SessionId, bool bActiv
 		Session->bActive = bActive;
 	}
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setActive(%s, %s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.setActive(%s, %s); }"),
 		*QuoteJsString(SessionId),
 		bActive ? TEXT("true") : TEXT("false")));
 }
@@ -443,7 +443,7 @@ void FPetSessionWebPanel::UpdateSessionState(const FString& SessionId, bool bWor
 		Session->bUnread = bUnread;
 	}
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.updateState(%s, {\"working\":%s,\"unread\":%s}); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.updateState(%s, {\"working\":%s,\"unread\":%s}); }"),
 		*QuoteJsString(SessionId),
 		bWorking ? TEXT("true") : TEXT("false"),
 		bUnread ? TEXT("true") : TEXT("false")));
@@ -458,7 +458,7 @@ void FPetSessionWebPanel::SetTheme(const FString& ThemeId)
 	LastTheme = ThemeId;
 	// 页面未就绪时下拉丢弃；加载完成后由 HandleLoadCompleted 按 LastTheme 重放。
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setTheme(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.setTheme(%s); }"),
 		*QuoteJsString(ThemeId)));
 }
 
@@ -466,7 +466,7 @@ void FPetSessionWebPanel::SetFpsMonitor(bool bEnabled)
 {
 	bFpsMonitorEnabled = bEnabled;
 	PublishChangesOnlyWhenReady(FString::Printf(
-		TEXT("if (window.KimiPetPanel) { window.KimiPetPanel.setFpsMonitor(%s); }"),
+		TEXT("if (window.KPetPanel) { window.KPetPanel.setFpsMonitor(%s); }"),
 		bEnabled ? TEXT("true") : TEXT("false")));
 }
 

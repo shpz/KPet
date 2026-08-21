@@ -1,5 +1,5 @@
 /**
- * KimiPet 整包打包脚本（仓库根）—— 打包是整个产品的事（bridge 单 exe + UE5 渲染进程），
+ * KPet 整包打包脚本（仓库根）—— 打包是整个产品的事（bridge 单 exe + UE5 渲染进程），
  * 本脚本是唯一打包入口：仓库根 package.json 的 package 脚本指向这里。
  *
  * 打包配置要点：
@@ -7,7 +7,7 @@
  *     -prereqs 随包暂存 vc_redist.x64.exe：bootstrap（根目录 Pet.exe）前置检查要求目标机器
  *     VC++ 运行库版本 ≥ 引擎构建工具集版本（5.8 为 14.50，高于公开下载渠道最新版），
  *     不满足时运行包内安装器自愈，缺失安装器则直接弹错退出；
- *   - bridge 为单 exe 双模式（launcher），不再产出 kimi-pet-bridge.exe；
+ *   - bridge 为单 exe 双模式（launcher），不再产出 kpet-bridge.exe；
  *   - 符号（*.pdb）不随包分发，renderer 组装后兜底删除；如需保留符号，可本地归档
  *     或后续接入 SymStore（本脚本不实现归档）。
  *
@@ -16,15 +16,15 @@
  *       [--skip-renderer]     # 完全跳过 UE 渲染进程（插件不含 renderer/）
  *       [--renderer <目录>]   # 用现成的 UE 打包产物，跳过 UE 构建（与 --skip-renderer 互斥）
  *       [--out <目录>]        # 输出父目录，默认 <仓库根>/dist-plugin
- *       [--zip]               # 额外用 PowerShell Compress-Archive 打 kimi-pet.zip
+ *       [--zip]               # 额外用 PowerShell Compress-Archive 打 kpet.zip
  *
  * 流程：
  *   A. bridge 子工程：npm --prefix bridge run build（tsc）→ bun build --compile --windows-hide-console
- *      （dist/launcher/main.js → bin/kimi-petd.exe）
+ *      （dist/launcher/main.js → bin/kpetd.exe）
  *   B. renderer：默认 RunUAT.bat BuildCookRun 打包 UE（Win64、Shipping；打包前 taskkill UnrealEditor.exe），
  *      完成后在 StagedBuilds 里定位游戏 exe 所在的整个目录（即 docs/MVP设计.md §3.2 的 renderer/ 本体）；
  *      --skip-renderer / --renderer 可跳过 UE 构建
- *   C. 组装 <out>/kimi-pet/{kimi.plugin.json, kimi.plugin.wsl.json, bin/, renderer/}；renderer 拷贝后兜底删除
+ *   C. 组装 <out>/kpet/{kimi.plugin.json, kimi.plugin.wsl.json, bin/, renderer/}；renderer 拷贝后兜底删除
  *      *.pdb、D3D12 两个 DLL、NVaftermath DLL（逐项打印日志）
  *   D. 可选 --zip
  *
@@ -43,17 +43,17 @@ const UE_PROJECT = join(ROOT, "Pet", "Pet.uproject");
 const UE_ENGINE = "C:\\Program Files\\Epic Games\\UE_5.8";
 const RUN_UAT = join(UE_ENGINE, "Engine", "Build", "BatchFiles", "RunUAT.bat");
 const ROOT_PKG = join(ROOT, "package.json");
-const MANIFEST = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.json");
-/** WSL 宿主清单：command 走 bin/kimi-pet-relay.sh（跨平台兼容方案 §5 P1-7，随包分发供 WSL 宿主改名使用）。 */
-const MANIFEST_WSL = join(BRIDGE, "packaging", "kimi-pet", "kimi.plugin.wsl.json");
+const MANIFEST = join(BRIDGE, "packaging", "kpet", "kimi.plugin.json");
+/** WSL 宿主清单：command 走 bin/kpet-relay.sh（跨平台兼容方案 §5 P1-7，随包分发供 WSL 宿主改名使用）。 */
+const MANIFEST_WSL = join(BRIDGE, "packaging", "kpet", "kimi.plugin.wsl.json");
 /** 跨平台部署脚本（随包分发，在目标平台上跑 deploy.sh / deploy.ps1 自动准备对应平台清单与安装指引）。 */
-const DEPLOY_SH = join(BRIDGE, "packaging", "kimi-pet", "deploy.sh");
-const DEPLOY_PS1 = join(BRIDGE, "packaging", "kimi-pet", "deploy.ps1");
-/** WSL relay 脚本：POSIX sh，WSL 内经 interop 直启 Windows 侧 kimi-petd.exe。 */
-const RELAY_SCRIPT = join(BRIDGE, "packaging", "kimi-pet", "bin", "kimi-pet-relay.sh");
+const DEPLOY_SH = join(BRIDGE, "packaging", "kpet", "deploy.sh");
+const DEPLOY_PS1 = join(BRIDGE, "packaging", "kpet", "deploy.ps1");
+/** WSL relay 脚本：POSIX sh，WSL 内经 interop 直启 Windows 侧 kpetd.exe。 */
+const RELAY_SCRIPT = join(BRIDGE, "packaging", "kpet", "bin", "kpet-relay.sh");
 const STAGE_ROOT = join(ROOT, "Pet", "Saved", "StagedBuilds");
-/** UE 渲染进程可执行名：工程目标名是 Pet（产物 Pet.exe）；设计文档 §3.2 写作 KimiPet.exe，两种都认。 */
-const GAME_EXE_NAMES = new Set(["pet.exe", "kimipet.exe"]);
+/** UE 渲染进程可执行名：工程目标名是 Pet（产物 Pet.exe）；设计文档 §3.2 写作 KPet.exe，两种都认。 */
+const GAME_EXE_NAMES = new Set(["pet.exe", "kpet.exe"]);
 /** D3D12 两个 DLL：当前为 SM5-only + 强制 DX11（方案 A），运行时均不加载但会被引擎无条件暂存，
  *  随包删除。注意：若未来回退 D3D12 RHI，D3D12Core.dll 必须保留，删除逻辑须同步移除。 */
 const D3D12_DLL_NAMES = new Set(["d3d12sdklayers.dll", "d3d12core.dll"]);
@@ -181,7 +181,7 @@ function buildRenderer(opts: Options): string | null {
     return null;
   }
   if (opts.renderer) {
-    if (opts.renderer === resolve(join(opts.out, "kimi-pet"))) {
+    if (opts.renderer === resolve(join(opts.out, "kpet"))) {
       throw new Error("--renderer 不能指向插件根目录本身，请指向其 renderer 子目录或外部 UE 产物目录");
     }
     if (!existsSync(opts.renderer)) throw new Error(`--renderer 目录不存在: ${opts.renderer}`);
@@ -256,14 +256,14 @@ function pruneRenderer(rendererDir: string): void {
   }
 }
 
-/** C. 组装 <out>/kimi-pet/。 */
+/** C. 组装 <out>/kpet/。 */
 function assemble(opts: Options, rendererDir: string | null): string {
-  const pluginDir = join(opts.out, "kimi-pet");
-  // 若 --renderer 源位于目标插件目录内部（复用 dist-plugin/kimi-pet/renderer 的常见场景），
+  const pluginDir = join(opts.out, "kpet");
+  // 若 --renderer 源位于目标插件目录内部（复用 dist-plugin/kpet/renderer 的常见场景），
   // 先整体复制到系统临时目录暂存，避免下面 rmSync(pluginDir) 把源目录一并删掉。
   let rendererSource = rendererDir;
   if (rendererDir && (rendererDir === pluginDir || rendererDir.startsWith(pluginDir + sep))) {
-    const stage = join(tmpdir(), `kimi-pet-renderer-stage-${process.pid}-${Date.now()}`);
+    const stage = join(tmpdir(), `kpet-renderer-stage-${process.pid}-${Date.now()}`);
     cpSync(rendererDir, stage, { recursive: true });
     rendererSource = stage;
     console.log(`[package] 组装: renderer 源位于目标插件目录内部，暂存到 ${stage}`);
@@ -283,10 +283,10 @@ function assemble(opts: Options, rendererDir: string | null): string {
   copyFileSync(DEPLOY_PS1, join(pluginDir, "deploy.ps1"));
   console.log(`[package] 组装: ${DEPLOY_PS1} -> ${join(pluginDir, "deploy.ps1")}`);
 
-  compileExe(join(BRIDGE, "dist", "launcher", "main.js"), join(pluginDir, "bin", "kimi-petd.exe"));
+  compileExe(join(BRIDGE, "dist", "launcher", "main.js"), join(pluginDir, "bin", "kpetd.exe"));
 
-  copyFileSync(RELAY_SCRIPT, join(pluginDir, "bin", "kimi-pet-relay.sh"));
-  console.log(`[package] 组装: ${RELAY_SCRIPT} -> ${join(pluginDir, "bin", "kimi-pet-relay.sh")}`);
+  copyFileSync(RELAY_SCRIPT, join(pluginDir, "bin", "kpet-relay.sh"));
+  console.log(`[package] 组装: ${RELAY_SCRIPT} -> ${join(pluginDir, "bin", "kpet-relay.sh")}`);
 
   if (rendererSource) {
     cpSync(rendererSource, join(pluginDir, "renderer"), { recursive: true });
@@ -304,8 +304,8 @@ function verifyAssembled(pluginDir: string, rendererDir: string | null): void {
     join(pluginDir, "kimi.plugin.wsl.json"),
     join(pluginDir, "deploy.sh"),
     join(pluginDir, "deploy.ps1"),
-    join(pluginDir, "bin", "kimi-pet-relay.sh"),
-    join(pluginDir, "bin", "kimi-petd.exe"),
+    join(pluginDir, "bin", "kpet-relay.sh"),
+    join(pluginDir, "bin", "kpetd.exe"),
   ];
   for (const p of required) {
     const name = p.slice(pluginDir.length + 1).replace(/\\/g, "/");
@@ -313,7 +313,7 @@ function verifyAssembled(pluginDir: string, rendererDir: string | null): void {
       throw new Error(`产物自检失败: ${name} 缺失或为空: ${p}`);
     }
   }
-  for (const p of [join(pluginDir, "deploy.sh"), join(pluginDir, "bin", "kimi-pet-relay.sh")]) {
+  for (const p of [join(pluginDir, "deploy.sh"), join(pluginDir, "bin", "kpet-relay.sh")]) {
     if (readFileSync(p).includes(0x0d)) {
       throw new Error(`产物自检失败: ${p} 含 CRLF 换行，部署/relay 脚本需以 LF 保存`);
     }
@@ -353,7 +353,7 @@ function verifyVersions(): void {
 
 /** D. 可选 zip（PowerShell Compress-Archive）。 */
 function makeZip(pluginDir: string, out: string): string {
-  const zipPath = join(out, "kimi-pet.zip");
+  const zipPath = join(out, "kpet.zip");
   rmSync(zipPath, { force: true });
   run(
     "powershell.exe",
@@ -383,8 +383,8 @@ function summarize(pluginDir: string, opts: Options, rendererDir: string | null)
   } else {
     console.log(`    renderer/  （未包含 — 重跑时去掉 --skip-renderer，或 --renderer <目录> 指定 UE 打包产物）`);
   }
-  if (opts.zip) console.log(`  ${join(opts.out, "kimi-pet.zip")}`);
-  console.log(`\n[package] 安装: 在 kimi 中执行 /plugins install ${join(opts.out, "kimi-pet")}`);
+  if (opts.zip) console.log(`  ${join(opts.out, "kpet.zip")}`);
+  console.log(`\n[package] 安装: 在 kimi 中执行 /plugins install ${join(opts.out, "kpet")}`);
 }
 
 function main(): void {

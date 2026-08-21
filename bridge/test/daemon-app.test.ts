@@ -36,14 +36,14 @@ const isWindows = process.platform === 'win32';
 const silentLogger = new Logger({ level: 'error', filePath: null });
 
 function uniquePipeName(prefix: string): string {
-  return `\\\\.\\pipe\\KimiPet.Test.${prefix}.${process.pid}.${randomUUID().slice(0, 8)}`;
+  return `\\\\.\\pipe\\KPet.Test.${prefix}.${process.pid}.${randomUUID().slice(0, 8)}`;
 }
 
 /** 测试配置：renderer_path 指向不存在的 exe（不拉起真渲染进程，验证缺失兜底）。 */
 function testConfig(overrides: Partial<DaemonConfig> = {}): DaemonConfig {
   return {
     ...defaultConfig({}),
-    renderer_path: path.join(os.tmpdir(), 'kimi-pet-test', 'KimiPet-nonexistent.exe'),
+    renderer_path: path.join(os.tmpdir(), 'kpet-test', 'KPet-nonexistent.exe'),
     log_level: 'error',
     ...overrides,
   };
@@ -178,7 +178,7 @@ async function startApp(
 ): Promise<TestApp> {
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
-  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-staging-test-'));
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-'));
   const exits: ShutdownReason[] = [];
   const app = new DaemonApp({
     config: testConfig(overrides),
@@ -507,7 +507,7 @@ test('退出倒计时取消（§4.5-6）：倒计时内新宿主事件到达 →
 });
 
 test('用户关闭协议：close_pet → shutdown(reason=user)，释放管道并持久化抑制标记', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-close-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-close-test-'));
   const suppressionPath = path.join(markerBase, 'pet.disabled');
   const lockPath = getDaemonLockPath(path.join(markerBase, 'tmp'));
   const t = await startApp({}, { suppressionPath, daemonLockPath: lockPath });
@@ -534,7 +534,7 @@ test('用户关闭协议：close_pet → shutdown(reason=user)，释放管道并
 });
 
 test('启动竞态：已有用户关闭标记时 daemon 立即退出并释放服务端管道', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-start-suppressed-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-start-suppressed-test-'));
   const suppressionPath = path.join(markerBase, 'pet.disabled');
   assert.equal(setPetSuppressed(suppressionPath), true);
   const t = await startApp({}, { suppressionPath, daemonLockPath: path.join(markerBase, 'daemon.lock') });
@@ -549,7 +549,7 @@ test('启动竞态：已有用户关闭标记时 daemon 立即退出并释放服
 });
 
 test('恢复启动竞态：构造后才消费抑制标记仍须取得恢复所有权并回放', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-late-recovery-owner-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-late-recovery-owner-test-'));
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
   const stagingDir = path.join(markerBase, 'staging');
@@ -598,7 +598,7 @@ test('恢复启动竞态：构造后才消费抑制标记仍须取得恢复所�
 });
 
 test('关闭恢复竞态：旧 daemon 延迟 close_pet 不得重写抑制标记或删除恢复期 SessionStart', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-delayed-close-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-delayed-close-test-'));
   const suppressionPath = path.join(markerBase, 'pet.disabled');
   const recoveryPath = getPetRecoveryPath(markerBase);
   const stagingDir = path.join(markerBase, 'staging');
@@ -656,7 +656,7 @@ test('心跳超时判死（§4.5-4）：停发心跳 → 连接被关闭', { ski
 test('暂存回收（§3.3）：启动前落暂存文件 → 启动后按字典序重放并删除', { skip: !isWindows }, async () => {
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
-  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-staging-test-'));
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-'));
   const exits: ShutdownReason[] = [];
   try {
     // 先落两个暂存文件（字典序 = 时间序）
@@ -692,7 +692,7 @@ test('暂存回收（§3.3）：启动前落暂存文件 → 启动后按字典�
 });
 
 test('恢复 daemon：交接锁内按序回放后才启动 renderer，随后新 close_pet 仍正常抑制', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-recovery-owner-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-recovery-owner-test-'));
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
   const stagingDir = path.join(markerBase, 'staging');
@@ -760,7 +760,7 @@ test('恢复 daemon：交接锁内按序回放后才启动 renderer，随后新 
 });
 
 test('恢复 daemon：下一批恢复建立后，延迟 close_pet 不得覆盖新批次', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-recovery-owner-delayed-close-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-recovery-owner-delayed-close-test-'));
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
   const stagingDir = path.join(markerBase, 'staging');
@@ -826,7 +826,7 @@ test('恢复 daemon：下一批恢复建立后，延迟 close_pet 不得覆盖�
 test('单实例（§4.1）：事件管道被占用 → 第二个实例抛 SingleInstanceError', { skip: !isWindows }, async () => {
   const eventPipe = uniquePipeName('H2D');
   const controlPipe = uniquePipeName('PET');
-  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-staging-test-'));
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-'));
   const app1 = new DaemonApp({
     config: testConfig(),
     logger: silentLogger,
@@ -842,7 +842,7 @@ test('单实例（§4.1）：事件管道被占用 → 第二个实例抛 Single
       logger: silentLogger,
       eventPipeName: eventPipe,
       controlPipeName: uniquePipeName('PET2'),
-      stagingDir: fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-staging-test-')),
+      stagingDir: fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-staging-test-')),
       exitGraceMs: 100,
     });
     await assert.rejects(app2.start(), SingleInstanceError);
@@ -853,7 +853,7 @@ test('单实例（§4.1）：事件管道被占用 → 第二个实例抛 Single
 });
 
 test('握手推送 config_snapshot：hello 快照收尾包含全量配置（设置 WebUI 初始化）', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-config-snapshot-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-config-snapshot-test-'));
   const configPath = path.join(markerBase, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ open_target: 'web' }), 'utf8');
   const t = await startApp({}, { configPath }); // 守护进程使用传入的测试配置，文件仅作持久化目标
@@ -875,8 +875,8 @@ test('握手推送 config_snapshot：hello 快照收尾包含全量配置（设�
 });
 
 test('update_config：应用合并、持久化写回（未知字段保留）、推送 config_snapshot、open_tui 读到新值', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-update-config-test-'));
-  const configPath = path.join(markerBase, 'kimipet', 'config.json');
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-update-config-test-'));
+  const configPath = path.join(markerBase, 'kpet', 'config.json');
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   // 预置文件带未知字段 brand + 旧已知配置，验证合并时只覆盖 patch 字段
   fs.writeFileSync(configPath, JSON.stringify({ brand: 'kimi', open_target: 'web', ui_theme: 'light-minimal' }), 'utf8');
@@ -934,7 +934,7 @@ test('update_config：应用合并、持久化写回（未知字段保留）、�
 });
 
 test('update_config 无合法字段：回 protocol_error、配置不变、不写文件、不推快照', { skip: !isWindows }, async () => {
-  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-update-config-bad-test-'));
+  const markerBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-update-config-bad-test-'));
   const configPath = path.join(markerBase, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ open_target: 'cli', custom: 'x' }), 'utf8');
   const t = await startApp({}, { configPath });

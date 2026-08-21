@@ -176,7 +176,7 @@ void APetCapturePawn::BeginPlay()
 	ENQUEUE_RENDER_COMMAND(CreatePetReadback)(
 		[this](FRHICommandListImmediate&)
 		{
-			Readback = new FRHIGPUTextureReadback(TEXT("KimiPetReadback"));
+			Readback = new FRHIGPUTextureReadback(TEXT("KPetReadback"));
 		});
 
 	MessageChannelComponent->OnPetState.AddUObject(this, &APetCapturePawn::HandlePetState);

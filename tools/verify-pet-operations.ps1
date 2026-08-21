@@ -345,7 +345,7 @@ function Test-RapidPanelReversal(
     Invoke-PetPanelToggle $PetWindow $HitPoint $DirectWindowInput
     Wait-WindowVisibility $PanelWindow $true
     Start-Sleep -Milliseconds 350
-    $persistentWindow = [PetVerifyWin32]::FindWindowByTitle('KimiPet 会话', $ProcessId, $false)
+    $persistentWindow = [PetVerifyWin32]::FindWindowByTitle('KPet 会话', $ProcessId, $false)
     if ($persistentWindow -ne $PanelWindow) {
         throw "快速反向过程中会话窗口被销毁并重建"
     }
@@ -399,7 +399,7 @@ function Test-PanelToggleStress(
     }
     Start-Sleep -Milliseconds 300
     $finalSnapshot = Get-ProcessResourceSnapshot $Process
-    $persistentWindow = [PetVerifyWin32]::FindWindowByTitle('KimiPet 会话', $ProcessId, $false)
+    $persistentWindow = [PetVerifyWin32]::FindWindowByTitle('KPet 会话', $ProcessId, $false)
     if ($persistentWindow -ne $PanelWindow) {
         throw "压力开关过程中会话窗口句柄发生变化"
     }
@@ -603,7 +603,7 @@ try {
             -WorkingDirectory $runtimeWorkingDirectory -WindowStyle Hidden -PassThru
     }
 
-    $petWindow = Wait-Window "KimiPetLayeredWindow" ([uint32]$editorProcess.Id) $StartupTimeoutSeconds
+    $petWindow = Wait-Window "KPetLayeredWindow" ([uint32]$editorProcess.Id) $StartupTimeoutSeconds
     if ($Packaged) {
         Start-Sleep -Milliseconds 300
         $unexpectedWindow = [PetVerifyWin32]::FindUnexpectedVisibleWindow([uint32]$editorProcess.Id, $petWindow)
@@ -632,12 +632,12 @@ try {
     if ($directWindowInput) { Invoke-WindowLeftClick $petWindow $hitPoint.X $hitPoint.Y }
     else { Invoke-LeftClick $hitPoint.X $hitPoint.Y }
     try {
-        $panelWindow = Wait-WindowByTitle "KimiPet 会话" ([uint32]$editorProcess.Id) 2
+        $panelWindow = Wait-WindowByTitle "KPet 会话" ([uint32]$editorProcess.Id) 2
     } catch {
         Write-Output "系统级鼠标注入未触发宠物单击，切换为窗口消息链重试"
         Invoke-WindowLeftClick $petWindow $hitPoint.X $hitPoint.Y
         $directWindowInput = $true
-        $panelWindow = Wait-WindowByTitle "KimiPet 会话" ([uint32]$editorProcess.Id) 5
+        $panelWindow = Wait-WindowByTitle "KPet 会话" ([uint32]$editorProcess.Id) 5
     }
     if ($directWindowInput) {
         Notify-WindowApplicationActivated $panelWindow

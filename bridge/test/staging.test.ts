@@ -1,5 +1,5 @@
 /**
- * 本地暂存写入单测（§3.3 兜底：%TEMP%/kimi-pet-events/，文件名时间戳+随机，可排序回收）。
+ * 本地暂存写入单测（§3.3 兜底：%TEMP%/kpet-events/，文件名时间戳+随机，可排序回收）。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -15,13 +15,13 @@ import {
 } from '../src/bridge/staging.js';
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-test-'));
 }
 
 test('writeStaging：目录不存在时自动创建并写入信封完整 JSON', () => {
   const dir = makeTempDir();
   try {
-    const target = path.join(dir, 'nested', 'kimi-pet-events');
+    const target = path.join(dir, 'nested', 'kpet-events');
     const env = createEnvelope('host_event', { _raw: '{"hook_event_name":"Stop"}' });
     const file = writeStaging(env, target, new Date('2026-07-30T10:00:00.123Z'));
     assert.ok(file, '应返回写入的文件路径');
@@ -113,6 +113,6 @@ test('writeStaging：目标路径不可用（已存在同名文件）时静默�
   }
 });
 
-test('getStagingDir：%TEMP%/kimi-pet-events/', () => {
-  assert.equal(getStagingDir('C:\\Temp'), path.join('C:\\Temp', 'kimi-pet-events'));
+test('getStagingDir：%TEMP%/kpet-events/', () => {
+  assert.equal(getStagingDir('C:\\Temp'), path.join('C:\\Temp', 'kpet-events'));
 });

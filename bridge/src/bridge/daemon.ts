@@ -1,8 +1,8 @@
 /**
  * 守护进程拉起（§3.3：管道不存在时以分离方式拉起守护进程，不等待就绪）。
  *
- * 单 exe 合并（阶段五 P1）：kimi-petd（Windows 为 kimi-petd.exe）同时承载转发器与守护进程，按首参数分发
- * （src/launcher/main.ts）；拉起守护进程时以 --daemon 分发，恢复 worker 以 --kimi-pet-recover 分发。
+ * 单 exe 合并（阶段五 P1）：kpetd（Windows 为 kpetd.exe）同时承载转发器与守护进程，按首参数分发
+ * （src/launcher/main.ts）；拉起守护进程时以 --daemon 分发，恢复 worker 以 --kpet-recover 分发。
  *
  * 防并发风暴：多个转发器同时发现管道不存在时，用独占锁文件保证只拉一次。
  * 锁文件不主动删除，靠 mtime 超过 TTL 视为陈旧 —— 持有锁的转发器（或守护进程）崩溃后，
@@ -16,10 +16,10 @@ import * as path from 'node:path';
 
 /**
  * 守护进程可执行文件名（单 exe 合并后仅用于开发模式兜底路径，见 resolveDaemonPath）。
- * win32 为 kimi-petd.exe，其余平台为 kimi-petd；platform 参数仅供测试注入，生产环境默认取 process.platform。
+ * win32 为 kpetd.exe，其余平台为 kpetd；platform 参数仅供测试注入，生产环境默认取 process.platform。
  */
 export function getDaemonExeName(platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32' ? 'kimi-petd.exe' : 'kimi-petd';
+  return platform === 'win32' ? 'kpetd.exe' : 'kpetd';
 }
 
 /** 锁文件 TTL（毫秒）：超过该时长视为陈旧锁，下一个转发器可接管。 */
@@ -36,7 +36,7 @@ export const PET_RECOVERY_FILE = 'pet.recovering';
 /** 恢复交接锁：串行化 Bridge 暂存、旧 daemon 退出和新 daemon 回放切换。 */
 export const PET_RECOVERY_GATE_FILE = 'pet.recovering.gate';
 /** 转发器 detached recovery worker 的命令行参数。 */
-export const DAEMON_RECOVERY_ARG = '--kimi-pet-recover';
+export const DAEMON_RECOVERY_ARG = '--kpet-recover';
 
 /**
  * 解析守护进程可执行文件路径。
@@ -44,7 +44,7 @@ export const DAEMON_RECOVERY_ARG = '--kimi-pet-recover';
  * 单 exe 合并后，守护进程与转发器同体：bun build --compile 产物下当前进程自身即守护进程，
  * 直接返回 argv[0]（跳过 bun/node 等开发运行时的宿主可执行文件）。
  * 开发模式（node/bun 直跑）保留原解析逻辑：
- * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/ 下的守护进程产物（Windows 为 kimi-petd.exe，其余平台 kimi-petd；宿主注入，§3.1）；
+ * 1. 优先环境变量 KIMI_PLUGIN_ROOT/bin/ 下的守护进程产物（Windows 为 kpetd.exe，其余平台 kpetd；宿主注入，§3.1）；
  * 2. 缺省相对推导：转发器由宿主钩子拉起、工作目录即插件根目录（§3.1），故取 cwd()/bin/ 下的守护进程产物（同上按平台取文件名）。
  *
  * platform 参数仅供测试注入；生产环境默认取 process.platform。
@@ -80,19 +80,19 @@ export function isStandaloneExecutable(
   return !/^(?:bun|node)(?:\.exe)?$/i.test(base);
 }
 
-/** 锁文件路径：系统临时目录/kimi-pet/daemon.lock（Windows 为 %TEMP%/kimi-pet/daemon.lock；独立于事件暂存目录，避免被暂存回收误删）。 */
+/** 锁文件路径：系统临时目录/kpet/daemon.lock（Windows 为 %TEMP%/kpet/daemon.lock；独立于事件暂存目录，避免被暂存回收误删）。 */
 export function getDaemonLockPath(tmpDir: string = os.tmpdir()): string {
-  return path.join(tmpDir, 'kimi-pet', 'daemon.lock');
+  return path.join(tmpDir, 'kpet', 'daemon.lock');
 }
 
 /** 用户关闭标记路径，与拉起锁同目录，避免与事件暂存混用。 */
 export function getPetSuppressionPath(tmpDir: string = os.tmpdir()): string {
-  return path.join(tmpDir, 'kimi-pet', PET_SUPPRESSION_FILE);
+  return path.join(tmpDir, 'kpet', PET_SUPPRESSION_FILE);
 }
 
 /** 恢复中标记路径；由下一次有效 SessionStart 建立，直到新 daemon 完成有序回放。 */
 export function getPetRecoveryPath(tmpDir: string = os.tmpdir()): string {
-  return path.join(tmpDir, 'kimi-pet', PET_RECOVERY_FILE);
+  return path.join(tmpDir, 'kpet', PET_RECOVERY_FILE);
 }
 
 /** 恢复交接锁路径；与恢复标记同目录，便于跨转发器和 worker 协调。 */
@@ -281,7 +281,7 @@ export interface ScheduleDaemonRecoveryOptions {
  * 安排 detached recovery worker。
  *
  * 转发器本身会在当前 hook 结束时退出，因此恢复等待不能依赖当前进程的定时器。
- * worker 复用同一个 kimi-petd 产物（Windows 为 kimi-petd.exe）的 --kimi-pet-recover 隐藏命令行入口（launcher 分发），
+ * worker 复用同一个 kpetd 产物（Windows 为 kpetd.exe）的 --kpet-recover 隐藏命令行入口（launcher 分发），
  * 独立等待事件管道释放。
  */
 export async function scheduleDaemonRecovery(opts: ScheduleDaemonRecoveryOptions): Promise<boolean> {

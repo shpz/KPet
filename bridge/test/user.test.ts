@@ -23,9 +23,9 @@ test('sanitizePipeUser：过滤后为空回退 default，保证管道名段非�
   assert.equal(sanitizePipeUser('\\'), '_', '单个反斜杠替换后非空则保留替换结果');
 });
 
-test('getEventPipeName：格式为 \\\\.\\pipe\\KimiPet.H2D.<用户名>（§4.1）', () => {
-  assert.equal(getEventPipeName('Luo_x'), '\\\\.\\pipe\\KimiPet.H2D.Luo_x');
-  assert.equal(getEventPipeName('DOMAIN\\Luo_x'), '\\\\.\\pipe\\KimiPet.H2D.DOMAIN_Luo_x');
+test('getEventPipeName：格式为 \\\\.\\pipe\\KPet.H2D.<用户名>（§4.1）', () => {
+  assert.equal(getEventPipeName('Luo_x'), '\\\\.\\pipe\\KPet.H2D.Luo_x');
+  assert.equal(getEventPipeName('DOMAIN\\Luo_x'), '\\\\.\\pipe\\KPet.H2D.DOMAIN_Luo_x');
 });
 
 test('getEventPipeName：不同用户名管道名不同（多用户隔离）', () => {

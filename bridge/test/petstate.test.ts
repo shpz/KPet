@@ -1,5 +1,5 @@
 /**
- * pet_moved 持久化测试（docs/MVP设计.md §6.4：<基目录>/KimiPet/pet-state.json，基目录按平台解析见 docs/跨平台兼容方案-WSL与Mac.md §2.1.3，防抖 500ms 写入）。
+ * pet_moved 持久化测试（docs/MVP设计.md §6.4：<基目录>/KPet/pet-state.json，基目录按平台解析见 docs/跨平台兼容方案-WSL与Mac.md §2.1.3，防抖 500ms 写入）。
  */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { getPetStatePath, resolvePetStateBaseDir, PetStateStore, type PetStateFile } from '../src/daemon/petstate.js';
 
 function tempFile(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-petstate-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-petstate-test-'));
   return path.join(dir, 'pet-state.json');
 }
 
@@ -87,8 +87,8 @@ test('非法坐标/类型 → 丢弃不写入（§4.3 pet_moved 字段防御）'
   }
 });
 
-test('getPetStatePath：显式基目录拼接 KimiPet/pet-state.json；空基目录返回空串（§6.4）', () => {
-  assert.equal(getPetStatePath('C:\\Users\\x\\AppData\\Roaming'), path.join('C:\\Users\\x\\AppData\\Roaming', 'KimiPet', 'pet-state.json'));
+test('getPetStatePath：显式基目录拼接 KPet/pet-state.json；空基目录返回空串（§6.4）', () => {
+  assert.equal(getPetStatePath('C:\\Users\\x\\AppData\\Roaming'), path.join('C:\\Users\\x\\AppData\\Roaming', 'KPet', 'pet-state.json'));
   assert.equal(getPetStatePath(''), '');
 });
 
@@ -112,10 +112,10 @@ test('resolvePetStateBaseDir：其余平台用 XDG_DATA_HOME，未设回退 ~/.l
 test('getPetStatePath 按平台基目录组合出最终路径（§2.1.3）', () => {
   assert.equal(
     getPetStatePath(resolvePetStateBaseDir({ platform: 'darwin', env: {}, home: '/Users/x' })),
-    path.join('/Users/x', 'Library', 'Application Support', 'KimiPet', 'pet-state.json'),
+    path.join('/Users/x', 'Library', 'Application Support', 'KPet', 'pet-state.json'),
   );
   assert.equal(
     getPetStatePath(resolvePetStateBaseDir({ platform: 'linux', env: {}, home: '/home/x' })),
-    path.join('/home/x', '.local', 'share', 'KimiPet', 'pet-state.json'),
+    path.join('/home/x', '.local', 'share', 'KPet', 'pet-state.json'),
   );
 });

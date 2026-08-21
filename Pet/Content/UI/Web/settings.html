@@ -454,7 +454,7 @@
 /* ================================================================
  * 设置页脚本（供 UE5 WebBrowser LoadString 加载）
  *
- * 对外契约：window.KimiPetSettings
+ * 对外契约：window.KPetSettings
  *   applySettings(s)   刷新控件状态并应用主题
  *                       s = { open_target:'cli'|'web',
  *                             open_web_url:string,
@@ -526,24 +526,24 @@ function callBridge(action, ...args) {
     const host = (typeof window !== 'undefined') ? window : undefined;
     const bridge = host && host.ue && host.ue.petsettings ? host.ue.petsettings : undefined;
     if (!bridge) {
-      console.warn('[KimiPetSettings] UE 桥（window.ue.petsettings）不存在，忽略动作：' + action + '，参数：', args);
+      console.warn('[KPetSettings] UE 桥（window.ue.petsettings）不存在，忽略动作：' + action + '，参数：', args);
       return;
     }
     const fn = findBridgeMethod(bridge, action);
     if (typeof fn === 'function') {
       fn.apply(bridge, args);
     } else {
-      console.warn('[KimiPetSettings] UE 桥未暴露方法：' + action);
+      console.warn('[KPetSettings] UE 桥未暴露方法：' + action);
     }
   } catch (err) {
-    console.warn('[KimiPetSettings] 调用 UE 桥失败：', err);
+    console.warn('[KPetSettings] 调用 UE 桥失败：', err);
   }
 }
 
 /* ---------- FPS 上报器 ---------- */
 /* 与 session-panel.html 是同一段轻量脚本（各页内联一份）：requestAnimationFrame 计数，
  * 每满 1 秒经本页桥上报一次整数 fps；页面加载后不自动启动，由 applySettings 控制。 */
-window.KimiPetFps = (function () {
+window.KPetFps = (function () {
   let running = false;
   let rafId = 0;
   let frames = 0;
@@ -606,12 +606,12 @@ function renderControls() {
 }
 
 /* ---------- 对外 API ---------- */
-window.KimiPetSettings = {
+window.KPetSettings = {
 
   /* C++ 推入设置：刷新控件状态并应用主题（幂等；各字段按类型校验，非法值忽略） */
   applySettings(s) {
     if (!s || typeof s !== 'object') {
-      console.warn('[KimiPetSettings] applySettings 期望对象入参，实际为：', s);
+      console.warn('[KPetSettings] applySettings 期望对象入参，实际为：', s);
       return;
     }
     // 重开面板时解除「×」按钮留下的本地隐藏（对齐会话面板 showPanel 的做法）
@@ -623,9 +623,9 @@ window.KimiPetSettings = {
       state.fpsMonitor = s.fps_monitor;
       // 帧率上报随设置启停：不自动启动，仅按 C++ 通知控制
       if (s.fps_monitor) {
-        window.KimiPetFps.start();
+        window.KPetFps.start();
       } else {
-        window.KimiPetFps.stop();
+        window.KPetFps.stop();
       }
     }
     renderControls();
@@ -664,9 +664,9 @@ themeButtons.forEach((btn) => {
 fpsSwitch.addEventListener('change', () => {
   state.fpsMonitor = fpsSwitch.checked;
   if (state.fpsMonitor) {
-    window.KimiPetFps.start();
+    window.KPetFps.start();
   } else {
-    window.KimiPetFps.stop();
+    window.KPetFps.stop();
   }
   callBridge('SetFpsMonitor', state.fpsMonitor);
 });

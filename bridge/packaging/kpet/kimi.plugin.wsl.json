@@ -1,0 +1,19 @@
+{
+  "name": "kpet",
+  "version": "0.2.0",
+  "description": "Desktop pet bridge for Kimi Code CLI",
+  "hooks": [
+    { "event": "SessionStart",        "matcher": "startup|resume",    "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "SessionEnd",          "matcher": "exit",              "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "UserPromptSubmit",                                    "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "PreToolUse",                                          "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "PostToolUse",                                         "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "PostToolUseFailure",                                  "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "Stop",                                                "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "StopFailure",                                         "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "Interrupt",                                           "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "SubagentStart",                                       "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "SubagentStop",                                        "command": "./bin/kpet-relay.sh --relay", "timeout": 5 },
+    { "event": "Notification",        "matcher": "task\\.completed",  "command": "./bin/kpet-relay.sh --relay", "timeout": 5 }
+  ]
+}

@@ -219,7 +219,7 @@ bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
 
 	SAssignNew(SessionWindow, SWindow)
 		.Type(EWindowType::Notification)
-		.Title(FText::FromString(TEXT("KimiPet 会话")))
+		.Title(FText::FromString(TEXT("KPet 会话")))
 		.IsPopupWindow(true)
 		.AutoCenter(EAutoCenter::None)
 		.IsTopmostWindow(true)

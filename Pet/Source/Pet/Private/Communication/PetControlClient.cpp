@@ -27,12 +27,12 @@ static const TCHAR* PetClientVersion = TEXT("0.1.0");
 namespace
 {
 	/**
-	 * 用户关闭标记与 bridge/src/bridge/daemon.ts 共用 %TEMP%/kimi-pet/pet.disabled。
+	 * 用户关闭标记与 bridge/src/bridge/daemon.ts 共用 %TEMP%/kpet/pet.disabled。
 	 * UE 在控制管道断开时也先落标记，确保当前会话后续钩子不会重新拉起宠物。
 	 */
 	bool WriteCloseSuppressionMarker()
 	{
-		const FString MarkerDirectory = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("kimi-pet"));
+		const FString MarkerDirectory = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("kpet"));
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 		if (!PlatformFile.CreateDirectoryTree(*MarkerDirectory))
 		{
@@ -781,7 +781,7 @@ FString FPetControlClient::BuildPipeName()
 	{
 		UserName = FPlatformMisc::GetEnvironmentVariable(TEXT("USER"));
 	}
-	return FString::Printf(TEXT("\\\\.\\pipe\\KimiPet.PET.%s"), *SanitizeUserName(UserName));
+	return FString::Printf(TEXT("\\\\.\\pipe\\KPet.PET.%s"), *SanitizeUserName(UserName));
 }
 
 FString FPetControlClient::SanitizeUserName(const FString& In)

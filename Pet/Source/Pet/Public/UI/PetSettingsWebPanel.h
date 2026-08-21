@@ -14,7 +14,7 @@ enum class EWebBrowserConsoleLogSeverity;
  * WebUI 设置面板。
  *
  * 用 SWebBrowser 加载 Content/UI/Web/settings.html，把设置快照镜像为
- * C++ -> JS 调用（window.KimiPetSettings.applySettings），并持有
+ * C++ -> JS 调用（window.KPetSettings.applySettings），并持有
  * UPetSettingsWebBridge 供 JS -> C++ 回调。全部方法必须在游戏线程调用。
  *
  * 与 FPetSessionWebPanel 对称：面板只负责 Web 内容与数据收发，不创建 SWindow；

@@ -1,5 +1,5 @@
 /**
- * 本地事件暂存（§3.3 兜底：管道写入失败时写系统临时目录下的 kimi-pet-events/，守护进程启动后回收）。
+ * 本地事件暂存（§3.3 兜底：管道写入失败时写系统临时目录下的 kpet-events/，守护进程启动后回收）。
  */
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -7,8 +7,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { MessageEnvelope } from '../protocol/index.js';
 
-/** 事件暂存目录名（相对系统临时目录），§3.3：系统临时目录/kimi-pet-events/。 */
-export const STAGING_DIR_NAME = 'kimi-pet-events';
+/** 事件暂存目录名（相对系统临时目录），§3.3：系统临时目录/kpet-events/。 */
+export const STAGING_DIR_NAME = 'kpet-events';
 
 /** 随机串截取长度（文件名后缀）。 */
 const RAND_SUFFIX_LEN = 8;
@@ -25,7 +25,7 @@ export function buildStagingFileName(ts: Date = new Date(), rand: string = rando
   return `${stamp}-${rand.slice(0, RAND_SUFFIX_LEN)}.json`;
 }
 
-/** 事件暂存目录路径：系统临时目录/kimi-pet-events/。 */
+/** 事件暂存目录路径：系统临时目录/kpet-events/。 */
 export function getStagingDir(tmpDir: string = os.tmpdir()): string {
   return path.join(tmpDir, STAGING_DIR_NAME);
 }

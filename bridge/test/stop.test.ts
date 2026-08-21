@@ -1,6 +1,6 @@
 /**
  * --stop 停止守护进程流程测试（bridge/stop.ts）。
- * 注入临时抑制标记路径（绝不触碰系统真实 %TEMP%/kimi-pet/pet.disabled）、可控 probe
+ * 注入临时抑制标记路径（绝不触碰系统真实 %TEMP%/kpet/pet.disabled）、可控 probe
  * 返回序列与假 sleep；不启动任何真实进程，也不做进程级实测。
  */
 import assert from 'node:assert/strict';
@@ -11,10 +11,10 @@ import { test } from 'node:test';
 import { setPetSuppressed } from '../src/bridge/daemon.js';
 import { stopDaemon } from '../src/bridge/stop.js';
 
-const TEST_PIPE = '\\\\.\\pipe\\KimiPet.H2D.stop-test';
+const TEST_PIPE = '\\\\.\\pipe\\KPet.H2D.stop-test';
 
 test('stopDaemon：无运行实例 —— 直接返回 not_running，不写不清标记', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-stop-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-stop-test-'));
   const suppressionPath = path.join(base, 'pet.disabled');
   let probeCalls = 0;
   let sleepCalls = 0;
@@ -40,7 +40,7 @@ test('stopDaemon：无运行实例 —— 直接返回 not_running，不写不�
 });
 
 test('stopDaemon：正常停止 —— 写标记触发优雅退出，管道释放后清除标记', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-stop-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-stop-test-'));
   const suppressionPath = path.join(base, 'pet.disabled');
   const probes = [true, true, false]; // 入口存在 → 轮询仍存在 → 释放
   let probeCalls = 0;
@@ -72,7 +72,7 @@ test('stopDaemon：正常停止 —— 写标记触发优雅退出，管道释�
 });
 
 test('stopDaemon：等待超时 —— 返回 timeout，本次写入的标记仍被清除', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-stop-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-stop-test-'));
   const suppressionPath = path.join(base, 'pet.disabled');
   let sleepCalls = 0;
   try {
@@ -95,7 +95,7 @@ test('stopDaemon：等待超时 —— 返回 timeout，本次写入的标记仍
 });
 
 test('stopDaemon：既有抑制标记（用户手动关闭）—— 不写不清，等待其自然停止', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-pet-stop-test-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kpet-stop-test-'));
   const suppressionPath = path.join(base, 'pet.disabled');
   assert.equal(setPetSuppressed(suppressionPath), true, '先模拟用户手动关闭留下的既有标记');
   const probes = [true, false]; // 入口存在 → 管道释放（守护进程经 housekeeping 自行退出）

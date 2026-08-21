@@ -189,7 +189,7 @@ bool FPetSettingsWebPanel::Create()
 		.OnConsoleMessage(FOnConsoleMessageDelegate::CreateRaw(this, &FPetSettingsWebPanel::HandleConsoleMessage));
 
 	// DummyURL 用独立路径避免与会话面板的请求拦截冲突；同样不能真实可达，也不用 .local。
-	Browser->LoadString(Html, TEXT("http://kimipet/settings"));
+	Browser->LoadString(Html, TEXT("http://kpet/settings"));
 	return true;
 }
 
@@ -242,11 +242,11 @@ void FPetSettingsWebPanel::ReplaySnapshot()
 	if (Browser.IsValid() && CachedSnapshot.IsValid())
 	{
 		ExecutePanelScript(FString::Printf(
-			TEXT("if (window.KimiPetSettings) { window.KimiPetSettings.applySettings(%s); }"),
+			TEXT("if (window.KPetSettings) { window.KPetSettings.applySettings(%s); }"),
 			*SettingsSnapshotToJsObject(*CachedSnapshot)));
 		// 恢复显示后强制两帧完整表面重绘，覆盖 CEF 软件纹理首次局部上传留下的
 		// 左上角杂色、透明区残留与黑底。
-		ExecutePanelScript(TEXT("if (window.KimiPetSettings) { window.KimiPetSettings.refreshSurface(); }"));
+		ExecutePanelScript(TEXT("if (window.KPetSettings) { window.KPetSettings.refreshSurface(); }"));
 	}
 }
 

@@ -3,7 +3,7 @@
 #include "Platform/PetPixelFont.h"
 #include "Pet.h"
 
-static const TCHAR* PetWindowClassName = TEXT("KimiPetLayeredWindow");
+static const TCHAR* PetWindowClassName = TEXT("KPetLayeredWindow");
 static constexpr UINT PetCameraWheelMessage = WM_APP + 51;
 static constexpr UINT PetCameraRotateMessage = WM_APP + 52;
 PetLayeredWindow* PetLayeredWindow::MouseHookOwner = nullptr;
@@ -43,7 +43,7 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 	}
 
 	const DWORD ExStyle = WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-	WindowHandle = CreateWindowEx(ExStyle, PetWindowClassName, TEXT("KimiPet"),
+	WindowHandle = CreateWindowEx(ExStyle, PetWindowClassName, TEXT("KPet"),
 		WS_POPUP, Pos.x, Pos.y, Size, Size, nullptr, nullptr, Instance, this);
 	if (!WindowHandle)
 	{
