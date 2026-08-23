@@ -65,7 +65,13 @@ protected:
 private:
 	bool ResolveRuntimeComponents();
 	void ApplyConfiguredCharacterAssets();
-	void OnFrameReady(TSharedRef<TArray<uint8>> Pixels);
+	void OnFrameReady(
+		TSharedRef<TArray<uint8>> Pixels,
+		int32 SourcePixelSize,
+		int32 SourceRowPitchPixels,
+		int32 SourceBufferHeight);
+	void RequestPetSurfaceResize(float DpiScale);
+	void ApplyPendingPetSurfaceResize();
 	void AdjustCameraRotation(float DeltaX, float DeltaY);
 	void AdjustCameraZoom(float WheelDelta);
 	void ApplyCameraCursorImage();
@@ -74,7 +80,7 @@ private:
 	void UpdateSessionPanelAnchor();
 	void UpdateSettingsPanelAnchor();
 	void ApplyPanelStackStep(const FPetPanelStackStep& Step);
-	FSlateRect ComputePetBoundsInSlateScreen() const;
+	FSlateRect ComputePetBoundsInScreenPixels() const;
 	void HandleSessionSelected(const FString& SessionId);
 	void HandleConfigSnapshot(const FPetSettingsSnapshot& Snapshot);
 	void HandleSetOpenTarget(const FString& Target);
@@ -146,6 +152,12 @@ private:
 
 	FRHIGPUTextureReadback* Readback = nullptr;
 	std::atomic<bool> bCopyInFlight{ false };
+	/** 仅由渲染线程访问：当前排队回读对应的正方形 RT 物理像素边长。 */
+	int32 ReadbackPixelSize = 0;
+	/** 当前 RT、DIB 与原生窗口统一使用的物理像素边长，BeginPlay 时按 DPI 覆盖。 */
+	int32 RenderTargetPixelSize = 0;
+	/** WM_DPICHANGED 回调写入，游戏线程 Tick 中统一应用。0 表示无请求。 */
+	int32 PendingPetSurfacePixelSize = 0;
 
 	TUniquePtr<PetLayeredWindow> PetWindow;
 	TUniquePtr<FPetSessionWindowHost> SessionWindowHost;
@@ -181,6 +193,9 @@ private:
 	bool bCloseRequested = false;
 	double CloseFallbackDeadline = 0.0;
 
-	static constexpr int32 RTSize = 320;
+	/** 96 DPI 基准下的桌宠窗口逻辑边长；实际物理尺寸按所在显示器 DPI 换算。 */
+	static constexpr int32 LogicalPetWindowSize = 320;
+	static constexpr int32 InitialWindowX = 150;
+	static constexpr int32 InitialWindowY = 150;
 	static constexpr double CloseFallbackSeconds = 3.0;
 };

@@ -86,13 +86,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 ### WSL（形态一）
 
-Kimi Code 运行在 WSL 内，守护进程、渲染进程与宠物窗口仍在 Windows。解压插件包后，在插件根目录内运行：
+「形态一」指：你在 WSL 里使用 Kimi Code CLI，但桌宠的守护进程、渲染进程和宠物窗口都运行在 Windows 桌面上。两端通过 WSL interop 打通，不需要在 WSL 里装任何图形环境。
 
-```sh
-sh deploy.sh
-```
+按以下步骤安装：
 
-脚本会自动就位 WSL 版插件清单并停止旧版守护进程。随后在 WSL 的 Kimi Code 会话里执行 `/plugins install <插件目录>`，`/reload` 或开新会话后生效。
+1. **准备插件包**。两种位置都可以，二选一：
+   - 在 Windows 侧解压（例如解压到 `C:\kpet`），WSL 里通过 `/mnt/c/kpet` 访问；
+   - 或把 `kpet.zip` 拷进 WSL 后用 `unzip` 解压到家目录等 WSL 本地路径。
+2. **运行部署脚本**。在 WSL 终端里进入插件根目录（即含 `deploy.sh` 的那一层），执行：
+
+   ```sh
+   sh deploy.sh
+   ```
+
+   脚本会依次完成：自检包完整性（`bin/kpetd.exe`、`renderer/Pet.exe` 等是否存在）、给 `bin/kpet-relay.sh` 补可执行位（zip 解压会丢失权限位）、把 WSL 版插件清单 `kimi.plugin.wsl.json` 就位为 `kimi.plugin.json`（原 Windows 版备份为 `kimi.plugin.json.bak`）、停止旧版守护进程。脚本幂等，可重复运行。
+3. **安装插件**。在 WSL 的 Kimi Code 会话里执行（路径用 WSL 内看到的路径）：
+
+   ```
+   /plugins install <插件目录>
+   ```
+
+   例如在 Windows 解压到 `C:\kpet`，则填 `/plugins install /mnt/c/kpet`。随后 `/reload` 或开新会话生效。
+
+生效后的运行链路：Kimi Code 的事件 hook 执行 WSL 侧的 `bin/kpet-relay.sh`，脚本经 WSL interop 直接启动 Windows 侧的 `bin/kpetd.exe` 守护进程；守护进程首次拉起 `renderer/Pet.exe`，宠物随即出现在 Windows 桌面。如果希望单击会话时唤起 WSL 终端，把配置项 `terminal` 设为 `wsl`（见「配置说明」）。
 
 ### 暂不支持
 
@@ -117,6 +133,6 @@ KPet 由 `bridge/`（TypeScript 转发器与守护进程）和 `Pet/`（UE 5.8 C
 
 ## 许可证与声明
 
-本项目原创代码与文档基于 [MIT License](LICENSE) 开源，Copyright (c) 2026 SHPZ。第三方组件与资产不自动包含在该许可内，其权利与许可归各自权利人所有。
+基于 [MIT](LICENSE) 发布。
 
-KPet 是社区项目，与 Kimi Code、Moonshot AI、Epic Games 或 Unreal Engine 官方不存在隶属或背书关系。相关名称和商标归各自权利人所有。
+K 仔（KPet）为社区开源项目，与所使用技术栈、大模型无隶属关系。

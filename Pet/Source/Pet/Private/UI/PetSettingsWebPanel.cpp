@@ -125,8 +125,10 @@ namespace PetSettingsPanelDetail
 	}
 } // namespace PetSettingsPanelDetail
 
-// 与匿名命名空间等效：本文件内不加前缀直接使用上述辅助函数。
-using namespace PetSettingsPanelDetail;
+// 不能再用 using namespace 把名字引入全局：unity build 下 PetSessionWebPanel.cpp 的
+// 匿名命名空间与本命名空间存在同名符号（EmbeddedFallbackHtml / DisableCefAcceleratedPaint /
+// VerifyBlitSwapChainForLayeredWindows 等），using 指令会让全局作用域同时可见两份同名符号，
+// 调用点产生 C2668/C2872 歧义。因此本文件内调用点一律显式加 PetSettingsPanelDetail:: 前缀。
 
 FPetSettingsWebPanel::FPetSettingsWebPanel()
 	: Bridge(NewObject<UPetSettingsWebBridge>(GetTransientPackage()))
@@ -151,8 +153,8 @@ bool FPetSettingsWebPanel::Create()
 		return true;
 	}
 
-	DisableCefAcceleratedPaint();
-	VerifyBlitSwapChainForLayeredWindows();
+	PetSettingsPanelDetail::DisableCefAcceleratedPaint();
+	PetSettingsPanelDetail::VerifyBlitSwapChainForLayeredWindows();
 
 	if (!IWebBrowserModule::Get().IsWebModuleAvailable())
 	{
@@ -165,7 +167,7 @@ bool FPetSettingsWebPanel::Create()
 	if (!FFileHelper::LoadFileToString(Html, *HtmlPath) || Html.IsEmpty())
 	{
 		UE_LOG(LogPet, Warning, TEXT("读取 Web 设置面板 HTML 失败（%s），改用内嵌中文兜底页"), *HtmlPath);
-		Html = EmbeddedFallbackHtml;
+		Html = PetSettingsPanelDetail::EmbeddedFallbackHtml;
 	}
 
 	SAssignNew(Browser, SWebBrowser)
@@ -243,7 +245,7 @@ void FPetSettingsWebPanel::ReplaySnapshot()
 	{
 		ExecutePanelScript(FString::Printf(
 			TEXT("if (window.KPetSettings) { window.KPetSettings.applySettings(%s); }"),
-			*SettingsSnapshotToJsObject(*CachedSnapshot)));
+			*PetSettingsPanelDetail::SettingsSnapshotToJsObject(*CachedSnapshot)));
 		// 恢复显示后强制两帧完整表面重绘，覆盖 CEF 软件纹理首次局部上传留下的
 		// 左上角杂色、透明区残留与黑底。
 		ExecutePanelScript(TEXT("if (window.KPetSettings) { window.KPetSettings.refreshSurface(); }"));

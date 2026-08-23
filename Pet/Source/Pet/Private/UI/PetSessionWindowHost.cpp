@@ -4,6 +4,7 @@
 
 #include "Framework/Application/SlateApplication.h"
 #include "GenericPlatform/GenericWindow.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Widgets/SNullWidget.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/SWindow.h"
@@ -17,6 +18,7 @@
 namespace
 {
 	constexpr float PositionEpsilon = 1.0f;
+	constexpr float PanelGapInSlateUnits = 10.0f;
 
 	float ClampProgress(float Progress)
 	{
@@ -242,7 +244,7 @@ bool FPetSessionWindowHost::Create(TSharedRef<SWidget> Content)
 	FSlateApplication::Get().AddWindow(SessionWindow.ToSharedRef(), false);
 	SessionWindow->SetOpacity(0.0f);
 	SessionWindow->HideWindow();
-	WindowSizeInSlateScreen = ReadWindowSizeInSlateScreen();
+	WindowSizeInScreenPixels = ReadWindowSizeInScreenPixels();
 	ApplyRoundedWindowRegion(true);
 
 	AnimationState = EPetSessionWindowAnimationState::Hidden;
@@ -430,19 +432,23 @@ void FPetSessionWindowHost::TickWindowAnimation(const float DeltaTime)
 	ApplyWindowTransform(false);
 }
 
-void FPetSessionWindowHost::UpdateAnchor(const FSlateRect& PetBoundsInSlateScreen)
+void FPetSessionWindowHost::UpdateAnchor(const FSlateRect& PetBoundsInScreenPixels)
 {
 	if (!IsGameThreadCall() || !SessionWindow.IsValid() || !FSlateApplication::IsInitialized())
 	{
 		return;
 	}
 
-	const FSlateRect WorkArea = FSlateApplication::Get().GetWorkArea(PetBoundsInSlateScreen);
-	WindowSizeInSlateScreen = ReadWindowSizeInSlateScreen();
+	WindowDpiScale = FMath::Max(UE_SMALL_NUMBER, FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(
+		PetBoundsInScreenPixels.Left,
+		PetBoundsInScreenPixels.Top));
+	const FSlateRect WorkArea = FSlateApplication::Get().GetWorkArea(PetBoundsInScreenPixels);
+	WindowSizeInScreenPixels = ReadWindowSizeInScreenPixels();
 	const FPetSessionWindowLayout Layout = PetSessionWindowHostLayout::Calculate(
-		PetBoundsInSlateScreen,
+		PetBoundsInScreenPixels,
 		WorkArea,
-		WindowSizeInSlateScreen);
+		WindowSizeInScreenPixels,
+		PanelGapInSlateUnits * WindowDpiScale);
 
 	TargetPosition = Layout.Position;
 	TargetWorkArea = Layout.WorkArea;
@@ -465,10 +471,12 @@ void FPetSessionWindowHost::ApplyWindowTransform(const bool bForceMove)
 
 	const float SlideDirection = bPanelOnLeft ? 1.0f : -1.0f;
 	const FVector2f UnclampedAnimatedPosition = bHasAnchor
-		? TargetPosition + FVector2f(SlideDirection * (1.0f - AnimationProgress) * SlideDistance, 0.0f)
+		? TargetPosition + FVector2f(
+			SlideDirection * (1.0f - AnimationProgress) * SlideDistance * WindowDpiScale,
+			0.0f)
 		: FVector2f::ZeroVector;
 	const FVector2f AnimatedPosition = bHasAnchor
-		? ClampWindowPosition(UnclampedAnimatedPosition, TargetWorkArea, WindowSizeInSlateScreen)
+		? ClampWindowPosition(UnclampedAnimatedPosition, TargetWorkArea, WindowSizeInScreenPixels)
 		: FVector2f::ZeroVector;
 
 	ApplyWindowOpacity(AnimationProgress);
@@ -583,7 +591,7 @@ void FPetSessionWindowHost::ApplyRoundedWindowRegion(const bool bForce)
 #endif
 }
 
-FVector2f FPetSessionWindowHost::ReadWindowSizeInSlateScreen() const
+FVector2f FPetSessionWindowHost::ReadWindowSizeInScreenPixels() const
 {
 	if (!SessionWindow.IsValid())
 	{

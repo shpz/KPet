@@ -20,6 +20,12 @@ namespace
 
 bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 {
+	if (InSize <= 0)
+	{
+		UE_LOG(LogPet, Error, TEXT("创建分层窗口时收到非法尺寸: %d"), InSize);
+		return false;
+	}
+
 	Size = InSize;
 	Pos.x = PosX;
 	Pos.y = PosY;
@@ -51,27 +57,11 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 		return false;
 	}
 
-	// 32bpp 顶向下 DIB，UpdateLayeredWindow 要求预乘 alpha
-	BITMAPINFO Bmi = {};
-	Bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	Bmi.bmiHeader.biWidth = Size;
-	Bmi.bmiHeader.biHeight = -Size;
-	Bmi.bmiHeader.biPlanes = 1;
-	Bmi.bmiHeader.biBitCount = 32;
-	Bmi.bmiHeader.biCompression = BI_RGB;
-
-	HDC ScreenDC = GetDC(nullptr);
-	DibSection = CreateDIBSection(ScreenDC, &Bmi, DIB_RGB_COLORS, &DibBits, nullptr, 0);
-	MemDC = CreateCompatibleDC(ScreenDC);
-	ReleaseDC(nullptr, ScreenDC);
-	if (!DibSection || !MemDC)
+	if (!ReplaceDibSurface(InSize))
 	{
-		UE_LOG(LogPet, Error, TEXT("CreateDIBSection/CreateCompatibleDC failed"));
 		Destroy();
 		return false;
 	}
-	SelectObject(MemDC, DibSection);
-	FMemory::Memzero(DibBits, Size * Size * 4);
 
 	ShowWindow(WindowHandle, SW_SHOWNOACTIVATE);
 	// 立即上一帧全透明画面（DibBits 已清零）：否则首个有效 capture 帧上屏之前，
@@ -99,6 +89,122 @@ bool PetLayeredWindow::Create(int32 InSize, int32 PosX, int32 PosY)
 		UE_LOG(LogPet, Warning, TEXT("安装 Ctrl+, 键盘监听失败: %u，设置面板快捷键不可用"), GetLastError());
 	}
 	UE_LOG(LogPet, Log, TEXT("Layered window created: %dx%d at (%d,%d)"), Size, Size, Pos.x, Pos.y);
+	return true;
+}
+
+bool PetLayeredWindow::ReplaceDibSurface(int32 InSize)
+{
+	if (InSize <= 0)
+	{
+		return false;
+	}
+
+	// 32bpp 顶向下 DIB，UpdateLayeredWindow 要求预乘 alpha。先完整创建新表面，
+	// 成功后再替换旧表面，避免 DPI 切换时因临时资源失败破坏仍可显示的窗口。
+	BITMAPINFO Bmi = {};
+	Bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	Bmi.bmiHeader.biWidth = InSize;
+	Bmi.bmiHeader.biHeight = -InSize;
+	Bmi.bmiHeader.biPlanes = 1;
+	Bmi.bmiHeader.biBitCount = 32;
+	Bmi.bmiHeader.biCompression = BI_RGB;
+
+	void* NewDibBits = nullptr;
+	HDC ScreenDC = GetDC(nullptr);
+	HBITMAP NewDibSection = CreateDIBSection(ScreenDC, &Bmi, DIB_RGB_COLORS, &NewDibBits, nullptr, 0);
+	HDC NewMemDC = CreateCompatibleDC(ScreenDC);
+	ReleaseDC(nullptr, ScreenDC);
+	if (!NewDibSection || !NewMemDC || !NewDibBits)
+	{
+		if (NewMemDC)
+		{
+			DeleteDC(NewMemDC);
+		}
+		if (NewDibSection)
+		{
+			DeleteObject(NewDibSection);
+		}
+		UE_LOG(LogPet, Error, TEXT("创建 %dx%d 分层窗口 DIB 失败: %u"), InSize, InSize, GetLastError());
+		return false;
+	}
+
+	const HGDIOBJ PreviousObject = SelectObject(NewMemDC, NewDibSection);
+	if (!PreviousObject || PreviousObject == HGDI_ERROR)
+	{
+		DeleteDC(NewMemDC);
+		DeleteObject(NewDibSection);
+		UE_LOG(LogPet, Error, TEXT("选择 %dx%d 分层窗口 DIB 失败: %u"), InSize, InSize, GetLastError());
+		return false;
+	}
+
+	FMemory::Memzero(NewDibBits, static_cast<SIZE_T>(InSize) * InSize * 4);
+
+	HDC OldMemDC = MemDC;
+	HBITMAP OldDibSection = DibSection;
+	MemDC = NewMemDC;
+	DibSection = NewDibSection;
+	DibBits = NewDibBits;
+	Size = InSize;
+
+	if (OldMemDC)
+	{
+		DeleteDC(OldMemDC);
+	}
+	if (OldDibSection)
+	{
+		DeleteObject(OldDibSection);
+	}
+	return true;
+}
+
+bool PetLayeredWindow::Resize(int32 InSize)
+{
+	if (!WindowHandle || InSize <= 0)
+	{
+		return false;
+	}
+	if (InSize == Size)
+	{
+		bHasSuggestedDpiPosition = false;
+		return true;
+	}
+
+	const int32 OldSize = Size;
+	POINT NewPosition = Pos;
+	POINT NewGrabOffset = DragGrabOffset;
+	POINT Cursor = {};
+	const bool bKeepDragAnchor = bDragging && GetCursorPos(&Cursor);
+	if (bKeepDragAnchor)
+	{
+		const float SizeRatio = static_cast<float>(InSize) / static_cast<float>(OldSize);
+		NewGrabOffset.x = FMath::RoundToInt(DragGrabOffset.x * SizeRatio);
+		NewGrabOffset.y = FMath::RoundToInt(DragGrabOffset.y * SizeRatio);
+		NewPosition.x = Cursor.x - NewGrabOffset.x;
+		NewPosition.y = Cursor.y - NewGrabOffset.y;
+	}
+	else if (bHasSuggestedDpiPosition)
+	{
+		NewPosition = SuggestedDpiPosition;
+	}
+
+	if (!ReplaceDibSurface(InSize))
+	{
+		return false;
+	}
+
+	Pos = NewPosition;
+	if (bKeepDragAnchor)
+	{
+		DragGrabOffset = NewGrabOffset;
+		DragAnchorCursor = Cursor;
+	}
+	bHasSuggestedDpiPosition = false;
+	SetWindowPos(WindowHandle, nullptr, Pos.x, Pos.y, Size, Size,
+		SWP_NOZORDER | SWP_NOACTIVATE);
+	// 新 DIB 已清成全透明；先用透明帧更新窗口尺寸，等待同尺寸 RT 的首帧到达。
+	UpdateOnScreen();
+	UE_LOG(LogPet, Log, TEXT("桌宠窗口随 DPI 调整: %dx%d -> %dx%d，位置=(%d,%d)"),
+		OldSize, OldSize, Size, Size, Pos.x, Pos.y);
 	return true;
 }
 
@@ -139,6 +245,8 @@ void PetLayeredWindow::Destroy()
 	}
 	if (MemDC) { DeleteDC(MemDC); MemDC = nullptr; }
 	if (DibSection) { DeleteObject(DibSection); DibSection = nullptr; DibBits = nullptr; }
+	Size = 0;
+	bHasSuggestedDpiPosition = false;
 }
 
 void PetLayeredWindow::Tick(float)
@@ -199,9 +307,9 @@ void PetLayeredWindow::DrawFpsOverlay()
 		FpsOverlayText);
 }
 
-void PetLayeredWindow::Present(const uint8* SrcBGRA)
+void PetLayeredWindow::Present(const uint8* SrcBGRA, int32 SourceSize, int32 SourceRowPitchPixels)
 {
-	if (!WindowHandle || !DibBits)
+	if (!WindowHandle || !DibBits || !SrcBGRA || SourceSize != Size || SourceRowPitchPixels < SourceSize)
 	{
 		return;
 	}
@@ -219,32 +327,37 @@ void PetLayeredWindow::Present(const uint8* SrcBGRA)
 	uint8* Dst = static_cast<uint8*>(DibBits);
 	int32 AlphaZero = 0, AlphaFull = 0, AlphaMid = 0;
 	uint8 MaxRgbAmongTransparent = 0;
-	for (int32 i = 0; i < NumPixels; ++i)
+	for (int32 Y = 0; Y < Size; ++Y)
 	{
-		const uint8 B = SrcBGRA[i * 4 + 0];
-		const uint8 G = SrcBGRA[i * 4 + 1];
-		const uint8 R = SrcBGRA[i * 4 + 2];
-		const uint8 A = (uint8)(255 - SrcBGRA[i * 4 + 3]); // 反转 -> 真实不透明度
-
-		if (A == 0)
+		const uint8* SrcRow = SrcBGRA + static_cast<SIZE_T>(Y) * SourceRowPitchPixels * 4;
+		uint8* DstRow = Dst + static_cast<SIZE_T>(Y) * Size * 4;
+		for (int32 X = 0; X < Size; ++X)
 		{
-			++AlphaZero;
-			MaxRgbAmongTransparent = FMath::Max3(MaxRgbAmongTransparent, R, FMath::Max(G, B));
-			// 全透明像素强制 RGB=0（见上方注释），避免被 ULW 加性混合到桌面
-			Dst[i * 4 + 0] = 0;
-			Dst[i * 4 + 1] = 0;
-			Dst[i * 4 + 2] = 0;
-			Dst[i * 4 + 3] = 0;
-			continue;
+			const uint8 B = SrcRow[X * 4 + 0];
+			const uint8 G = SrcRow[X * 4 + 1];
+			const uint8 R = SrcRow[X * 4 + 2];
+			const uint8 A = static_cast<uint8>(255 - SrcRow[X * 4 + 3]); // 反转 -> 真实不透明度
+
+			if (A == 0)
+			{
+				++AlphaZero;
+				MaxRgbAmongTransparent = FMath::Max3(MaxRgbAmongTransparent, R, FMath::Max(G, B));
+				// 全透明像素强制 RGB=0（见上方注释），避免被 ULW 加性混合到桌面
+				DstRow[X * 4 + 0] = 0;
+				DstRow[X * 4 + 1] = 0;
+				DstRow[X * 4 + 2] = 0;
+				DstRow[X * 4 + 3] = 0;
+				continue;
+			}
+
+			DstRow[X * 4 + 0] = B;
+			DstRow[X * 4 + 1] = G;
+			DstRow[X * 4 + 2] = R;
+			DstRow[X * 4 + 3] = A;
+
+			if (A == 255) { ++AlphaFull; }
+			else { ++AlphaMid; }
 		}
-
-		Dst[i * 4 + 0] = B;
-		Dst[i * 4 + 1] = G;
-		Dst[i * 4 + 2] = R;
-		Dst[i * 4 + 3] = A;
-
-		if (A == 255) { ++AlphaFull; }
-		else { ++AlphaMid; }
 	}
 
 	if (FrameCounter % 60 == 1)
@@ -523,10 +636,36 @@ LRESULT PetLayeredWindow::HandleMessage(UINT Msg, WPARAM WParam, LPARAM LParam)
 		}
 		return DefWindowProc(WindowHandle, Msg, WParam, LParam);
 	}
+	case WM_DPICHANGED:
+	{
+		const uint32 NewDpi = HIWORD(WParam);
+		if (const RECT* SuggestedRect = reinterpret_cast<const RECT*>(LParam))
+		{
+			SuggestedDpiPosition.x = SuggestedRect->left;
+			SuggestedDpiPosition.y = SuggestedRect->top;
+			bHasSuggestedDpiPosition = true;
+		}
+		if (NewDpi > 0 && OnDpiScaleChanged)
+		{
+			OnDpiScaleChanged(static_cast<float>(NewDpi) / 96.0f);
+		}
+		return 0;
+	}
 	case WM_DISPLAYCHANGE:
+	{
+		// 分辨率或缩放配置整体变化后主动复核当前窗口 DPI；部分显卡驱动只发送
+		// WM_DISPLAYCHANGE，不保证额外发送 WM_DPICHANGED。
+		const uint32 WindowDpi = GetDpiForWindow(WindowHandle);
+		if (WindowDpi > 0 && OnDpiScaleChanged)
+		{
+			OnDpiScaleChanged(static_cast<float>(WindowDpi) / 96.0f);
+		}
+		UpdateOnScreen();
+		return 0;
+	}
 	case WM_DWMCOMPOSITIONCHANGED:
 	{
-		// 桌面合成器/DPI 变化后重贴最后一帧
+		// 桌面合成器变化后重贴最后一帧
 		UpdateOnScreen();
 		return 0;
 	}

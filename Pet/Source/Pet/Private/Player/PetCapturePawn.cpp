@@ -5,6 +5,7 @@
 #include "Communication/PetMessageChannelComponent.h"
 #include "Platform/CameraCursorImageData.h"
 #include "Platform/PetLayeredWindow.h"
+#include "Platform/PetWindowDpi.h"
 #include "Player/PetCameraManagerComponent.h"
 #include "Player/PetCharacterMotionComponent.h"
 #include "Player/PetSceneSlotComponent.h"
@@ -150,18 +151,25 @@ void APetCapturePawn::BeginPlay()
 	CameraManagerComponent->Initialize(CaptureComponent, SceneSlotComponent);
 	MotionComponent->Initialize(PetMeshComponent, ComputerMeshComponent, SceneSlotComponent);
 
-	// 320x320 BGRA8 RT，清屏为全透明
+	// 320 是 96 DPI 基准下的逻辑尺寸。自建 Win 分层窗口不会替我们应用 Slate DPI，
+	// 因此 RT、DIB 与窗口都必须显式换算为当前显示器的物理像素尺寸。
+	const float InitialDpiScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(
+		static_cast<float>(InitialWindowX),
+		static_cast<float>(InitialWindowY));
+	RenderTargetPixelSize = PetWindowDpi::LogicalToPhysicalSize(LogicalPetWindowSize, InitialDpiScale);
+
+	// DPI 对应尺寸的 BGRA8 RT，清屏为全透明
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
 	RenderTarget->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
 	RenderTarget->bForceLinearGamma = false;
 	RenderTarget->ClearColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
-	RenderTarget->InitCustomFormat(RTSize, RTSize, PF_B8G8R8A8, false);
+	RenderTarget->InitCustomFormat(RenderTargetPixelSize, RenderTargetPixelSize, PF_B8G8R8A8, false);
 	RenderTarget->UpdateResourceImmediate(true);
 	CaptureComponent->TextureTarget = RenderTarget;
 
 	// 游戏线程创建窗口（UE 主消息循环会顺带泵它的消息）
 	PetWindow = MakeUnique<PetLayeredWindow>();
-	if (!PetWindow->Create(RTSize, 150, 150))
+	if (!PetWindow->Create(RenderTargetPixelSize, InitialWindowX, InitialWindowY))
 	{
 		UE_LOG(LogPet, Error, TEXT("Failed to create layered window"));
 		PetWindow.Reset();
@@ -219,7 +227,13 @@ void APetCapturePawn::BeginPlay()
 		{
 			AdjustCameraZoom(WheelDelta);
 		};
+		PetWindow->OnDpiScaleChanged = [this](float DpiScale)
+		{
+			RequestPetSurfaceResize(DpiScale);
+		};
 	}
+	UE_LOG(LogPet, Log, TEXT("桌宠 DPI 初始化: 逻辑尺寸=%d，缩放=%.2f，物理尺寸=%d"),
+		LogicalPetWindowSize, InitialDpiScale, RenderTargetPixelSize);
 	MessageChannelComponent->Start();
 
 	UE_LOG(LogPet, Log, TEXT("PetCapturePawn BeginPlay done"));
@@ -411,24 +425,67 @@ void APetCapturePawn::ShutdownPanels()
 	}
 }
 
-FSlateRect APetCapturePawn::ComputePetBoundsInSlateScreen() const
+void APetCapturePawn::RequestPetSurfaceResize(float DpiScale)
 {
-	// PetLayeredWindow::GetScreenPosition() 返回 Win32 屏幕物理像素，RTSize 也是物理像素；
-	// Host 契约只接受 Slate 屏幕坐标。引擎约定 Slate 屏幕坐标 = 物理像素 /
-	// DPIScale（SWindow 创建时 AdjustInitialSizeAndPositionForDPIScale 路径以 WindowPosition
-	// *= DPIScale 转入平台层，SlateApplication::CalculatePopupWindowPosition 同样按
-	// InSize * DPIScale 进平台层、结果 / DPIScale 返回），因此先在坐标契约边界用宠物所在
-	// 监视器的 DPI 缩放完成转换；Host 内部不理解物理像素。
+	const int32 RequestedPixelSize = PetWindowDpi::LogicalToPhysicalSize(LogicalPetWindowSize, DpiScale);
+	PendingPetSurfacePixelSize = RequestedPixelSize != RenderTargetPixelSize
+		? RequestedPixelSize
+		: 0;
+}
+
+void APetCapturePawn::ApplyPendingPetSurfaceResize()
+{
+	const int32 RequestedPixelSize = PendingPetSurfacePixelSize;
+	PendingPetSurfacePixelSize = 0;
+	if (RequestedPixelSize <= 0 || RequestedPixelSize == RenderTargetPixelSize || !PetWindow || !RenderTarget)
+	{
+		return;
+	}
+
+	const int32 PreviousPixelSize = RenderTargetPixelSize;
+	if (!PetWindow->Resize(RequestedPixelSize))
+	{
+		UE_LOG(LogPet, Error, TEXT("无法把桌宠窗口调整为 DPI 对应尺寸 %d，继续使用 %d"),
+			RequestedPixelSize, PreviousPixelSize);
+		return;
+	}
+
+	// ResizeTarget 与下方回读重建命令按提交顺序在渲染线程执行。FRHIGPUTextureReadback
+	// 的复用契约要求源纹理尺寸固定，因此 DPI 改变时必须等待旧副本并重建 staging 纹理。
+	RenderTargetPixelSize = RequestedPixelSize;
+	bPresentedValidFrame = false;
+	RenderTarget->ResizeTarget(RequestedPixelSize, RequestedPixelSize);
+	ENQUEUE_RENDER_COMMAND(RecreatePetReadbackForDpi)(
+		[this](FRHICommandListImmediate& RHICmdList)
+		{
+			if (Readback)
+			{
+				if (bCopyInFlight.load())
+				{
+					Readback->Wait(RHICmdList, Readback->GetLastCopyGPUMask());
+				}
+				delete Readback;
+			}
+			Readback = new FRHIGPUTextureReadback(TEXT("KPetReadback"));
+			ReadbackPixelSize = 0;
+			bCopyInFlight.store(false);
+		});
+
+	UE_LOG(LogPet, Log, TEXT("桌宠渲染表面随 DPI 调整: %d -> %d 物理像素"),
+		PreviousPixelSize, RequestedPixelSize);
+}
+
+FSlateRect APetCapturePawn::ComputePetBoundsInScreenPixels() const
+{
+	// SWindow::GetSizeInScreen、MoveWindowTo 与 SlateApplication::GetWorkArea 都使用
+	// 平台屏幕物理像素；桌宠分层窗口也使用同一坐标系，因此这里不做 DPI 除法。
 	const FIntPoint PetPositionPhysicalPixels = PetWindow->GetScreenPosition();
-	const float PetSizePhysicalPixels = static_cast<float>(RTSize);
-	const float PetDPIScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(
-		static_cast<float>(PetPositionPhysicalPixels.X),
-		static_cast<float>(PetPositionPhysicalPixels.Y));
+	const float PetSizePhysicalPixels = static_cast<float>(PetWindow->GetPixelSize());
 	return FSlateRect(
-		PetPositionPhysicalPixels.X / PetDPIScale,
-		PetPositionPhysicalPixels.Y / PetDPIScale,
-		(PetPositionPhysicalPixels.X + PetSizePhysicalPixels) / PetDPIScale,
-		(PetPositionPhysicalPixels.Y + PetSizePhysicalPixels) / PetDPIScale);
+		static_cast<float>(PetPositionPhysicalPixels.X),
+		static_cast<float>(PetPositionPhysicalPixels.Y),
+		PetPositionPhysicalPixels.X + PetSizePhysicalPixels,
+		PetPositionPhysicalPixels.Y + PetSizePhysicalPixels);
 }
 
 void APetCapturePawn::UpdateSessionPanelAnchor()
@@ -437,7 +494,7 @@ void APetCapturePawn::UpdateSessionPanelAnchor()
 	{
 		return;
 	}
-	SessionWindowHost->UpdateAnchor(ComputePetBoundsInSlateScreen());
+	SessionWindowHost->UpdateAnchor(ComputePetBoundsInScreenPixels());
 }
 
 void APetCapturePawn::UpdateSettingsPanelAnchor()
@@ -446,7 +503,7 @@ void APetCapturePawn::UpdateSettingsPanelAnchor()
 	{
 		return;
 	}
-	SettingsWindowHost->UpdateAnchor(ComputePetBoundsInSlateScreen());
+	SettingsWindowHost->UpdateAnchor(ComputePetBoundsInScreenPixels());
 }
 
 void APetCapturePawn::HandleSessionSelected(const FString& SessionId)
@@ -803,6 +860,7 @@ void APetCapturePawn::Tick(float DeltaTime)
 		WindowScreenPosition = PetWindow->GetScreenPosition();
 		PetWindow->Tick(DeltaTime);
 	}
+	ApplyPendingPetSurfaceResize();
 	if (bSessionPanelTogglePending)
 	{
 		bSessionPanelTogglePending = false;
@@ -863,6 +921,7 @@ void APetCapturePawn::Tick(float DeltaTime)
 				if (Readback->IsReady())
 				{
 					TSharedPtr<TArray<uint8>> Pixels;
+					const int32 CompletedPixelSize = ReadbackPixelSize;
 					int32 RowPitchPixels = 0;
 					int32 BufferHeight = 0;
 					void* Data = Readback->Lock(RowPitchPixels, &BufferHeight);
@@ -878,11 +937,20 @@ void APetCapturePawn::Tick(float DeltaTime)
 					if (Pixels.IsValid())
 					{
 						TWeakObjectPtr<APetCapturePawn> WeakThis(this);
-						AsyncTask(ENamedThreads::GameThread, [WeakThis, Pixels]()
+						AsyncTask(ENamedThreads::GameThread, [
+							WeakThis,
+							Pixels,
+							CompletedPixelSize,
+							RowPitchPixels,
+							BufferHeight]()
 						{
 							if (WeakThis.IsValid())
 							{
-								WeakThis->OnFrameReady(Pixels.ToSharedRef());
+								WeakThis->OnFrameReady(
+									Pixels.ToSharedRef(),
+									CompletedPixelSize,
+									RowPitchPixels,
+									BufferHeight);
 							}
 						});
 					}
@@ -892,8 +960,13 @@ void APetCapturePawn::Tick(float DeltaTime)
 			{
 				if (FRHITexture* Tex = RTResource ? RTResource->GetRenderTargetTexture() : nullptr)
 				{
-					Readback->EnqueueCopy(RHICmdList, Tex);
-					bCopyInFlight.store(true);
+					const FIntVector TextureSize = Tex->GetSizeXYZ();
+					if (TextureSize.X > 0 && TextureSize.X == TextureSize.Y)
+					{
+						ReadbackPixelSize = TextureSize.X;
+						Readback->EnqueueCopy(RHICmdList, Tex);
+						bCopyInFlight.store(true);
+					}
 				}
 			}
 		});
@@ -926,9 +999,18 @@ void APetCapturePawn::ApplyCameraCursorImage()
 	PetWindow->SetCameraCursorImage(CameraCursorImageData::Bgra, CameraCursorImageData::Width, CameraCursorImageData::Height);
 }
 
-void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
+void APetCapturePawn::OnFrameReady(
+	TSharedRef<TArray<uint8>> Pixels,
+	int32 SourcePixelSize,
+	int32 SourceRowPitchPixels,
+	int32 SourceBufferHeight)
 {
-	if (Pixels->Num() < RTSize * RTSize * 4)
+	const int64 RequiredBytes = static_cast<int64>(SourceRowPitchPixels) * SourcePixelSize * 4;
+	if (SourcePixelSize != RenderTargetPixelSize ||
+		SourceRowPitchPixels < SourcePixelSize ||
+		SourceBufferHeight < SourcePixelSize ||
+		RequiredBytes <= 0 ||
+		Pixels->Num() < RequiredBytes)
 	{
 		return;
 	}
@@ -945,17 +1027,22 @@ void APetCapturePawn::OnFrameReady(TSharedRef<TArray<uint8>> Pixels)
 	{
 		const uint8* P = Pixels->GetData();
 		int32 A0 = 0, A255 = 0, Amid = 0;
-		for (int32 i = 3; i < Pixels->Num(); i += 4)
+		for (int32 Y = 0; Y < SourcePixelSize; ++Y)
 		{
-			if (P[i] == 0) { ++A0; }
-			else if (P[i] == 255) { ++A255; }
-			else { ++Amid; }
+			const uint8* Row = P + static_cast<int64>(Y) * SourceRowPitchPixels * 4;
+			for (int32 X = 0; X < SourcePixelSize; ++X)
+			{
+				const uint8 A = Row[X * 4 + 3];
+				if (A == 0) { ++A0; }
+				else if (A == 255) { ++A255; }
+				else { ++Amid; }
+			}
 		}
 		UE_LOG(LogPet, Verbose, TEXT("OnFrameReady stats: a==0: %d, a==255: %d, mid: %d"), A0, A255, Amid);
 	}
 	if (PetWindow)
 	{
-		PetWindow->Present(Pixels->GetData());
+		PetWindow->Present(Pixels->GetData(), SourcePixelSize, SourceRowPitchPixels);
 	}
 	if (++PresentedFrames == 1 || PresentedFrames % 300 == 0)
 	{
@@ -986,10 +1073,16 @@ void APetCapturePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	PetWindow.Reset();
 
 	ENQUEUE_RENDER_COMMAND(DestroyPetReadback)(
-		[this](FRHICommandListImmediate&)
+		[this](FRHICommandListImmediate& RHICmdList)
 		{
+			if (Readback && bCopyInFlight.load())
+			{
+				Readback->Wait(RHICmdList, Readback->GetLastCopyGPUMask());
+			}
 			delete Readback;
 			Readback = nullptr;
+			ReadbackPixelSize = 0;
+			bCopyInFlight.store(false);
 		});
 
 	Super::EndPlay(EndPlayReason);

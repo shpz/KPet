@@ -8,7 +8,7 @@ class SWidget;
 class SWindow;
 enum class EActiveTimerReturnType : uint8;
 
-/** 窗口布局计算结果。所有字段均使用 Slate 屏幕坐标。 */
+/** 窗口布局计算结果。运行时所有字段均使用平台屏幕物理像素。 */
 struct FPetSessionWindowLayout
 {
 	FVector2f Position = FVector2f::ZeroVector;
@@ -19,7 +19,7 @@ struct FPetSessionWindowLayout
 /**
  * 会话窗口的无平台布局函数。
  *
- * PetBounds、WorkArea、WindowSize 和返回的位置必须使用同一套 Slate 屏幕单位。
+ * PetBounds、WorkArea、WindowSize 和返回的位置必须使用同一套屏幕单位；运行时传物理像素。
  * 该函数不访问平台 API，也不读取任何会话数据。
  */
 namespace PetSessionWindowHostLayout
@@ -114,7 +114,7 @@ public:
 	void Toggle();
 	void Close();
 	void TickWindowAnimation(float DeltaTime);
-	void UpdateAnchor(const FSlateRect& PetBoundsInSlateScreen);
+	void UpdateAnchor(const FSlateRect& PetBoundsInScreenPixels);
 
 	bool IsVisible() const;
 
@@ -147,7 +147,7 @@ private:
 	void ApplyWindowOpacity(float Opacity);
 	/** Windows 下用原生窗口区域硬裁四角，综合色键失效时也不会退化为黑色矩形。 */
 	void ApplyRoundedWindowRegion(bool bForce);
-	FVector2f ReadWindowSizeInSlateScreen() const;
+	FVector2f ReadWindowSizeInScreenPixels() const;
 	bool IsGameThreadCall() const;
 
 	TSharedPtr<SWindow> SessionWindow;
@@ -164,8 +164,10 @@ private:
 
 	FVector2f TargetPosition = FVector2f::ZeroVector;
 	FSlateRect TargetWorkArea;
-	FVector2f WindowSizeInSlateScreen = FVector2f(DefaultPanelWidth, DefaultPanelHeight);
+	FVector2f WindowSizeInScreenPixels = FVector2f(DefaultPanelWidth, DefaultPanelHeight);
 	FVector2f LastMovedPosition = FVector2f::ZeroVector;
+	/** 当前锚点所在显示器的物理像素与 Slate 设计单位之比。 */
+	float WindowDpiScale = 1.0f;
 	bool bHasAnchor = false;
 	bool bHasMovedPosition = false;
 	bool bPanelOnLeft = false;

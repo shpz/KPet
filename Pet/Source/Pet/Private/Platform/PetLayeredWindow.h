@@ -21,14 +21,19 @@ public:
 	~PetLayeredWindow() { Destroy(); }
 
 	bool Create(int32 InSize, int32 PosX, int32 PosY);
+	/** DPI 改变后重建同尺寸 DIB，并保持拖拽锚点不跳变。 */
+	bool Resize(int32 InSize);
 	void Destroy();
 
 	/** 窗口左上角在 Windows 虚拟桌面中的屏幕像素坐标；副屏位于主屏左侧或上方时可能为负数。 */
 	FIntPoint GetScreenPosition() const { return FIntPoint(Pos.x, Pos.y); }
+	/** 当前窗口与 DIB 的物理像素边长。 */
+	int32 GetPixelSize() const { return Size; }
 
 	/** 传入 scene capture 的 BGRA8 像素（RGB 已预乘、alpha 为反向不透明度）。内部取反 alpha，
-	 *  并把 A=0 像素的 RGB 清零（恢复预乘契约，防 ULW 加性虚影）后上屏。Src 至少 Size*Size*4 字节，紧密排列。 */
-	void Present(const uint8* SrcBGRA);
+	 *  并把 A=0 像素的 RGB 清零（恢复预乘契约，防 ULW 加性虚影）后上屏。
+	 *  SourceSize 必须等于当前物理边长，SourceRowPitchPixels 允许包含 RHI 行填充。 */
+	void Present(const uint8* SrcBGRA, int32 SourceSize, int32 SourceRowPitchPixels);
 
 	/** 驱动宠物窗口的摄像机输入状态与光标清理。 */
 	void Tick(float DeltaTime);
@@ -55,6 +60,9 @@ public:
 	/** R 加滚轮产生的缩放增量，正数表示滚轮向上。 */
 	TFunction<void(float WheelDelta)> OnCameraZoom;
 
+	/** 收到每显示器 DPI 变化时回调新的 DPI 缩放；Pawn 据此同步重建 RT 与本窗口。 */
+	TFunction<void(float DpiScale)> OnDpiScaleChanged;
+
 	/** 开关 FPS 叠加层；开启后在 Present 上屏路径画到 DIB 右上角。 */
 	void SetFpsOverlayEnabled(bool bEnabled);
 
@@ -71,6 +79,7 @@ private:
 	HCURSOR CreateCameraCursor();
 	void HandleCameraWheel(float WheelDelta);
 	bool IsOpaqueScreenPoint(const POINT& ScreenPoint) const;
+	bool ReplaceDibSurface(int32 InSize);
 
 	HWND WindowHandle = nullptr;
 	HDC MemDC = nullptr;
@@ -78,6 +87,8 @@ private:
 	void* DibBits = nullptr; // 32bpp top-down，预乘 BGRA
 	int32 Size = 0;
 	POINT Pos{ 0, 0 };
+	POINT SuggestedDpiPosition{ 0, 0 };
+	bool bHasSuggestedDpiPosition = false;
 
 	bool bDragging = false;
 	bool bDragThresholdMet = false;

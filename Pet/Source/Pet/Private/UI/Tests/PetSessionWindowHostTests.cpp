@@ -44,7 +44,7 @@ bool FPetSessionWindowHostLayoutTest::RunTest(const FString& Parameters)
 	}
 
 	{
-		// DPI 缩放后的窗口尺寸以 GetSizeInScreen 返回的 Slate 屏幕尺寸为准，
+		// DPI 缩放后的窗口尺寸以 GetSizeInScreen 返回的平台屏幕物理像素为准，
 		// 不能再次使用面板设计尺寸参与边界计算。
 		constexpr float DpiScales[] = {1.0f, 1.25f, 1.5f, 2.0f};
 		for (const float DpiScale : DpiScales)

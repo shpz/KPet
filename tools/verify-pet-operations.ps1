@@ -42,6 +42,9 @@ public static class PetVerifyWin32
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr targetDc, uint flags);
@@ -55,6 +58,7 @@ public static class PetVerifyWin32
     [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, int data, UIntPtr extraInfo);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     public const uint KeyUp = 0x0002;
     public const uint MouseLeftDown = 0x0002;
@@ -77,6 +81,9 @@ public static class PetVerifyWin32
     public const long WsExToolWindow = 0x00000080L;
     public const long WsExAppWindow = 0x00040000L;
     public const uint GwOwner = 4;
+    public const uint MonitorDefaultToNearest = 2;
+    public const int MonitorDpiTypeEffective = 0;
+    public static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new IntPtr(-4);
 
     public static IntPtr MakeLParam(int low, int high)
     {
@@ -143,6 +150,32 @@ function Get-WindowRectValue([IntPtr]$Window) {
         throw "读取窗口坐标失败"
     }
     return $rect
+}
+
+function Get-WindowDpiValue([IntPtr]$Window) {
+    $monitor = [PetVerifyWin32]::MonitorFromWindow(
+        $Window,
+        [PetVerifyWin32]::MonitorDefaultToNearest)
+    if ($monitor -ne [IntPtr]::Zero) {
+        [uint32]$dpiX = 0
+        [uint32]$dpiY = 0
+        $result = [PetVerifyWin32]::GetDpiForMonitor(
+            $monitor,
+            [PetVerifyWin32]::MonitorDpiTypeEffective,
+            [ref]$dpiX,
+            [ref]$dpiY)
+        if ($result -eq 0 -and $dpiX -gt 0) { return [int]$dpiX }
+    }
+
+    $windowDpi = [PetVerifyWin32]::GetDpiForWindow($Window)
+    if ($windowDpi -eq 0) { return 96 }
+    return [int]$windowDpi
+}
+
+function Convert-LogicalSizeToPhysical([int]$LogicalSize, [int]$Dpi) {
+    return [Math]::Max(1, [int][Math]::Round(
+        $LogicalSize * $Dpi / 96.0,
+        [MidpointRounding]::AwayFromZero))
 }
 
 function Get-WindowIdentity([IntPtr]$Window) {
@@ -547,7 +580,10 @@ try {
     if (-not (Test-Path -LiteralPath $ProjectPath -PathType Leaf)) { throw "找不到项目: $ProjectPath" }
     if (-not (Test-Path -LiteralPath $mockPath -PathType Leaf)) { throw "找不到模拟守护进程: $mockPath" }
 
-    [PetVerifyWin32]::SetProcessDPIAware() | Out-Null
+    if (-not [PetVerifyWin32]::SetProcessDpiAwarenessContext(
+        [PetVerifyWin32]::DpiAwarenessContextPerMonitorAwareV2)) {
+        [PetVerifyWin32]::SetProcessDPIAware() | Out-Null
+    }
     # mock-daemon.ts 需要 TS 直跑：node >= 22.6 用 --experimental-strip-types，
     # 低版本 node 回退到 bun（打包链路同样依赖 bun）。
     # 探测经 cmd /c 包一层：避免 node 的 stderr 在 EAP=Stop 下触发 PS 5.1 的 NativeCommandError。
@@ -612,6 +648,18 @@ try {
         }
     }
     $petRect = Get-WindowRectValue $petWindow
+    $petDpi = Get-WindowDpiValue $petWindow
+    $petWindowDpi = [int][PetVerifyWin32]::GetDpiForWindow($petWindow)
+    $expectedPetSize = Convert-LogicalSizeToPhysical 320 $petDpi
+    $petWidth = $petRect.Right - $petRect.Left
+    $petHeight = $petRect.Bottom - $petRect.Top
+    if ($petWidth -ne $expectedPetSize -or $petHeight -ne $expectedPetSize) {
+        throw "桌宠 DPI 尺寸异常: DPI=$petDpi，期望 ${expectedPetSize}x${expectedPetSize}，实际 ${petWidth}x${petHeight}"
+    }
+    if ($Packaged -and $petWindowDpi -ne $petDpi) {
+        throw "打包桌宠没有使用显示器原生 DPI 上下文: 显示器 DPI=$petDpi，窗口 DPI=$petWindowDpi"
+    }
+    Write-Output "桌宠 DPI 尺寸验证通过：显示器 DPI=$petDpi，窗口 DPI=$petWindowDpi，窗口=${petWidth}x${petHeight}"
     $centerPoint = New-Object PetVerifyWin32+POINT
     $centerPoint.X = [int](($petRect.Left + $petRect.Right) / 2)
     $centerPoint.Y = [int](($petRect.Top + $petRect.Bottom) / 2)
@@ -665,8 +713,13 @@ try {
     $openRect = Get-WindowRectValue $panelWindow
     $panelWidth = $openRect.Right - $openRect.Left
     $panelHeight = $openRect.Bottom - $openRect.Top
-    if ($panelWidth -ne 360 -or $panelHeight -lt 225 -or $panelHeight -gt 245) {
-        throw "会话面板尺寸异常: ${panelWidth}x${panelHeight}"
+    $panelDpi = Get-WindowDpiValue $panelWindow
+    $expectedPanelWidth = Convert-LogicalSizeToPhysical 360 $panelDpi
+    $expectedPanelHeight = Convert-LogicalSizeToPhysical 234 $panelDpi
+    $panelHeightTolerance = Convert-LogicalSizeToPhysical 10 $panelDpi
+    if ($panelWidth -ne $expectedPanelWidth -or
+        [Math]::Abs($panelHeight - $expectedPanelHeight) -gt $panelHeightTolerance) {
+        throw "会话面板 DPI 尺寸异常: DPI=$panelDpi，期望约 ${expectedPanelWidth}x${expectedPanelHeight}，实际 ${panelWidth}x${panelHeight}"
     }
     if ($openingRect.Left -eq $openRect.Left) {
         throw "没有观察到会话面板打开时的滑动动画"
@@ -856,8 +909,8 @@ try {
             "句柄=$($stressResult.HandleGrowth) 私有内存=$($stressResult.PrivateGrowthMiB)MiB")
     }
 
-    $rowX = $openRect.Left + 120
-    $rowY = $openRect.Top + 70
+    $rowX = $openRect.Left + (Convert-LogicalSizeToPhysical 120 $panelDpi)
+    $rowY = $openRect.Top + (Convert-LogicalSizeToPhysical 70 $panelDpi)
     if ($directWindowInput) { Invoke-WindowLeftClick $panelWindow $rowX $rowY }
     else { Invoke-LeftClick $rowX $rowY }
     Start-Sleep -Milliseconds 80
