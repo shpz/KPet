@@ -1,6 +1,6 @@
 {
   "name": "kpet",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "description": "KPet 桌面宠物（Kimi Code CLI 插件 + UE5 渲染进程）：仓库根打包编排",
   "type": "module",

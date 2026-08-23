@@ -1,6 +1,6 @@
 {
   "name": "kpet",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "Desktop pet bridge for Kimi Code CLI",
   "hooks": [
     { "event": "SessionStart",        "matcher": "startup|resume",    "command": ".\\bin\\kpetd.exe --relay", "timeout": 5 },
