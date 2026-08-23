@@ -117,12 +117,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 ## 配置说明
 
-守护进程读取 `%KIMI_CODE_HOME%\kpet\config.json`；未设置 `KIMI_CODE_HOME` 时，路径回退到 `%USERPROFILE%\.kimi-code\kpet\config.json`。文件不存在或字段缺失、类型非法时，逐项使用默认值。常用配置项：
+打开会话方式、面板主题、帧率浮层这三项常用设置，直接在设置面板（`Ctrl+,`）里修改即可，改动会自动写回 `%KIMI_CODE_HOME%\kpet\config.json`（未设置 `KIMI_CODE_HOME` 时路径回退到 `%USERPROFILE%\.kimi-code\kpet\config.json`）。
 
-- `terminal`：唤醒终端的方式，`wt`（Windows Terminal）、`cmd`（传统控制台）或 `wsl`（WSL 终端）。
-- `open_target`：点击会话后的打开目标，`cli`（唤起 kimi 终端）或 `web`（用系统默认浏览器打开）。
-- `open_web_url`：web 目标下的 URL 模板，支持 `{session_id}` 占位符；指向回环地址时，会自动拉起本地 `kimi web` 服务并拼上 `#token=` 免密进入 Web UI。
-- `ui_theme` / `fps_monitor`：设置面板的默认主题与帧率浮层开关。
+设置面板未覆盖的配置项仍需手动编辑该文件（文件不存在或字段缺失、类型非法时逐项使用默认值）：
+
+- `terminal`：唤起终端的方式，`wt`（Windows Terminal）、`cmd`（传统控制台）或 `wsl`（WSL 终端，见上文 WSL 部署）。
+- `open_web_url`：web 目标下的 URL 模板，支持 `{session_id}` 占位符；指向回环地址时，会确保本地 `kimi web` 服务可用（端口空闲则自动拉起，被占用则校验为同一 home 实例后直接进入；异构占用自动顺延端口），并拼上 `#token=` 免密进入 Web UI。
 - `renderer_path`、心跳与重启参数、`session.staleMinutes` / `cleanupMinutes`、`log_level` 等。
 
 完整配置项、默认值及运行时文件位置（日志、宠物窗口状态、事件暂存）见 [技术文档](docs/技术文档.md) 的「数据与配置」章节。

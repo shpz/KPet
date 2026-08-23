@@ -10,17 +10,28 @@
  *   `cmd /c start "" wsl.exe [-d <发行版>] --cd <Linux cwd> --exec bash -lc "kimi --session <会话id>"`；
  * - open_target=web：用系统默认浏览器打开 open_web_url 模板（支持 {session_id} 占位符；
  *   能否在 web 侧直接按会话恢复属未验证假设，见 config.ts 的 DEFAULT_OPEN_WEB_URL 注释）；
- * - open_target=web 且 URL 为回环地址（127.0.0.1 / localhost / ::1）时，开浏览器前先探测端口，
- *   未运行则经可见终端窗口拉起 `kimi web --no-open --port <port>`（terminal=wt 时 wt.exe 显式新建标签并刷新环境，
- *   wt 缺失回退 `cmd /c start`）并轮询等待就绪；服务挂在可见窗口上，用户关窗即停止服务，
- *   下次点击会自动重新拉起；非回环 URL 无法代管远端服务，维持现状直接开浏览器；
+ * - open_target=web 且 URL 为回环地址（127.0.0.1 / localhost / ::1）时，开浏览器前先确保本地
+ *   web 服务可用：未运行则经可见终端窗口拉起 `kimi web --no-open --port <port>`（terminal=wt
+ *   时 wt.exe 显式新建标签并刷新环境，wt 缺失回退 `cmd /c start`）并轮询等待就绪；服务挂在可见
+ *   窗口上，用户关窗即停止服务，下次点击会自动重新拉起；非回环 URL 无法代管远端服务，维持现状
+ *   直接开浏览器；
  * - open_target=web 且 URL 为回环地址时，开浏览器前读取本地 token 文件（%KIMI_CODE_HOME%
  *   \server.token，未设 KIMI_CODE_HOME 时 ~/.kimi-code/server.token）并拼进 URL fragment
  *   `#token=<token>`：kimi web 的 REST/Web 界面经 fragment 自动完成鉴权（实测裸 URL 会停在
- *   「Server token required」）。文件缺失/读取失败 → 静默回退裸 URL（用户可从拉起服务的
- *   终端窗口横幅复制 token 手动填）；URL 已有 fragment 先去掉再拼；非回环 URL 一律不拼
- *   token（防止 token 泄漏到远端）。安全红线：任何日志都不得输出带 token 的完整 URL
- *   （open_tui 日志不含 URL，保持如此，本文件不新增相关日志）；
+ *   「Server token required」）。文件缺失/读取失败 → token 为 null，完全保持旧行为（探测原端口，
+ *   被占直接开裸 URL、空闲则拉起；不验证也不顺延），用户可从拉起服务的终端窗口横幅复制 token
+ *   手动填；URL 已有 fragment 先去掉再拼；非回环 URL 一律不拼 token、不做验证（防止 token
+ *   泄漏到远端）；
+ * - 回环 URL 且 token 读取成功：从配置端口起最多尝试 10 个候选端口（basePort..basePort+9，
+ *   与 kimi web 自身「端口忙则 +1 重试」的语义一致）。候选端口 TCP 探测空闲 → 在该候选端口
+ *   拉起 `kimi web --no-open --port <候选端口>`，轮询就绪后开浏览器；候选端口被占 → 用本地
+ *   token 发一次 HTTP 验证（GET /api/v1/sessions，Authorization: Bearer，超时约 1.5 秒）：
+ *   收到响应且状态码非 401 → 同 home 服务，直接开浏览器；401 → 异构占用（如 WSL 实例的
+ *   kimi web），顺延下一候选端口；验证请求出错/超时 → 同样顺延；10 个候选全部被异构占用 →
+ *   返回失败（中文说明，不含 token）。打开浏览器的 URL 端口与实际选用端口一致（顺延后重写
+ *   URL 端口，保留路径与 query，再拼 #token=）；
+ * - 安全红线：任何日志都不得输出带 token 的完整 URL（open_tui 日志不含 URL，保持如此，
+ *   本文件不新增相关日志）；token 验证请求同样不落日志、不输出 token；
  * - 会话 id 为空 → `kimi --continue` 恢复最近会话；
  * - 分离拉起（detached + unref）：cli 终端/浏览器不随守护进程生命周期退出；web 服务随可见
  *   终端窗口生命周期（关窗即停）；
@@ -31,6 +42,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import * as http from 'node:http';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -203,12 +215,33 @@ export type SpawnFn = (file: string, args: string[], opts: { detached: boolean; 
 /** 端口探测函数（注入测试用）：连上返回 true，超时/被拒返回 false。 */
 export type ConnectFn = (port: number, host: string) => Promise<boolean>;
 
+/**
+ * token 验证结果：'ok'=收到响应且状态码非 401（鉴权通过，同 home 服务；404 也算）；
+ * 'unauthorized'=HTTP 401（token 不被接受，异构占用，如 WSL 实例）；'error'=网络错误/超时/无响应。
+ */
+export type VerifyServerTokenResult = 'ok' | 'unauthorized' | 'error';
+
+/**
+ * token 验证函数（注入测试用）：对候选端口发 GET /api/v1/sessions，头
+ * Authorization: Bearer <token>，整体超时 timeoutMs（毫秒）。回环 kimi web 无 TLS，只支持 http。
+ */
+export type VerifyServerTokenFn = (
+  host: string,
+  port: number,
+  token: string,
+  timeoutMs: number,
+) => Promise<VerifyServerTokenResult>;
+
 /** 回环端口探测超时（毫秒）：单次 connect 最多等这么久，避免不可达主机拖慢流程。 */
 const PROBE_TIMEOUT_MS = 500;
 /** 拉起 kimi web 后的轮询间隔（毫秒）。 */
 const WEB_POLL_MS = 250;
 /** 拉起 kimi web 后最长等待就绪时间（毫秒）。 */
 const WEB_WAIT_MS = 10_000;
+/** token 可用时最多尝试的候选端口数（basePort..basePort+WEB_PORT_ATTEMPTS-1）。 */
+const WEB_PORT_ATTEMPTS = 10;
+/** token HTTP 验证整体超时（毫秒）。 */
+const VERIFY_TIMEOUT_MS = 1500;
 
 export interface OpenTuiResult {
   /** 实际执行方式：'wt' | 'wsl'（cli 目标经 wt.exe 直拉）| 'cmd'（回退）| 'web'（浏览器目标）。 */
@@ -219,10 +252,11 @@ export interface OpenTuiResult {
 
 /**
  * 唤起终端或浏览器。cli 目标下 wt 拉起失败（未安装/不在 PATH）时回退 cmd /c start（备选）。
- * web 目标下回环地址会先探测并自动拉起本地 kimi web 服务。全部失败返回 ok=false
+ * web 目标下回环地址会先探测并自动拉起本地 kimi web 服务；token 可用时对被占端口做 HTTP
+ * 验证并按需顺延候选端口（见 ensureWebServiceWithToken）。全部失败返回 ok=false
  * （不重试轰炸，调用方记日志并向渲染进程补发失败气泡，发送失败不重试的语义同源）。
- * spawnFn / connectFn / webTiming / tokenReader 供测试注入；缺省使用真实 spawn / net.connect /
- * 默认轮询时序 / 真实读取 server.token。
+ * spawnFn / connectFn / webTiming / tokenReader / verifyFn 供测试注入；缺省使用真实 spawn /
+ * net.connect / 默认轮询时序 / 真实读取 server.token / node:http 默认验证。
  */
 export function openTui(
   opts: OpenTuiOptions,
@@ -230,13 +264,14 @@ export function openTui(
   connectFn: ConnectFn = defaultConnect,
   webTiming: { pollMs?: number; waitMs?: number } = {},
   tokenReader: TokenReader = defaultReadServerToken,
+  verifyFn: VerifyServerTokenFn = defaultVerifyServerToken,
 ): Promise<OpenTuiResult> {
   const target = opts.target ?? 'cli';
   if (target === 'web') {
     return openWeb(opts, spawnFn, connectFn, {
       pollMs: webTiming.pollMs ?? WEB_POLL_MS,
       waitMs: webTiming.waitMs ?? WEB_WAIT_MS,
-    }, tokenReader);
+    }, tokenReader, verifyFn);
   }
   return openTerminal(opts, spawnFn);
 }
@@ -330,13 +365,47 @@ function defaultConnect(port: number, host: string): Promise<boolean> {
   });
 }
 
-/** web 目标：展开并解析 URL；回环地址先确保本地 web 服务可用并拼上 #token= 鉴权，非回环地址直接开浏览器。 */
+/**
+ * 默认 token 验证实现：node:http 发起 GET /api/v1/sessions，头 Authorization: Bearer <token>。
+ * 收到 HTTP 响应且状态码非 401 → 'ok'（鉴权已过，404 也算）；401 → 'unauthorized'；
+ * 网络错误/整体超时/无响应 → 'error'。整体超时由 timeoutMs 控制，超时销毁请求即返回
+ * （随后的 error 事件再次 resolve 幂等无副作用）。
+ */
+function defaultVerifyServerToken(host: string, port: number, token: string, timeoutMs: number): Promise<VerifyServerTokenResult> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host,
+        port,
+        path: '/api/v1/sessions',
+        method: 'GET',
+        timeout: timeoutMs,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      (res) => {
+        // 收到响应即鉴权结果已定：非 401 视为同 home 服务（404 也证明 token 被接受）
+        resolve(res.statusCode === 401 ? 'unauthorized' : 'ok');
+        res.resume(); // 排空响应体，释放连接
+      },
+    );
+    req.once('timeout', () => {
+      req.destroy();
+      resolve('error');
+    });
+    req.once('error', () => resolve('error'));
+    req.end();
+  });
+}
+
+/** web 目标：展开并解析 URL；回环地址先确保本地 web 服务可用（token 缺失走旧行为、
+ * 可用时带 HTTP 验证与端口顺延）并拼上 #token= 鉴权，非回环地址直接开浏览器（不验证不拼 token）。 */
 function openWeb(
   opts: OpenTuiOptions,
   spawnFn: SpawnFn,
   connectFn: ConnectFn,
   timing: { pollMs: number; waitMs: number },
   tokenReader: TokenReader,
+  verifyFn: VerifyServerTokenFn,
 ): Promise<OpenTuiResult> {
   const urlStr = buildOpenWebUrl(opts.webUrl ?? DEFAULT_OPEN_WEB_URL, opts.sessionId);
   let url: URL;
@@ -345,7 +414,7 @@ function openWeb(
   } catch {
     return Promise.resolve({ terminal: 'web', ok: false, error: `open_web_url 无法解析：${urlStr}` });
   }
-  // 非回环 URL 无法代管远端服务，维持现状直接开浏览器；同时绝不拼 token（防泄漏到远端）
+  // 非回环 URL 无法代管远端服务，维持现状直接开浏览器；同时绝不拼 token、不做验证（防泄漏到远端）
   if (!isLoopbackHostname(url.hostname)) {
     return openCommand(buildOpenWebCommand(urlStr, opts.cwd), 'web', spawnFn);
   }
@@ -359,11 +428,15 @@ function openWeb(
   } catch {
     token = null;
   }
-  const browserUrl = appendServerToken(urlStr, token);
-  return ensureWebService(opts, browserUrl, host, port, spawnFn, connectFn, timing);
+  if (token === null) {
+    // token 缺失：完全保持旧行为——探测原端口，被占直接开裸 URL、空闲则拉起；不验证也不顺延
+    return ensureWebService(opts, urlStr, host, port, spawnFn, connectFn, timing);
+  }
+  // token 可用：候选端口循环——空闲拉起、被占用 HTTP 验证区分同 home 服务与异构占用（如 WSL 实例）
+  return ensureWebServiceWithToken(opts, url, host, port, token, spawnFn, connectFn, timing, verifyFn);
 }
 
-/** 探测本地 web 服务端口；已在运行则直接开浏览器，否则拉起 kimi web 并等待就绪。 */
+/** token 缺失时的旧行为路径：探测原端口，被占直接开裸 URL（不验证不发验证请求），空闲则拉起 kimi web 并等待就绪。 */
 function ensureWebService(
   opts: OpenTuiOptions,
   urlStr: string,
@@ -381,6 +454,59 @@ function ensureWebService(
       }
       return startWebService(opts, urlStr, host, port, spawnFn, connectFn, timing);
     });
+}
+
+/** 改写已解析 URL 的端口（保留协议、路径与 query；已有 fragment 由 appendServerToken 统一处理）。 */
+function rewritePort(url: URL, port: number): URL {
+  const copy = new URL(url.toString());
+  copy.port = String(port);
+  return copy;
+}
+
+/**
+ * token 可用时的回环服务保障：从 basePort 起最多尝试 WEB_PORT_ATTEMPTS 个候选端口。
+ * 候选端口 TCP 探测空闲 → 经可见终端窗口在该候选端口拉起 kimi web（spawn 失败/轮询超时
+ * 直接返回，不顺延）；被占 → verifyFn 用本地 token 验证是否同 home 服务：'ok' 直接开浏览器；
+ * 'unauthorized'（401，如 WSL 实例的 kimi web）/ 'error'（验证出错或超时）→ 异构占用，
+ * 顺延下一候选端口；全部候选被异构占用 → 返回失败（中文说明端口范围，不含 token）。
+ * 打开浏览器的 URL 端口 = 实际选用端口（先重写端口保留路径与 query，再拼 #token=）。
+ */
+async function ensureWebServiceWithToken(
+  opts: OpenTuiOptions,
+  url: URL,
+  host: string,
+  basePort: number,
+  token: string,
+  spawnFn: SpawnFn,
+  connectFn: ConnectFn,
+  timing: { pollMs: number; waitMs: number },
+  verifyFn: VerifyServerTokenFn,
+): Promise<OpenTuiResult> {
+  const lastPort = basePort + WEB_PORT_ATTEMPTS - 1;
+  for (let port = basePort; port <= lastPort; port++) {
+    const browserUrl = appendServerToken(rewritePort(url, port).toString(), token);
+    let alive = false;
+    try {
+      alive = await connectFn(port, host);
+    } catch {
+      alive = false;
+    }
+    if (!alive) {
+      return startWebService(opts, browserUrl, host, port, spawnFn, connectFn, timing);
+    }
+    // 端口被占：用本地 token 发一次 HTTP 验证（回环 kimi web 无 TLS，只走 http）。
+    // 验证请求不落日志、不输出 token；注入的 verifyFn 意外 reject 也按 'error' 顺延。
+    const verdict = await verifyFn(host, port, token, VERIFY_TIMEOUT_MS).catch(() => 'error' as const);
+    if (verdict === 'ok') {
+      return openCommand(buildOpenWebCommand(browserUrl, opts.cwd), 'web', spawnFn);
+    }
+    // 'unauthorized' / 'error'：异构占用或无法确认，顺延下一候选端口
+  }
+  return {
+    terminal: 'web',
+    ok: false,
+    error: `端口 ${basePort}-${lastPort} 均被占用且本地 token 校验未通过（可能为其他环境如 WSL 的 kimi web 实例占用），请关闭占用服务后重试`,
+  };
 }
 
 /**

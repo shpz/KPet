@@ -2,8 +2,8 @@
 #
 # 设计目标：在什么操作系统就按该平台准备安装源，然后交给 kimi 的 /plugins install。
 # 本脚本覆盖 Windows：自检包完整性、确认 kimi.plugin.json 为 Windows 版清单（若被
-# deploy.sh 覆盖成 WSL 版则从 kimi.plugin.json.bak 恢复并二次校验）、停止旧守护进程，
-# 最后打印安装指引。
+# deploy.sh 覆盖成 WSL 版则从 kimi.plugin.json.bak 恢复并二次校验）、停止旧守护进程并
+# 清理残留渲染进程（含孤儿场景），最后打印安装指引。
 #
 # 用法（在解压后的插件根目录内运行）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
@@ -70,6 +70,36 @@ $daemonExe = Join-Path $pluginRoot "bin\kpetd.exe"
 & $daemonExe --stop
 if ($LASTEXITCODE -ne 0) {
     Write-Output "警告: 旧版守护进程未能停止，请先手动关闭宠物再执行 /plugins install"
+} else {
+    # 清理残留渲染进程。孤儿成因：停止宠物时只终止守护进程/启动器（Pet.exe），
+    # UE 游戏本体 Pet-Win64-Shipping.exe 不跟随退出，成为无主进程残留在桌面，
+    # 且仍连接守护进程控制管道，与新会话交替握手互相顶下线；其 CEF 子进程
+    # EpicWebHelper.exe 同理残留。
+    # 仅当 --stop 成功（退出码 0）时清理：旧守护进程还活着时可能重新拉起渲染端，
+    # 清了也是白清，还会与守护进程打架。
+    # 按 ExecutablePath 前缀匹配受管安装目录 <home>\plugins\managed\kpet\renderer，
+    # 精确覆盖本插件的全部渲染进程，不误伤系统里其他 UE 应用。
+    try {
+        # home 解析与守护进程一致：KIMI_CODE_HOME 非空则用它，否则 $HOME\.kimi-code
+        $homeDir = if ($env:KIMI_CODE_HOME) { $env:KIMI_CODE_HOME } else { Join-Path $HOME ".kimi-code" }
+        # 前缀末尾补 "\" 防误配 renderer2 之类的相邻目录
+        $rendererPrefix = (Join-Path $homeDir "plugins\managed\kpet\renderer").TrimEnd('\') + '\'
+        $staleProcesses = @(
+            Get-CimInstance Win32_Process -ErrorAction Stop |
+                Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($rendererPrefix, [StringComparison]::OrdinalIgnoreCase) }
+        )
+        foreach ($proc in $staleProcesses) {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+        }
+        if ($staleProcesses.Count -gt 0) {
+            Write-Output "已清理 $($staleProcesses.Count) 个残留渲染进程（含孤儿场景下未跟随退出的宠物窗口）。"
+        } else {
+            Write-Output "未发现残留渲染进程，无需清理。"
+        }
+    } catch {
+        # 清理非致命：失败仅告警，不阻塞安装，不改变脚本退出码契约
+        Write-Output "警告: 残留渲染进程清理失败（$($_.Exception.Message)），请手动关闭多余的宠物窗口后再继续。"
+    }
 }
 
 # 5. 安装指引

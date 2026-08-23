@@ -268,7 +268,7 @@ macOS 是真正的「第二平台」，守护进程、转发器、渲染端三�
 
 ## 5. 分阶段落地建议（按「改动小 / 收益大」优先级）
 
-> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 231/231 通过；WSL 真机已实测并修复两处问题：relay 脚本 CRLF 导致 dash 语法错误（已转 LF 并加 `.gitattributes`）、relay 脚本 exec `\\wsl.localhost` UNC 路径 ENOENT（已改为 Linux 路径直接 exec，实测 interop 可从 ext4 挂载点启动 PE）。WSL 端到端（插件安装、relay interop 拉起、守护进程拉起渲染端 Pet.exe）已在 Ubuntu-24.04 实测通过；`terminal: 'wsl'` 的 wt 直拉与 cmd 回退、`wsl-path.ts` 双向转换的真机路径仍待后续覆盖。随包新增跨平台部署脚本 `deploy.sh`/`deploy.ps1`（自动识别平台、就位对应清单，并在打印 `/plugins install` 指引前经 `kpetd.exe --stop`（WSL 经 relay 透传）优雅停止运行中的旧版守护进程与渲染进程，支撑「先停后装」的更新流程）。P2 起尚未动工。
+> 实施状态（2026-08-18）：**P0（1-6）与 P1（7-9）已实现**，bridge 测试 231/231 通过；WSL 真机已实测并修复两处问题：relay 脚本 CRLF 导致 dash 语法错误（已转 LF 并加 `.gitattributes`）、relay 脚本 exec `\\wsl.localhost` UNC 路径 ENOENT（已改为 Linux 路径直接 exec，实测 interop 可从 ext4 挂载点启动 PE）。WSL 端到端（插件安装、relay interop 拉起、守护进程拉起渲染端 Pet.exe）已在 Ubuntu-24.04 实测通过；`terminal: 'wsl'` 的 wt 直拉与 cmd 回退、`wsl-path.ts` 双向转换的真机路径仍待后续覆盖。随包新增跨平台部署脚本 `deploy.sh`/`deploy.ps1`（自动识别平台、就位对应清单，并在打印 `/plugins install` 指引前经 `kpetd.exe --stop`（WSL 经 relay 透传）优雅停止旧版守护进程，随后按可执行文件路径前缀（受管目录 `plugins/managed/kpet/renderer`）强制清理残留渲染进程（含启动器被杀后 UE 游戏本体孤儿存活场景），支撑「先停后装」的更新流程）。P2 起尚未动工。
 
 **P0 —— 平台无关的清理（立即可做，风险极低，且是后续所有工作的地基）**
 

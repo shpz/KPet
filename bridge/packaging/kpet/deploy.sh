@@ -4,6 +4,7 @@
 # 设计目标：在什么操作系统就按该平台准备安装源，然后交给 kimi 的 /plugins install：
 #   - WSL（形态一：CLI 在 WSL、守护进程/渲染端仍在 Windows）：
 #       把 kimi.plugin.wsl.json 就位为 kimi.plugin.json（覆盖前备份），自愈 relay 脚本可执行位；
+#       停止旧守护进程并清理残留渲染进程（含孤儿场景）；
 #   - Windows：默认 kimi.plugin.json 即 Windows 版，本脚本提示改用 deploy.ps1；
 #   - macOS：暂不支持（尚无 macOS 构建产物，见 docs/跨平台兼容方案-WSL与Mac.md 第 4/5 节，TODO）。
 #   - 其他 Linux：KPet 为 Windows/WSL 形态一产品，不支持直接部署。
@@ -111,9 +112,30 @@ else
     say "已将 WSL 清单就位为 kimi.plugin.json（原 Windows 版备份为 kimi.plugin.json.bak）。"
 fi
 
-# 4. 停止旧版守护进程（就位新清单前先让旧版退出；非致命，失败仅告警后继续）
+# 4. 停止旧版守护进程并清理残留渲染进程（含孤儿场景；非致命，失败仅告警后继续）
 if ! sh "$PLUGIN_ROOT/bin/kpet-relay.sh" --stop; then
     say "警告: 旧版守护进程未能停止，请先手动关闭宠物再执行 /plugins install" >&2
+else
+    # --stop 成功后才清理：此时旧守护进程已退出，不会再重新拉起渲染端。
+    # 清理范围：受管安装目录 <kimi-code home>/plugins/managed/kpet/renderer/ 下的残留进程
+    # （Pet-Win64-Shipping.exe 游戏本体与 EpicWebHelper.exe 等），覆盖 --stop 未带走的孤儿渲染进程。
+    # 经 WSL interop 调用 Windows 侧 PowerShell；本次调用失败仅告警，不阻塞后续部署。
+    if command -v powershell.exe >/dev/null 2>&1; then
+        if powershell.exe -NoProfile -Command '
+$kimiHome = if ($env:KIMI_CODE_HOME) { $env:KIMI_CODE_HOME } else { Join-Path $HOME ".kimi-code" }
+$rendererRoot = Join-Path $kimiHome "plugins\managed\kpet\renderer"
+$prefix = $rendererRoot.TrimEnd("\") + "\"
+Get-CimInstance Win32_Process |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+'; then
+            say "已清理残留渲染进程（含孤儿 Pet-Win64-Shipping.exe / EpicWebHelper.exe）。"
+        else
+            say "警告: 残留渲染进程清理失败（不影响后续部署）。" >&2
+        fi
+    else
+        say "警告: 未找到 powershell.exe（WSL interop 不可用），跳过残留渲染进程清理。" >&2
+    fi
 fi
 
 # 5. 安装指引
