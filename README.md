@@ -1,8 +1,12 @@
 # KPet
 
-一个会跟着 Kimi Code CLI 一起上班的 3D 桌面宠物。
+[English](README_EN.md) | 简体中文
 
-KPet 读取 Kimi Code CLI 的会话与工具事件，把终端里的工作过程变成桌面角色的动作和状态。它既是陪伴型桌宠，也是一个随手可用的 Kimi Code 会话入口：单击会话就能唤起终端，或在浏览器里打开 Kimi 的 Web 界面。
+![海报](docs/KPetPoster.gif)
+
+一个会跟着 Kimi Code 一起上班的 3D 桌面宠物。
+
+KPet 读取 Kimi Code 的会话与工具事件，把终端里的工作过程变成桌面角色的动作和状态。它既是陪伴型桌宠，也是一个随手可用的 Kimi Code 会话入口：单击会话就能唤起终端，或在浏览器里打开 Kimi 的 Web 界面。
 
 ## 功能特性
 
@@ -51,20 +55,15 @@ KPet 读取 Kimi Code CLI 的会话与工具事件，把终端里的工作过程
 
 | 组成 | 主要技术 |
 |---|---|
-| 宿主集成 | Kimi Code CLI 插件与事件钩子 |
-| 转发器与守护进程 | TypeScript、Node.js 22、ESM、Node.js 标准库 |
-| 进程间通信 | Windows 命名管道、UTF-8 JSON、协议版本 1 |
 | 桌宠渲染 | Unreal Engine 5.8、C++、Scene Capture、RHI、GPU Readback |
-| 桌面呈现 | Win32、`UpdateLayeredWindow`、逐像素命中 |
-| 角色动画 | Skeletal Mesh、Animation Blueprint、Control Rig |
-| 界面 | Slate、`SWindow`、SWebBrowser（CEF） |
-| 测试 | Node Test Runner（当前 231 项通过）、UE Automation Test、PowerShell 窗口验证 |
+| 界面 | Slate、WebUI |
+| 进程间通信 | Windows 命名管道、UTF-8 JSON、协议版本 1 |
 
-系统采用「事件转发器 → 守护进程 → UE5 渲染进程」三进程结构：转发器（`kpetd.exe --relay`）生命周期极短，负责把插件事件转发给常驻的守护进程（`kpetd.exe --daemon`）；守护进程维护会话状态，并拉起与守护渲染进程（`Pet.exe`）。渲染链路、插件事件、通信协议与源码结构见 [技术文档](docs/技术文档.md)。
+系统采用「事件转发器 → 守护进程 → UE5 渲染进程」三进程结构：转发器（`kpetd.exe --relay`）生命周期极短，负责把插件事件转发给常驻的守护进程（`kpetd.exe --daemon`）；守护进程维护会话状态，并拉起与守护渲染进程（`Pet.exe`）。渲染链路、插件事件、通信协议与源码结构见 [技术文档](docs/KPet架构.md)。
 
 ## 平台与部署
 
-KPet 面向 Windows 11，并与 Kimi Code CLI 集成，支持 Windows 原生与 WSL 两种部署形态。
+KPet 面向 Windows 11，并与 Kimi Code 集成，支持 Windows 原生与 WSL 两种部署形态。
 
 ### Windows 11
 
@@ -86,7 +85,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 ### WSL（形态一）
 
-「形态一」指：你在 WSL 里使用 Kimi Code CLI，但桌宠的守护进程、渲染进程和宠物窗口都运行在 Windows 桌面上。两端通过 WSL interop 打通，不需要在 WSL 里装任何图形环境。
+「形态一」指：你在 WSL 里使用 Kimi Code，但桌宠的守护进程、渲染进程和宠物窗口都运行在 Windows 桌面上。两端通过 WSL interop 打通，不需要在 WSL 里装任何图形环境。
 
 按以下步骤安装：
 
@@ -125,11 +124,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - `open_web_url`：web 目标下的 URL 模板，支持 `{session_id}` 占位符；指向回环地址时，会确保本地 `kimi web` 服务可用（端口空闲则自动拉起，被占用则校验为同一 home 实例后直接进入；异构占用自动顺延端口），并拼上 `#token=` 免密进入 Web UI。
 - `renderer_path`、心跳与重启参数、`session.staleMinutes` / `cleanupMinutes`、`log_level` 等。
 
-完整配置项、默认值及运行时文件位置（日志、宠物窗口状态、事件暂存）见 [技术文档](docs/技术文档.md) 的「数据与配置」章节。
+完整配置项、默认值及运行时文件位置（日志、宠物窗口状态、事件暂存）见 [技术文档](docs/KPet架构.md) 的「数据与配置」章节。
 
 ## 从源码构建与开发
 
-KPet 由 `bridge/`（TypeScript 转发器与守护进程）和 `Pet/`（UE 5.8 C++ 工程）两部分构成。源码结构、开发环境要求、构建与测试步骤见 [技术文档](docs/技术文档.md) 的「源码结构」「开发环境」「构建与测试」章节。
+KPet 由 `bridge/`（TypeScript 转发器与守护进程）和 `Pet/`（UE 5.8 C++ 工程）两部分构成。源码结构、开发环境要求、构建与测试步骤见 [技术文档](docs/KPet架构.md) 的「源码结构」「开发环境」「构建与测试」章节。
 
 ## 许可证与声明
 
