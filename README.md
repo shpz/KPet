@@ -135,3 +135,7 @@ KPet 由 `bridge/`（TypeScript 转发器与守护进程）和 `Pet/`（UE 5.8 C
 基于 [MIT](LICENSE) 发布。
 
 K 仔（KPet）为社区开源项目，与所使用技术栈、大模型无隶属关系。
+
+## 致谢
+
+[Linux.do](https://linux.do/)：感谢社区提供的交流平台。

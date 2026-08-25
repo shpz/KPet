@@ -135,3 +135,7 @@ KPet consists of `bridge/` (TypeScript relay & daemon) and `Pet/` (UE 5.8 C++ pr
 Released under the [MIT](LICENSE) license.
 
 K仔 (KPet) is a community open-source project with no affiliation to the technologies or large language models it uses.
+
+## Acknowledgments
+
+[Linux.do](https://linux.do/): thanks to the community for providing a place to share.
